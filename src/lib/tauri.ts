@@ -12,6 +12,25 @@ export interface AppInfo {
 export const appInfo = (): Promise<AppInfo> => invoke<AppInfo>("app_info");
 export const ping = (): Promise<string> => invoke<string>("ping");
 
+// ---- Prerequisites check ----
+
+export interface DepStatus {
+  name: string;
+  available: boolean;
+  detail: string;
+  install_hint: string;
+  url: string;
+}
+
+export const checkPrerequisites = (): Promise<DepStatus[]> =>
+  invoke<DepStatus[]>("check_prerequisites");
+
+/** 用系統預設瀏覽器開 URL(tauri-plugin-shell open;需 shell:allow-open)。 */
+export async function openUrl(url: string): Promise<void> {
+  const { open } = await import("@tauri-apps/plugin-shell");
+  await open(url);
+}
+
 // ---- Config ----
 
 export interface LlmEndpoint {

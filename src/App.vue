@@ -1,12 +1,24 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, AlertTriangle, ExternalLink, X } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
+import { checkPrerequisites, openUrl, type DepStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 const config = useConfigStore();
-onMounted(() => config.load());
+const missingDeps = ref<DepStatus[]>([]);
+
+onMounted(async () => {
+  config.load();
+  // 啟動時檢查前置程式;缺漏則彈出說明視窗。
+  try {
+    const deps = await checkPrerequisites();
+    missingDeps.value = deps.filter((d) => !d.available);
+  } catch {
+    // 檢查本身失敗不阻擋使用
+  }
+});
 
 const nav = [
   { to: "/", label: "工廠", icon: Factory },
@@ -52,5 +64,53 @@ const nav = [
     <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <RouterView />
     </main>
+
+    <!-- 缺漏前置程式彈窗 -->
+    <div
+      v-if="missingDeps.length"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    >
+      <div class="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-2xl">
+        <div class="mb-3 flex items-start justify-between">
+          <div class="flex items-center gap-2 text-warning">
+            <AlertTriangle :size="20" />
+            <h2 class="text-base font-semibold text-foreground">缺少前置程式</h2>
+          </div>
+          <button class="text-muted-foreground hover:text-foreground" @click="missingDeps = []">
+            <X :size="18" />
+          </button>
+        </div>
+        <p class="mb-4 text-sm text-muted-foreground">
+          本程式需要以下程式才能完整運作。請安裝後重開本程式(或於「設定」頁確認路徑)。
+        </p>
+        <div class="space-y-3">
+          <div
+            v-for="d in missingDeps"
+            :key="d.name"
+            class="rounded-lg border border-border bg-background/40 p-3"
+          >
+            <div class="flex items-center justify-between">
+              <span class="font-mono text-sm font-medium">{{ d.name }}</span>
+              <button
+                class="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+                @click="openUrl(d.url)"
+              >
+                <ExternalLink :size="12" /> 安裝說明
+              </button>
+            </div>
+            <div class="mt-1 text-xs text-muted-foreground">{{ d.install_hint }}</div>
+            <div class="mt-1 text-[11px] text-muted-foreground/70">{{ d.detail }}</div>
+          </div>
+        </div>
+        <div class="mt-5 flex justify-end">
+          <button
+            class="rounded-md bg-primary px-4 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            @click="missingDeps = []"
+          >
+            我知道了
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

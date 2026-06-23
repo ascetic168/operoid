@@ -8,6 +8,7 @@ mod converters;
 mod factories;
 mod gbrain_cli;
 mod llm;
+mod prereq;
 
 use serde::Serialize;
 use tauri::Manager;
@@ -62,6 +63,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             ping,
+            prereq::check_prerequisites,
             config::get_gbrain_config,
             config::save_gbrain_config_raw,
             config::get_app_config,
