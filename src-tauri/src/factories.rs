@@ -11,6 +11,12 @@ use tauri::{AppHandle, Runtime};
 
 use crate::config;
 use crate::converters::{csv_people, extract_companies, pdf_text, text_to_md};
+use crate::i18n::{AppError, L10n};
+
+/// 單檔轉換/寫入失敗的在地化訊息（code=factory.fileError，含 file+detail）。
+fn file_err(file: impl ToString, detail: impl ToString) -> L10n {
+    L10n::new("factory.fileError").p("file", file).p("detail", detail)
+}
 
 /// 要覆蓋寫入的單一頁(使用者編輯後用)。
 #[derive(Debug, Clone, Deserialize)]
@@ -31,19 +37,19 @@ pub struct PreviewPage {
 #[derive(Debug, Serialize)]
 pub struct PreviewResult {
     pub factory: String,
-    pub summary: String,
+    pub summary: L10n,
     pub sample: Vec<PreviewPage>,
     pub total: usize,
     /// 已立即寫入的檔案路徑。
     pub written: Vec<String>,
-    pub errors: Vec<String>,
+    pub errors: Vec<L10n>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct WriteResult {
     pub written: Vec<String>,
-    pub errors: Vec<String>,
-    pub note: Option<String>,
+    pub errors: Vec<L10n>,
+    pub note: Option<L10n>,
 }
 
 fn read_text(path: &Path) -> anyhow::Result<String> {
@@ -100,15 +106,16 @@ pub async fn factory_save_authored<R: Runtime>(
     factory: String,
     markdown: String,
     existing_slug: Option<String>,
-) -> Result<AuthoredResult, String> {
+    target_repo: Option<String>,
+) -> Result<AuthoredResult, AppError> {
     let cfg = app_cfg(&app)?;
-    let notes = PathBuf::from(&cfg.notes_repo_path);
+    let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
     let target_dir = match factory.as_str() {
         "people" => cfg.factory_targets.people.clone(),
         "companies" => cfg.factory_targets.companies.clone(),
         "meeting" => cfg.factory_targets.meetings.clone(),
         "inbox" => "inbox".to_string(),
-        other => return Err(format!("未知工廠：{other}")),
+        other => return Err(AppError::new("factory.unknown").p("factory", other)),
     };
 
     let title = extract_title(&markdown);
@@ -120,9 +127,9 @@ pub async fn factory_save_authored<R: Runtime>(
     };
     let own_slug = crate::converters::slug::slugify(&title, "");
 
-    // LLM 補全 wikilink(best-effort:失敗就寫原文)
+    // LLM 補全 wikilink(best-effort:失敗就寫原文) — 讀「作用中腦」的 config
     let (to_write, names_count, enriched) =
-        match config::gbrain_config::load().ok().and_then(|l| {
+        match config::gbrain_config::load_for(cfg.active_env_home()).ok().and_then(|l| {
             config::gbrain_config::resolve_endpoint(&l.config).ok()
         }) {
             Some(endpoint) => {
@@ -164,15 +171,16 @@ pub async fn factory_run<R: Runtime>(
     app: AppHandle<R>,
     factory: String,
     paths: Vec<String>,
-) -> Result<PreviewResult, String> {
+    target_repo: Option<String>,
+) -> Result<PreviewResult, AppError> {
     let cfg = app_cfg(&app)?;
-    let notes = PathBuf::from(&cfg.notes_repo_path);
+    let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
 
     match factory.as_str() {
         "people" => run_people(&cfg, &notes, &paths),
         "companies" | "meeting" => run_textual(&factory, &cfg, &notes, &paths).await,
         "inbox" => run_inbox(&cfg, &notes, &paths),
-        other => Err(format!("未知工廠：{other}")),
+        other => Err(AppError::new("factory.unknown").p("factory", other)),
     }
 }
 
@@ -180,16 +188,16 @@ fn run_people(
     cfg: &config::AppConfig,
     notes: &Path,
     paths: &[String],
-) -> Result<PreviewResult, String> {
+) -> Result<PreviewResult, AppError> {
     let target = cfg.factory_targets.people.clone();
     let mut all = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
     let mut rows = 0usize;
     let mut merged = 0usize;
     for p in paths {
         let path = Path::new(p);
         if path.extension().and_then(|e| e.to_str()).map_or(true, |e| !e.eq_ignore_ascii_case("csv")) {
-            errors.push(format!("people 工廠只接受 .csv：{p}"));
+            errors.push(L10n::new("factory.csvOnly").p("file", p));
             continue;
         }
         match read_text(path) {
@@ -199,9 +207,9 @@ fn run_people(
                     merged += imp.groups_merged;
                     all.extend(imp.pages);
                 }
-                Err(e) => errors.push(format!("{p}：{e}")),
+                Err(e) => errors.push(file_err(p, e)),
             },
-            Err(e) => errors.push(format!("{p}：{e}")),
+            Err(e) => errors.push(file_err(p, e)),
         }
     }
 
@@ -210,7 +218,7 @@ fn run_people(
     for pg in &all {
         match write_page(notes, &target, &pg.slug, &pg.markdown) {
             Ok(f) => written.push(f.to_string_lossy().into_owned()),
-            Err(e) => errors.push(format!("{}/{}：{e}", target, pg.slug)),
+            Err(e) => errors.push(file_err(format!("{}/{}", target, pg.slug), e)),
         }
     }
 
@@ -225,7 +233,10 @@ fn run_people(
             markdown: p.markdown.clone(),
         })
         .collect();
-    let summary = format!("CSV 列：{rows}　合併群組：{merged}　已寫入 people 頁：{}", written.len());
+    let summary = L10n::new("factory.peopleSummary")
+        .p("rows", rows)
+        .p("merged", merged)
+        .p("written", written.len());
 
     Ok(PreviewResult {
         factory: "people".into(),
@@ -242,15 +253,13 @@ async fn run_textual(
     cfg: &config::AppConfig,
     notes: &Path,
     paths: &[String],
-) -> Result<PreviewResult, String> {
-    let loaded = config::gbrain_config::load().map_err(|e| e.to_string())?;
-    let endpoint = config::gbrain_config::resolve_endpoint(&loaded.config).map_err(|e| e.to_string())?;
+) -> Result<PreviewResult, AppError> {
+    let loaded = config::gbrain_config::load_for(cfg.active_env_home())?;
+    let endpoint = config::gbrain_config::resolve_endpoint(&loaded.config)?;
     if !endpoint.has_api_key && endpoint.provider != "ollama" {
-        return Err(format!(
-            "LLM provider {} 缺 API key（設環境變數 {} 後重試）",
-            endpoint.provider,
-            config::gbrain_config::env_key(&endpoint.provider).unwrap_or("?")
-        ));
+        return Err(AppError::new("llm.noApiKey")
+            .p("provider", &endpoint.provider)
+            .p("envKey", config::gbrain_config::env_key(&endpoint.provider).unwrap_or("?")));
     }
     let targets = cfg.factory_targets.clone();
     let target_dir = match factory {
@@ -261,13 +270,13 @@ async fn run_textual(
 
     let mut sample = Vec::new();
     let mut written = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
     for p in paths {
         let path = Path::new(p);
         let raw = match extract_raw(path) {
             Ok(t) => t,
             Err(e) => {
-                errors.push(format!("{p}：{e}"));
+                errors.push(file_err(p, e));
                 continue;
             }
         };
@@ -277,7 +286,7 @@ async fn run_textual(
                 match write_page(notes, &target_dir, &slug, &markdown) {
                     Ok(f) => written.push(f.to_string_lossy().into_owned()),
                     Err(e) => {
-                        errors.push(format!("{target_dir}/{slug}：{e}"));
+                        errors.push(file_err(format!("{target_dir}/{slug}"), e));
                     }
                 }
                 sample.push(PreviewPage {
@@ -287,11 +296,11 @@ async fn run_textual(
                     markdown,
                 });
             }
-            Err(e) => errors.push(format!("{p}：{e}")),
+            Err(e) => errors.push(file_err(p, e)),
         }
     }
     let total = sample.len();
-    let summary = format!("已寫入 {factory} 頁：{}", written.len());
+    let summary = L10n::new("factory.writtenN").p("factory", factory).p("n", written.len());
     Ok(PreviewResult {
         factory: factory.into(),
         summary,
@@ -306,17 +315,20 @@ fn run_inbox(
     cfg: &config::AppConfig,
     _notes: &Path,
     paths: &[String],
-) -> Result<PreviewResult, String> {
+) -> Result<PreviewResult, AppError> {
     // inbox 直接走 gbrain capture(寫 inbox/),不走 notes repo。
     let mut sample = Vec::new();
     let mut written = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
     for p in paths {
         let path = Path::new(p);
-        let out = std::process::Command::new(&cfg.gbrain_exe_path)
-            .args(["capture", "--file", p, "--type", "note", "--quiet"])
-            .env("PYTHONUTF8", "1")
-            .output();
+        let mut cmd = std::process::Command::new(&cfg.gbrain_exe_path);
+        cmd.args(["capture", "--file", p, "--type", "note", "--quiet"])
+            .env("PYTHONUTF8", "1");
+        if let Some(h) = cfg.active_env_home() {
+            cmd.env("GBRAIN_HOME", h);
+        }
+        let out = cmd.output();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("note").to_string();
         match out {
             Ok(o) if o.status.success() => {
@@ -329,14 +341,14 @@ fn run_inbox(
                     markdown: String::new(),
                 });
             }
-            Ok(o) => errors.push(format!("{p}：{}", String::from_utf8_lossy(&o.stderr).trim())),
-            Err(e) => errors.push(format!("{p}：{e}")),
+            Ok(o) => errors.push(file_err(p, String::from_utf8_lossy(&o.stderr).trim())),
+            Err(e) => errors.push(file_err(p, e)),
         }
     }
     let total = written.len();
     Ok(PreviewResult {
         factory: "inbox".into(),
-        summary: format!("已 capture {total} 筆到 inbox/"),
+        summary: L10n::new("factory.inboxCaptured").p("n", total),
         sample,
         total,
         written,
@@ -363,14 +375,18 @@ fn extract_raw(path: &Path) -> anyhow::Result<String> {
 pub fn factory_write_pages<R: Runtime>(
     app: AppHandle<R>,
     pages: Vec<WritePage>,
-) -> Result<WriteResult, String> {
-    let notes = notes_dir(&app)?;
+    target_repo: Option<String>,
+) -> Result<WriteResult, AppError> {
+    let notes = match target_repo {
+        Some(t) => PathBuf::from(t),
+        None => notes_dir(&app)?,
+    };
     let mut written = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
     for pg in pages {
         match write_page(&notes, &pg.target_dir, &pg.slug, &pg.markdown) {
             Ok(f) => written.push(f.to_string_lossy().into_owned()),
-            Err(e) => errors.push(format!("{}/{}：{e}", pg.target_dir, pg.slug)),
+            Err(e) => errors.push(file_err(format!("{}/{}", pg.target_dir, pg.slug), e)),
         }
     }
     Ok(WriteResult { written, errors, note: None })
@@ -382,9 +398,10 @@ pub fn factory_write_pages<R: Runtime>(
 pub fn extract_companies_run<R: Runtime>(
     app: AppHandle<R>,
     clean: bool,
-) -> Result<WriteResult, String> {
+    target_repo: Option<String>,
+) -> Result<WriteResult, AppError> {
     let cfg = app_cfg(&app)?;
-    let notes = PathBuf::from(&cfg.notes_repo_path);
+    let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
     let people_dir = notes.join(&cfg.factory_targets.people);
     let companies_dir = notes.join(&cfg.factory_targets.companies);
     std::fs::create_dir_all(&companies_dir).map_err(|e| e.to_string())?;
@@ -394,7 +411,7 @@ pub fn extract_companies_run<R: Runtime>(
     let imp = extract_companies::build(&people_dir, &aliases).map_err(|e| e.to_string())?;
 
     let mut written = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
     let mut frozen = 0usize;
     let mut generated_slugs: std::collections::HashSet<String> = std::collections::HashSet::new();
     for p in &imp.pages {
@@ -410,7 +427,7 @@ pub fn extract_companies_run<R: Runtime>(
         }
         match std::fs::write(&file, &p.markdown) {
             Ok(_) => written.push(file.to_string_lossy().into_owned()),
-            Err(e) => errors.push(format!("{}：{e}", file.display())),
+            Err(e) => errors.push(file_err(file.display(), e)),
         }
     }
 
@@ -438,16 +455,24 @@ pub fn extract_companies_run<R: Runtime>(
         }
     }
 
+    let note = if clean {
+        L10n::new("factory.companiesRebuiltClean")
+            .p("people", imp.people_read)
+            .p("distinct", imp.distinct)
+            .p("links", imp.total_links)
+            .p("frozen", frozen)
+            .p("removed", removed)
+    } else {
+        L10n::new("factory.companiesRebuilt")
+            .p("people", imp.people_read)
+            .p("distinct", imp.distinct)
+            .p("links", imp.total_links)
+            .p("frozen", frozen)
+    };
+
     Ok(WriteResult {
         written,
         errors,
-        note: Some(format!(
-            "people={}　distinct companies={}　links={}　frozen(enriched)={}{}",
-            imp.people_read,
-            imp.distinct,
-            imp.total_links,
-            frozen,
-            if clean { format!("　--clean removed={removed}") } else { String::new() }
-        )),
+        note: Some(note),
     })
 }

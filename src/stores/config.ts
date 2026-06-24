@@ -6,10 +6,13 @@ import {
   getAppConfig,
   saveAppConfig as saveAppConfigApi,
   saveGbrainConfigRaw,
+  setLocale as setLocaleApi,
+  formatError,
   type AppInfo,
   type AppConfig,
   type GBrainConfigView,
 } from "@/lib/tauri";
+import { applyLocale } from "@/i18n";
 
 /** 全域設定 store：環境資訊 + GBrain config（權威）+ 本系統 app config。 */
 export const useConfigStore = defineStore("config", () => {
@@ -39,9 +42,11 @@ export const useConfigStore = defineStore("config", () => {
     try {
       await loadInfo();
       await Promise.all([loadGbrain(), loadApp()]);
+      // 載入後套用使用者釘選的 locale（null → 系統偵測）
+      applyLocale(app.value?.locale ?? null);
       ready.value = true;
     } catch (e) {
-      error.value = String(e);
+      error.value = formatError(e);
     } finally {
       loading.value = false;
     }
@@ -57,5 +62,25 @@ export const useConfigStore = defineStore("config", () => {
     await loadGbrain();
   }
 
-  return { info, gbrain, app, ready, loading, error, load, loadGbrain, saveAppConfig, saveGbrainRaw };
+  /** 切換介面語言：持久化 + 即時套用。`null` = 回到自動偵測。 */
+  async function setLocale(locale: string | null) {
+    const eff = await setLocaleApi(locale);
+    if (app.value) app.value = { ...app.value, locale: eff };
+    applyLocale(eff);
+  }
+
+  return {
+    info,
+    gbrain,
+    app,
+    ready,
+    loading,
+    error,
+    load,
+    loadGbrain,
+    loadApp,
+    saveAppConfig,
+    saveGbrainRaw,
+    setLocale,
+  };
 });

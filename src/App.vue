@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, AlertTriangle, ExternalLink, X } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, AlertTriangle, ExternalLink, X } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
-import { checkPrerequisites, openUrl, type DepStatus } from "@/lib/tauri";
+import { checkPrerequisites, openUrl, tL10n, type DepStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 const config = useConfigStore();
@@ -21,9 +21,10 @@ onMounted(async () => {
 });
 
 const nav = [
-  { to: "/", label: "工廠", icon: Factory },
-  { to: "/operations", label: "操作", icon: Wrench },
-  { to: "/config", label: "設定", icon: Settings },
+  { to: "/", labelKey: "app.nav.factories", icon: Factory },
+  { to: "/operations", labelKey: "app.nav.operations", icon: Wrench },
+  { to: "/brains", labelKey: "app.nav.brains", icon: Boxes },
+  { to: "/config", labelKey: "app.nav.config", icon: Settings },
 ];
 </script>
 
@@ -56,7 +57,7 @@ const nav = [
         >
           <component :is="item.icon" :size="18" />
         </div>
-        <span :class="isActive ? 'text-foreground' : 'text-muted-foreground'">{{ item.label }}</span>
+        <span :class="isActive ? 'text-foreground' : 'text-muted-foreground'">{{ $t(item.labelKey) }}</span>
       </RouterLink>
     </aside>
 
@@ -74,14 +75,14 @@ const nav = [
         <div class="mb-3 flex items-start justify-between">
           <div class="flex items-center gap-2 text-warning">
             <AlertTriangle :size="20" />
-            <h2 class="text-base font-semibold text-foreground">缺少前置程式</h2>
+            <h2 class="text-base font-semibold text-foreground">{{ $t("app.prereq.title") }}</h2>
           </div>
           <button class="text-muted-foreground hover:text-foreground" @click="missingDeps = []">
             <X :size="18" />
           </button>
         </div>
         <p class="mb-4 text-sm text-muted-foreground">
-          本程式需要以下程式才能完整運作。請安裝後重開本程式(或於「設定」頁確認路徑)。
+          {{ $t("app.prereq.desc") }}
         </p>
         <div class="space-y-3">
           <div
@@ -95,11 +96,13 @@ const nav = [
                 class="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
                 @click="openUrl(d.url)"
               >
-                <ExternalLink :size="12" /> 安裝說明
+                <ExternalLink :size="12" /> {{ $t("app.prereq.installHint") }}
               </button>
             </div>
-            <div class="mt-1 text-xs text-muted-foreground">{{ d.install_hint }}</div>
-            <div class="mt-1 text-[11px] text-muted-foreground/70">{{ d.detail }}</div>
+            <div class="mt-1 text-xs text-muted-foreground">{{ tL10n(d.install_hint) }}</div>
+            <div class="mt-1 text-[11px] text-muted-foreground/70">
+              {{ d.detail ?? $t("app.prereq.notFound", { name: d.name }) }}
+            </div>
           </div>
         </div>
         <div class="mt-5 flex justify-end">
@@ -107,7 +110,7 @@ const nav = [
             class="rounded-md bg-primary px-4 py-1.5 text-xs text-primary-foreground hover:opacity-90"
             @click="missingDeps = []"
           >
-            我知道了
+            {{ $t("app.prereq.ack") }}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
 import router from "./router";
+import i18n from "@/i18n";
 import "./style.css";
 
 const app = createApp(App);
@@ -45,4 +46,4 @@ window.addEventListener("error", (e) => {
   showCrashOverlay(`Window error: ${e.error ?? e.message}`);
 });
 
-app.use(createPinia()).use(router).mount("#app");
+app.use(createPinia()).use(router).use(i18n).mount("#app");

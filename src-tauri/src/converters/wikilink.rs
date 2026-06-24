@@ -15,14 +15,6 @@ pub fn qualified(dir: &str, name: &str) -> String {
     }
 }
 
-/// bullets：把一組 (name) 轉成 wikilink bullet 清單（每行 `- [[dir/slug|name]]`）。
-pub fn bullet_lines(dir: &str, names: &[String]) -> Vec<String> {
-    names
-        .iter()
-        .map(|n| format!("- {}", qualified(dir, n)))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,12 +23,5 @@ mod tests {
     fn qualified_basic() {
         assert_eq!(qualified("people", "Aaron Miletich"), "[[people/aaron-miletich|Aaron Miletich]]");
         assert_eq!(qualified("people", "陳昌瑞"), "[[people/陳昌瑞|陳昌瑞]]");
-    }
-
-    #[test]
-    fn bullet_lines_format() {
-        let lines = bullet_lines("people", &["Bob Su".to_string(), "晶盛".to_string()]);
-        assert_eq!(lines[0], "- [[people/bob-su|Bob Su]]");
-        assert_eq!(lines[1], "- [[people/晶盛|晶盛]]");
     }
 }

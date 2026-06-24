@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::config;
+use crate::i18n::{AppError, L10n};
 
 /// 串流到前端的一行輸出。
 #[derive(Clone, Serialize)]
@@ -27,7 +28,7 @@ pub struct CliLine {
 pub struct OpResult {
     pub success: bool,
     pub exit_code: Option<i32>,
-    pub note: Option<String>,
+    pub note: Option<L10n>,
 }
 
 /// 寬容解碼：UTF-8 優先，失敗退 BIG5(cp950)，去尾換行。
@@ -42,17 +43,54 @@ fn decode_line(bytes: &[u8]) -> String {
     s.trim_end_matches(['\r', '\n']).to_string()
 }
 
-fn env_for_child(cfg: &config::AppConfig) -> Vec<(&'static str, std::ffi::OsString)> {
-    let mut env: Vec<(&'static str, std::ffi::OsString)> =
-        vec![("PYTHONUTF8", "1".into())];
-    if let Some(home) = cfg.gbrain_home_override.as_ref().filter(|h| !h.is_empty()) {
-        env.push(("GBRAIN_HOME", home.clone().into()));
+/// 子行程環境：PYTHONUTF8=1 + 作用中腦的 GBRAIN_HOME（None=預設腦，不設）。
+pub(crate) fn env_for_child(cfg: &config::AppConfig) -> Vec<(&'static str, std::ffi::OsString)> {
+    env_for_brain(cfg.active_env_home())
+}
+
+/// 由顯式 home（GBRAIN_HOME 值；None=預設腦）組子行程環境。
+pub(crate) fn env_for_brain(home: Option<&str>) -> Vec<(&'static str, std::ffi::OsString)> {
+    let mut env: Vec<(&'static str, std::ffi::OsString)> = vec![("PYTHONUTF8", "1".into())];
+    if let Some(h) = home.map(str::trim).filter(|h| !h.is_empty()) {
+        env.push(("GBRAIN_HOME", h.into()));
     }
     env
 }
 
+/// 寬容解碼整段 buffer：UTF-8 優先，失敗退 BIG5(cp950)。
+pub(crate) fn decode_buf(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            let (cow, _, _) = encoding_rs::BIG5.decode(bytes);
+            cow.into_owned()
+        }
+    }
+}
+
+/// 跑一個子行程並**捕獲**整段 stdout（不串流），回傳 (exit_code, stdout)。
+/// 給需要解析 JSON 輸出的指令（如 `sources list --json`）用。
+pub(crate) async fn run_capture<R: Runtime>(
+    _app: &AppHandle<R>,
+    program: &str,
+    args: &[&str],
+    env: &[(&str, std::ffi::OsString)],
+) -> std::io::Result<(i32, String, String)> {
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let out = cmd.output().await?;
+    let code = out.status.code().unwrap_or(-1);
+    Ok((code, decode_buf(&out.stdout), decode_buf(&out.stderr)))
+}
+
 /// 跑一個子行程，逐行把 stdout/stderr 透過 channel 推給前端；回傳 exit code。
-async fn run_child<R: Runtime>(
+pub(crate) async fn run_child<R: Runtime>(
     _app: &AppHandle<R>,
     ch: &Channel<CliLine>,
     program: &str,
@@ -113,11 +151,11 @@ async fn run_child<R: Runtime>(
     Ok(status.code().unwrap_or(-1))
 }
 
-fn resolve_gbrain<R: Runtime>(app: &AppHandle<R>) -> Result<(config::AppConfig, String), String> {
+fn resolve_gbrain<R: Runtime>(app: &AppHandle<R>) -> Result<(config::AppConfig, String), AppError> {
     let cfg = config::app_config::load(app).map_err(|e| e.to_string())?;
     let exe = cfg.gbrain_exe_path.clone();
     if !Path::new(&exe).exists() {
-        return Err(format!("找不到 gbrain 執行檔：{exe}（請到設定頁修正 gbrain.exe 路徑）"));
+        return Err(AppError::new("gbrain.exeNotFound").p("path", &exe));
     }
     Ok((cfg, exe))
 }
@@ -130,7 +168,7 @@ pub async fn op_run<R: Runtime>(
     on_event: Channel<CliLine>,
     op: String,
     arg: Option<String>,
-) -> Result<OpResult, String> {
+) -> Result<OpResult, AppError> {
     let (cfg, exe) = resolve_gbrain(&app)?;
     let env = env_for_child(&cfg);
     let notes = cfg.notes_repo_path.clone();
@@ -168,17 +206,17 @@ pub async fn op_run<R: Runtime>(
             Ok(OpResult::from_code(code))
         }
         "graph-query" => {
-            let slug = arg.ok_or("graph-query 需要 slug")?;
+            let slug = arg.ok_or_else(|| AppError::new("op.needArg").p("op", "graph-query"))?;
             let code = run!(&["graph-query", &slug]).map_err(|e| e.to_string())?;
             Ok(OpResult::from_code(code))
         }
         "ask" => {
-            let q = arg.ok_or("ask 需要查詢字串")?;
+            let q = arg.ok_or_else(|| AppError::new("op.needArg").p("op", "ask"))?;
             let code = run!(&["ask", &q]).map_err(|e| e.to_string())?;
             Ok(OpResult::from_code(code))
         }
         "think" => {
-            let raw = arg.ok_or("think 需要問題")?;
+            let raw = arg.ok_or_else(|| AppError::new("op.needArg").p("op", "think"))?;
             // 支援 "anchor:<slug>\n<question>" 把 --anchor 拆出來
             let (anchor, question) = match raw.strip_prefix("anchor:") {
                 Some(rest) => match rest.split_once('\n') {
@@ -197,7 +235,7 @@ pub async fn op_run<R: Runtime>(
             Ok(OpResult::from_code(code))
         }
         "sync" => run_sync(&app, &on_event, &exe, notes_path, &env, &cfg).await,
-        other => Err(format!("未知操作：{other}")),
+        other => Err(AppError::new("op.unknown").p("op", other)),
     }
 }
 
@@ -219,9 +257,9 @@ async fn run_sync<R: Runtime>(
     notes: &Path,
     env: &[(&str, std::ffi::OsString)],
     cfg: &config::AppConfig,
-) -> Result<OpResult, String> {
+) -> Result<OpResult, AppError> {
     if !notes.exists() {
-        return Err(format!("notes repo 不存在：{}", notes.display()));
+        return Err(AppError::new("op.notesNotFound").p("path", notes.display()));
     }
     // git add -A（無 remote，永不 push）
     let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git add -A".into() });
@@ -263,6 +301,6 @@ async fn run_sync<R: Runtime>(
     Ok(OpResult {
         success: code == 0,
         exit_code: Some(code),
-        note: Some("sync 完成（commit + sync + embed --stale + extract --stale）".into()),
+        note: Some(L10n::new("op.syncDone")),
     })
 }

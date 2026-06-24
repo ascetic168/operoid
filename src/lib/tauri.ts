@@ -1,4 +1,38 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import i18n from "@/i18n";
+
+/** Rust `L10n`（代碼 + 具名參數；對應 src-tauri/src/i18n.rs）。 */
+export interface L10n {
+  code: string;
+  params?: Record<string, string>;
+}
+
+/** 寬鬆的 t：Rust 代碼是動態字串，繞過 vue-i18n 的嚴格 key 型別檢查。 */
+type LooseT = (key: string, params?: Record<string, unknown>) => string;
+const gt: LooseT = i18n.global.t as LooseT;
+
+/** 把 Rust `L10n` 翻成當前語言字串。null/undefined → 空字串。 */
+export function tL10n(m: L10n | null | undefined): string {
+  if (!m) return "";
+  return m.params ? gt(m.code, m.params) : gt(m.code);
+}
+
+/**
+ * 統一格式化 invoke 拒絕值。Rust `AppError` 序列化為 `{code,params}` → 用 vue-i18n 翻譯；
+ * 其餘（舊式字串、JS 錯誤）→ `String(e)`。
+ */
+export function formatError(e: unknown): string {
+  if (
+    e &&
+    typeof e === "object" &&
+    "code" in e &&
+    typeof (e as { code: unknown }).code === "string"
+  ) {
+    const { code, params } = e as L10n;
+    return params ? gt(code, params) : gt(code);
+  }
+  return String(e);
+}
 
 /** Rust 端 AppInfo（對應 src-tauri/src/lib.rs 的 AppInfo）。 */
 export interface AppInfo {
@@ -17,8 +51,10 @@ export const ping = (): Promise<string> => invoke<string>("ping");
 export interface DepStatus {
   name: string;
   available: boolean;
-  detail: string;
-  install_hint: string;
+  /** 版本字串（語言中性）；找不到時為 null。 */
+  detail: string | null;
+  /** 安裝說明（L10n 代碼）。 */
+  install_hint: L10n;
   url: string;
 }
 
@@ -53,7 +89,7 @@ export interface GBrainConfigView {
   database_path: string | null;
   provider_base_urls: Record<string, string>;
   llm_endpoint: LlmEndpoint | null;
-  llm_error: string | null;
+  llm_error: L10n | null;
 }
 
 export interface FactoryTargets {
@@ -66,11 +102,15 @@ export interface AppConfig {
   notes_repo_path: string;
   gbrain_exe_path: string;
   gbrain_home_override: string | null;
+  brains: BrainEntry[];
+  active_brain_id: string | null;
+  active_source_id: string | null;
   auto_sync: boolean;
   sync_no_pull: boolean;
   factory_targets: FactoryTargets;
   llm_temperature: number;
   llm_max_tokens: number;
+  locale: string | null;
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>
@@ -80,6 +120,9 @@ export const saveGbrainConfigRaw = (raw: unknown): Promise<void> =>
 export const getAppConfig = (): Promise<AppConfig> => invoke<AppConfig>("get_app_config");
 export const saveAppConfig = (config: AppConfig): Promise<void> =>
   invoke<void>("save_app_config", { config });
+/** 設定介面語言覆寫（null = 回到自動偵測）。回傳實際生效的 locale。 */
+export const setLocale = (locale: string | null): Promise<string | null> =>
+  invoke<string | null>("set_locale", { locale });
 
 // ---- Operations (gbrain CLI, streamed via Channel) ----
 
@@ -91,7 +134,7 @@ export interface CliLine {
 export interface OpResult {
   success: boolean;
   exit_code: number | null;
-  note: string | null;
+  note: L10n | null;
 }
 
 export type OpName =
@@ -128,11 +171,11 @@ export interface PreviewPage {
 
 export interface PreviewResult {
   factory: string;
-  summary: string;
+  summary: L10n;
   sample: PreviewPage[];
   total: number;
   written: string[];
-  errors: string[];
+  errors: L10n[];
 }
 
 export interface WritePage {
@@ -143,20 +186,30 @@ export interface WritePage {
 
 export interface WriteResult {
   written: string[];
-  errors: string[];
-  note: string | null;
+  errors: L10n[];
+  note: L10n | null;
 }
 
 export type Factory = "people" | "companies" | "meeting" | "inbox";
 
-/** 轉換 + 立即寫入 + 回傳預覽。 */
-export const factoryRun = (factory: Factory, paths: string[]): Promise<PreviewResult> =>
-  invoke<PreviewResult>("factory_run", { factory, paths });
+/** 轉換 + 立即寫入 + 回傳預覽。target_repo=來源 repo 路徑（未給則用 app notes_repo_path）。 */
+export const factoryRun = (
+  factory: Factory,
+  paths: string[],
+  targetRepo: string | null,
+): Promise<PreviewResult> =>
+  invoke<PreviewResult>("factory_run", { factory, paths, targetRepo });
 /** 覆蓋寫入(預覽後編輯過的頁面)。 */
-export const factoryWritePages = (pages: WritePage[]): Promise<WriteResult> =>
-  invoke<WriteResult>("factory_write_pages", { pages });
-export const extractCompaniesRun = (clean: boolean): Promise<WriteResult> =>
-  invoke<WriteResult>("extract_companies_run", { clean });
+export const factoryWritePages = (
+  pages: WritePage[],
+  targetRepo: string | null,
+): Promise<WriteResult> =>
+  invoke<WriteResult>("factory_write_pages", { pages, targetRepo });
+export const extractCompaniesRun = (
+  clean: boolean,
+  targetRepo: string | null,
+): Promise<WriteResult> =>
+  invoke<WriteResult>("extract_companies_run", { clean, targetRepo });
 
 export interface AuthoredResult {
   slug: string;
@@ -173,9 +226,81 @@ export const factorySaveAuthored = (
   factory: Factory,
   markdown: string,
   existingSlug: string | null,
+  targetRepo: string | null,
 ): Promise<AuthoredResult> =>
   invoke<AuthoredResult>("factory_save_authored", {
     factory,
     markdown,
     existingSlug,
+    targetRepo,
   });
+
+// ---- Brains management (多腦 + 每腦多來源) ----
+
+export const DEFAULT_BRAIN_ID = "__default__";
+
+export interface BrainEntry {
+  id: string;
+  name: string;
+  gbrain_home: string | null; // null = 預設腦(~/.gbrain)
+}
+
+export interface BrainsList {
+  brains: BrainEntry[];
+  active_id: string | null;
+  active_dot_gbrain: string | null;
+}
+
+export interface GbrainSource {
+  id: string;
+  name: string;
+  local_path: string;
+  federated: boolean;
+  page_count: number;
+  last_sync_at: string | null;
+}
+
+export interface AddBrainReq {
+  name: string;
+  gbrain_home: string | null;
+  create: boolean;
+  embedding_model?: string;
+  embedding_dimensions?: number;
+  chat_model?: string;
+}
+
+export const brainsList = (): Promise<BrainsList> => invoke<BrainsList>("brains_list");
+export const brainsAdd = (req: AddBrainReq): Promise<BrainEntry> =>
+  invoke<BrainEntry>("brains_add", { req });
+export const brainsRemove = (id: string): Promise<void> => invoke<void>("brains_remove", { id });
+export const brainsSetActive = (id: string): Promise<void> =>
+  invoke<void>("brains_set_active", { id });
+export const brainsSetActiveSource = (sourceId: string | null): Promise<void> =>
+  invoke<void>("brains_set_active_source", { sourceId: sourceId });
+export const brainSources = (brainId: string): Promise<GbrainSource[]> =>
+  invoke<GbrainSource[]>("brain_sources", { brainId });
+export const brainSourceAdd = (
+  brainId: string,
+  sourceId: string,
+  path: string,
+): Promise<void> =>
+  invoke<void>("brain_source_add", { req: { brain_id: brainId, source_id: sourceId, path } });
+export const brainSourceRemove = (brainId: string, sourceId: string): Promise<void> =>
+  invoke<void>("brain_source_remove", { req: { brain_id: brainId, source_id: sourceId } });
+
+/** 同步某腦：scope "all" | "one"（one 需 sourceId）。逐行串流。 */
+export async function brainSync(
+  brainId: string,
+  scope: "all" | "one",
+  sourceId: string | null,
+  onLine: (line: CliLine) => void,
+): Promise<OpResult> {
+  const ch = new Channel<CliLine>();
+  ch.onmessage = onLine;
+  return invoke<OpResult>("brain_sync", {
+    onEvent: ch,
+    brainId,
+    scope,
+    sourceId: sourceId,
+  });
+}

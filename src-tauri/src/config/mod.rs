@@ -3,11 +3,13 @@
 pub mod app_config;
 pub mod gbrain_config;
 
-pub use app_config::{AppConfig, FactoryTargets};
+pub use app_config::{AppConfig, BrainEntry, FactoryTargets, DEFAULT_BRAIN_ID, SUPPORTED_LOCALES};
 pub use gbrain_config::{LlmEndpoint, LoadedConfig};
 
 use serde::Serialize;
 use tauri::{AppHandle, Runtime};
+
+use crate::i18n::{AppError, L10n};
 
 /// 前端顯示 GBrain config 的完整視圖。
 #[derive(Serialize)]
@@ -25,12 +27,15 @@ pub struct GBrainConfigView {
     pub provider_base_urls: serde_json::Value,
     /// 解析後的 LLM 端點（解析失敗時為 None，前端據此提示）。
     pub llm_endpoint: Option<LlmEndpoint>,
-    pub llm_error: Option<String>,
+    /// LLM 端點解析失敗時的在地化訊息（代碼+參數，供前端翻譯）。
+    pub llm_error: Option<L10n>,
 }
 
 fn to_view(loaded: LoadedConfig) -> GBrainConfigView {
-    let llm_endpoint = gbrain_config::resolve_endpoint(&loaded.config).ok();
-    let llm_error = gbrain_config::resolve_endpoint(&loaded.config).err().map(|e| e.to_string());
+    let (llm_endpoint, llm_error) = match gbrain_config::resolve_endpoint(&loaded.config) {
+        Ok(ep) => (Some(ep), None),
+        Err(e) => (None, Some(L10n::from(e))),
+    };
     let c = &loaded.config;
     GBrainConfigView {
         home: loaded.home.to_string_lossy().into_owned(),
@@ -49,24 +54,51 @@ fn to_view(loaded: LoadedConfig) -> GBrainConfigView {
     }
 }
 
+/// 作用中腦的 home（GBRAIN_HOME 值；None=預設腦）。
+fn active_home<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
+    app_config::load(app).ok()?.active_env_home().map(|s| s.to_string())
+}
+
 #[tauri::command]
-pub fn get_gbrain_config() -> Result<GBrainConfigView, String> {
-    let loaded = gbrain_config::load().map_err(|e| e.to_string())?;
+pub fn get_gbrain_config<R: Runtime>(app: AppHandle<R>) -> Result<GBrainConfigView, AppError> {
+    let home = active_home(&app);
+    let loaded = gbrain_config::load_for(home.as_deref())?;
     Ok(to_view(loaded))
 }
 
 #[tauri::command]
-pub fn save_gbrain_config_raw(raw_json: serde_json::Value) -> Result<(), String> {
-    let path = gbrain_config::config_path().map_err(|e| e.to_string())?;
-    gbrain_config::save_raw(&path, &raw_json).map_err(|e| e.to_string())
+pub fn save_gbrain_config_raw<R: Runtime>(
+    app: AppHandle<R>,
+    raw_json: serde_json::Value,
+) -> Result<(), AppError> {
+    let home = active_home(&app);
+    let path = gbrain_config::config_path_for(home.as_deref())?;
+    gbrain_config::save_raw(&path, &raw_json)?;
+    Ok(())
 }
 
 #[tauri::command]
-pub fn get_app_config<R: Runtime>(app: AppHandle<R>) -> Result<AppConfig, String> {
-    app_config::load(&app).map_err(|e| e.to_string())
+pub fn get_app_config<R: Runtime>(app: AppHandle<R>) -> Result<AppConfig, AppError> {
+    Ok(app_config::load(&app)?)
 }
 
 #[tauri::command]
-pub fn save_app_config<R: Runtime>(app: AppHandle<R>, config: AppConfig) -> Result<(), String> {
-    app_config::save(&app, &config).map_err(|e| e.to_string())
+pub fn save_app_config<R: Runtime>(app: AppHandle<R>, config: AppConfig) -> Result<(), AppError> {
+    app_config::save(&app, &config)?;
+    Ok(())
+}
+
+/// 設定介面語言覆寫。`locale=None` 清除覆寫（回到自動偵測）。
+/// 非支援值會被 `normalize` 清成 None。回傳實際生效的 locale。
+#[tauri::command]
+pub fn set_locale<R: Runtime>(
+    app: AppHandle<R>,
+    locale: Option<String>,
+) -> Result<Option<String>, AppError> {
+    let mut c = app_config::load(&app)?;
+    c.locale = locale
+        .filter(|l| SUPPORTED_LOCALES.contains(&l.as_str()))
+        .map(|s| s.to_string());
+    app_config::save(&app, &c)?;
+    Ok(c.locale.clone())
 }

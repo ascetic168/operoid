@@ -3,10 +3,12 @@
 //! Domain modules: config (Phase 1), converters (Phase 2), gbrain_cli (Phase 3),
 //! llm + factories (Phase 4).
 
+mod brains;
 mod config;
 mod converters;
 mod factories;
 mod gbrain_cli;
+mod i18n;
 mod llm;
 mod prereq;
 
@@ -68,11 +70,21 @@ pub fn run() {
             config::save_gbrain_config_raw,
             config::get_app_config,
             config::save_app_config,
+            config::set_locale,
             gbrain_cli::op_run,
             factories::factory_run,
             factories::factory_write_pages,
             factories::factory_save_authored,
             factories::extract_companies_run,
+            brains::brains_list,
+            brains::brains_add,
+            brains::brains_remove,
+            brains::brains_set_active,
+            brains::brains_set_active_source,
+            brains::brain_sources,
+            brains::brain_source_add,
+            brains::brain_source_remove,
+            brains::brain_sync,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。

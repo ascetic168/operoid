@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watchEffect } from "vue";
+import { useI18n } from "vue-i18n";
 import { Save, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
-import type { AppConfig } from "@/lib/tauri";
+import { formatError, tL10n, type AppConfig } from "@/lib/tauri";
+import { LANGUAGE_OPTIONS } from "@/i18n/languageConfig";
 
 const config = useConfigStore();
+const { t } = useI18n();
 if (!config.ready && !config.loading) config.load();
 
 // 安全深拷貝（避開 structuredClone 對 Pinia reactive proxy 可能丟 DataCloneError）。
@@ -26,14 +29,14 @@ async function saveRaw() {
   try {
     parsed = JSON.parse(rawText.value);
   } catch (e) {
-    rawError.value = `JSON 解析失敗：${e}`;
+    rawError.value = t("configView.jsonParseFail", { e: String(e) });
     return;
   }
   try {
     await config.saveGbrainRaw(parsed);
     rawSaved.value = true;
   } catch (e) {
-    rawError.value = String(e);
+    rawError.value = formatError(e);
   }
 }
 
@@ -44,11 +47,15 @@ const form = reactive<AppConfig>({
   notes_repo_path: "",
   gbrain_exe_path: "",
   gbrain_home_override: null,
+  brains: [],
+  active_brain_id: null,
+  active_source_id: null,
   auto_sync: true,
   sync_no_pull: true,
   factory_targets: { people: "people", companies: "companies", meetings: "meetings" },
   llm_temperature: 0.2,
   llm_max_tokens: 4096,
+  locale: null,
 });
 
 watchEffect(() => {
@@ -65,7 +72,15 @@ async function saveApp() {
     await config.saveAppConfig(clone(form) as AppConfig);
     appSaved.value = true;
   } catch (e) {
-    appError.value = String(e);
+    appError.value = formatError(e);
+  }
+}
+
+async function onLocaleChange(v: string) {
+  try {
+    await config.setLocale(v || null);
+  } catch (e) {
+    appError.value = formatError(e);
   }
 }
 </script>
@@ -73,21 +88,21 @@ async function saveApp() {
 <template>
   <div class="flex h-full flex-col overflow-y-auto p-6">
     <header class="mb-6">
-      <h1 class="text-xl font-semibold">設定</h1>
+      <h1 class="text-xl font-semibold">{{ $t("configView.title") }}</h1>
       <p class="mt-1 text-sm text-muted-foreground">
-        GBrain 的 config.json 是權威來源，系統讀取並直接使用；下方可檢視/編輯，以及本系統自有的設定。
+        {{ $t("configView.desc") }}
       </p>
     </header>
 
     <!-- GBrain config -->
     <section class="mb-6 rounded-xl border border-border bg-card/40 p-5">
       <div class="mb-3 flex items-center justify-between">
-        <h2 class="text-sm font-semibold">GBrain config（權威來源）</h2>
+        <h2 class="text-sm font-semibold">{{ $t("configView.gbrainSection") }}</h2>
         <button
           class="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
           @click="config.loadGbrain()"
         >
-          <RefreshCw :size="13" /> 重讀
+          <RefreshCw :size="13" /> {{ $t("common.refresh") }}
         </button>
       </div>
 
@@ -96,35 +111,35 @@ async function saveApp() {
         <div>
           <span class="text-muted-foreground">config：</span>
           <code>{{ config.gbrain.config_path }}</code>
-          <span v-if="!config.gbrain.exists" class="ml-1 text-warning">（不存在）</span>
+          <span v-if="!config.gbrain.exists" class="ml-1 text-warning">{{ $t("configView.notExists") }}</span>
         </div>
-        <div><span class="text-muted-foreground">chat_model：</span><code>{{ config.gbrain.chat_model ?? "—" }}</code></div>
-        <div><span class="text-muted-foreground">embedding：</span><code>{{ config.gbrain.embedding_model ?? "—" }}</code></div>
-        <div><span class="text-muted-foreground">schema_pack：</span><code>{{ config.gbrain.schema_pack ?? "—" }}</code></div>
-        <div><span class="text-muted-foreground">database：</span><code>{{ config.gbrain.database_path ?? "—" }}</code></div>
+        <div><span class="text-muted-foreground">chat_model：</span><code>{{ config.gbrain.chat_model ?? $t("common.dash") }}</code></div>
+        <div><span class="text-muted-foreground">embedding：</span><code>{{ config.gbrain.embedding_model ?? $t("common.dash") }}</code></div>
+        <div><span class="text-muted-foreground">schema_pack：</span><code>{{ config.gbrain.schema_pack ?? $t("common.dash") }}</code></div>
+        <div><span class="text-muted-foreground">database：</span><code>{{ config.gbrain.database_path ?? $t("common.dash") }}</code></div>
       </div>
 
       <!-- LLM endpoint resolution -->
       <div class="mt-4 rounded-lg border border-border/60 bg-background/40 p-3 text-sm">
-        <div class="mb-1 font-medium">LLM 端點解析（工廠結構化用）</div>
+        <div class="mb-1 font-medium">{{ $t("configView.llmTitle") }}</div>
         <div v-if="llm" class="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span>provider：<code>{{ llm.provider }}</code></span>
           <span>model：<code>{{ llm.model }}</code></span>
           <span>base_url：<code>{{ llm.base_url }}</code></span>
           <span v-if="llm.has_api_key" class="flex items-center gap-1 text-green-500">
-            <CheckCircle2 :size="14" /> API key 已設
+            <CheckCircle2 :size="14" /> {{ $t("configView.llmKeySet") }}
           </span>
           <span v-else class="flex items-center gap-1 text-warning">
-            <AlertTriangle :size="14" /> 缺 API key（環境變數）
+            <AlertTriangle :size="14" /> {{ $t("configView.llmKeyMissing") }}
           </span>
         </div>
         <div v-else-if="config.gbrain?.llm_error" class="text-warning">
-          無法解析：{{ config.gbrain.llm_error }}
+          {{ $t("configView.llmResolveFail", { error: tL10n(config.gbrain.llm_error) }) }}
         </div>
       </div>
 
       <!-- raw editor -->
-      <label class="mt-4 block text-xs text-muted-foreground">config.json（file-plane 編輯；provider_base_urls 僅此處生效）</label>
+      <label class="mt-4 block text-xs text-muted-foreground">{{ $t("configView.rawLabel") }}</label>
       <textarea
         v-model="rawText"
         spellcheck="false"
@@ -135,37 +150,37 @@ async function saveApp() {
           class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
           @click="saveRaw"
         >
-          <Save :size="14" /> 寫回 config.json
+          <Save :size="14" /> {{ $t("configView.writeBack") }}
         </button>
         <span v-if="rawError" class="text-xs text-destructive">{{ rawError }}</span>
         <span v-else-if="rawSaved" class="flex items-center gap-1 text-xs text-green-500">
-          <CheckCircle2 :size="13" /> 已儲存
+          <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
         </span>
       </div>
     </section>
 
     <!-- App config -->
     <section class="rounded-xl border border-border bg-card/40 p-5">
-      <h2 class="mb-3 text-sm font-semibold">本系統設定（app config）</h2>
+      <h2 class="mb-3 text-sm font-semibold">{{ $t("configView.appSection") }}</h2>
       <div class="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
         <label class="flex flex-col gap-1">
-          <span class="text-muted-foreground">notes repo 路徑（sync --repo 對象）</span>
+          <span class="text-muted-foreground">{{ $t("configView.notesRepoLabel") }}</span>
           <input v-model="form.notes_repo_path" class="rounded-md border border-border bg-background px-2 py-1.5" />
         </label>
         <label class="flex flex-col gap-1">
-          <span class="text-muted-foreground">gbrain.exe 路徑</span>
+          <span class="text-muted-foreground">{{ $t("configView.exeLabel") }}</span>
           <input v-model="form.gbrain_exe_path" class="rounded-md border border-border bg-background px-2 py-1.5" />
         </label>
         <label class="flex flex-col gap-1">
-          <span class="text-muted-foreground">GBRAIN_HOME 覆寫（指向 .gbrain 的父目錄；留空=預設腦）</span>
+          <span class="text-muted-foreground">{{ $t("configView.homeOverrideLabel") }}</span>
           <input
             v-model="form.gbrain_home_override"
-            placeholder="（留空使用預設）"
+            :placeholder="$t('configView.homeOverridePh')"
             class="rounded-md border border-border bg-background px-2 py-1.5"
           />
         </label>
         <label class="flex flex-col gap-1">
-          <span class="text-muted-foreground">LLM 溫度</span>
+          <span class="text-muted-foreground">{{ $t("configView.tempLabel") }}</span>
           <input
             v-model.number="form.llm_temperature"
             type="number"
@@ -176,7 +191,7 @@ async function saveApp() {
           />
         </label>
         <label class="flex flex-col gap-1">
-          <span class="text-muted-foreground">LLM max_tokens</span>
+          <span class="text-muted-foreground">{{ $t("configView.maxTokensLabel") }}</span>
           <input
             v-model.number="form.llm_max_tokens"
             type="number"
@@ -185,18 +200,29 @@ async function saveApp() {
             class="rounded-md border border-border bg-background px-2 py-1.5"
           />
         </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-muted-foreground">{{ $t("configView.languageLabel") }}</span>
+          <select
+            class="rounded-md border border-border bg-background px-2 py-1.5"
+            :value="config.app?.locale ?? ''"
+            @change="onLocaleChange(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ $t("configView.languageAuto") }}</option>
+            <option v-for="opt in LANGUAGE_OPTIONS" :key="opt.locale" :value="opt.locale">{{ opt.displayName }}</option>
+          </select>
+        </label>
         <div class="flex flex-col gap-2 sm:col-span-2">
           <label class="flex items-center gap-2">
             <input v-model="form.auto_sync" type="checkbox" />
-            <span>工廠寫檔後自動 commit + sync</span>
+            <span>{{ $t("configView.autoSyncLabel") }}</span>
           </label>
           <label class="flex items-center gap-2">
             <input v-model="form.sync_no_pull" type="checkbox" />
-            <span>sync 加 --no-pull（無 remote 的腦建議開）</span>
+            <span>{{ $t("configView.noPullLabel") }}</span>
           </label>
         </div>
         <fieldset class="grid grid-cols-3 gap-2 sm:col-span-2">
-          <legend class="mb-1 text-muted-foreground">工廠目標子目錄（白名單）</legend>
+          <legend class="mb-1 text-muted-foreground">{{ $t("configView.targetsLegend") }}</legend>
           <input v-model="form.factory_targets.people" placeholder="people" class="rounded-md border border-border bg-background px-2 py-1.5" />
           <input v-model="form.factory_targets.companies" placeholder="companies" class="rounded-md border border-border bg-background px-2 py-1.5" />
           <input v-model="form.factory_targets.meetings" placeholder="meetings" class="rounded-md border border-border bg-background px-2 py-1.5" />
@@ -207,11 +233,11 @@ async function saveApp() {
           class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
           @click="saveApp"
         >
-          <Save :size="14" /> 儲存
+          <Save :size="14" /> {{ $t("common.save") }}
         </button>
         <span v-if="appError" class="text-xs text-destructive">{{ appError }}</span>
         <span v-else-if="appSaved" class="flex items-center gap-1 text-xs text-green-500">
-          <CheckCircle2 :size="13" /> 已儲存
+          <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
         </span>
       </div>
     </section>

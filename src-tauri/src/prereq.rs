@@ -6,13 +6,16 @@ use serde::Serialize;
 use tauri::{AppHandle, Runtime};
 
 use crate::config;
+use crate::i18n::L10n;
 
 #[derive(Debug, Serialize)]
 pub struct DepStatus {
     pub name: String,
     pub available: bool,
-    pub detail: String,
-    pub install_hint: String,
+    /// 版本字串（語言中性）；找不到時為 None（前端依 available=false 顯示在地化提示）。
+    pub detail: Option<String>,
+    /// 安裝說明（在地化代碼）。
+    pub install_hint: L10n,
     pub url: String,
 }
 
@@ -41,8 +44,8 @@ pub fn check_prerequisites<R: Runtime>(app: AppHandle<R>) -> Result<Vec<DepStatu
     deps.push(DepStatus {
         name: "git".into(),
         available: git_ok.is_some(),
-        detail: git_ok.clone().unwrap_or_else(|| "PATH 上找不到 git".into()),
-        install_hint: "版本控制;工廠寫入後 sync 前需要 git commit。".into(),
+        detail: git_ok,
+        install_hint: L10n::new("prereq.git.hint"),
         url: "https://git-scm.com/downloads".into(),
     });
 
@@ -50,8 +53,8 @@ pub fn check_prerequisites<R: Runtime>(app: AppHandle<R>) -> Result<Vec<DepStatu
     deps.push(DepStatus {
         name: "bun".into(),
         available: bun_ok.is_some(),
-        detail: bun_ok.clone().unwrap_or_else(|| "PATH 上找不到 bun".into()),
-        install_hint: "JS 執行環境;gbrain 透過 bun 安裝與執行。".into(),
+        detail: bun_ok,
+        install_hint: L10n::new("prereq.bun.hint"),
         url: "https://bun.com/docs/installation#installation".into(),
     });
 
@@ -65,10 +68,8 @@ pub fn check_prerequisites<R: Runtime>(app: AppHandle<R>) -> Result<Vec<DepStatu
     deps.push(DepStatus {
         name: "gbrain".into(),
         available: gbrain_ok.is_some(),
-        detail: gbrain_ok.clone().unwrap_or_else(|| {
-            format!("找不到 gbrain(設定的路徑:{})", cfg.gbrain_exe_path)
-        }),
-        install_hint: "GBrain CLI(知識圖譜引擎);用 bun 安裝,詳見連結〈CLI standalone〉段落。".into(),
+        detail: gbrain_ok,
+        install_hint: L10n::new("prereq.gbrain.hint"),
         url: "https://github.com/garrytan/gbrain#cli-standalone-no-agent".into(),
     });
 

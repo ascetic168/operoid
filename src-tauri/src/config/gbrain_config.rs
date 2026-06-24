@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::i18n::AppError;
+
 /// ~/.gbrain/config.json 的已知欄位（其餘保留於 `raw`）。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GBrainConfig {
@@ -40,24 +42,29 @@ pub struct LlmEndpoint {
     pub has_api_key: bool,
 }
 
-/// 解析 GBrain 的 home 目錄（.gbrain 所在）：
-/// - 環境 GBRAIN_HOME 設了 → `<GBRAIN_HOME>/.gbrain`（gbrain 自己補 .gbrain）
-/// - 否則 → `~/.gbrain`
-pub fn resolve_home() -> Result<PathBuf> {
-    if let Ok(home_env) = std::env::var("GBRAIN_HOME") {
-        let p = PathBuf::from(home_env);
-        // GBRAIN_HOME 必須絕對、無 ..（與 gbrain configDir 一致）
-        if p.is_absolute() && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Ok(p.join(".gbrain"));
+/// 由顯式 home（.gbrain 的「父目錄」= GBRAIN_HOME 值）解析 .gbrain 路徑。
+/// `None` = 預設腦（~/.gbrain）。不讀 `std::env`，由呼叫端傳作用中腦。
+pub fn resolve_home_for(home: Option<&str>) -> Result<PathBuf> {
+    match home.map(str::trim).filter(|h| !h.is_empty()) {
+        Some(h) => {
+            let p = PathBuf::from(h);
+            // GBRAIN_HOME 必須絕對、無 ..（與 gbrain configDir 一致）
+            if p.is_absolute() && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                Ok(p.join(".gbrain"))
+            } else {
+                Ok(dirs::home_dir().context("無法解析使用者 home 目錄")?.join(".gbrain"))
+            }
+        }
+        None => {
+            let h = dirs::home_dir().context("無法解析使用者 home 目錄")?;
+            Ok(h.join(".gbrain"))
         }
     }
-    let h = dirs::home_dir().context("無法解析使用者 home 目錄")?;
-    Ok(h.join(".gbrain"))
 }
 
-pub fn config_path() -> Result<PathBuf> {
-    Ok(resolve_home()?.join("config.json"))
+pub fn config_path_for(home: Option<&str>) -> Result<PathBuf> {
+    Ok(resolve_home_for(home)?.join("config.json"))
 }
 
 /// 載入 GBrain config（檔案不存在則回傳帶 exists=false 的預設值 + 路徑）。
@@ -70,8 +77,9 @@ pub struct LoadedConfig {
     pub raw: serde_json::Value,
 }
 
-pub fn load() -> Result<LoadedConfig> {
-    let home = resolve_home()?;
+/// 載入「指定腦」的 config（`home` = GBRAIN_HOME 父目錄；None = 預設腦）。
+pub fn load_for(home: Option<&str>) -> Result<LoadedConfig> {
+    let home = resolve_home_for(home)?;
     let path = home.join("config.json");
     if !path.exists() {
         return Ok(LoadedConfig {
@@ -145,20 +153,20 @@ pub fn split_chat_model(chat_model: &str) -> Option<(&str, &str)> {
 }
 
 /// 依 config 解析 LLM 端點：base URL 優先用 provider_base_urls（file-plane），
-/// 否則退回 provider 預設；key 從環境變數取。
-pub fn resolve_endpoint(config: &GBrainConfig) -> Result<LlmEndpoint> {
+/// 否則退回 provider 預設；key 從環境變數取。錯誤回在地化代碼（供前端翻譯）。
+pub fn resolve_endpoint(config: &GBrainConfig) -> Result<LlmEndpoint, AppError> {
     let chat_model = config
         .chat_model
         .as_deref()
-        .context("config.json 沒有 chat_model")?;
+        .ok_or_else(|| AppError::new("config.noChatModel"))?;
     let (provider, model) = split_chat_model(chat_model)
-        .with_context(|| format!("chat_model 格式不符 provider:model：{chat_model}"))?;
+        .ok_or_else(|| AppError::new("config.badChatModel").p("chatModel", chat_model))?;
     let base_url = config
         .provider_base_urls
         .get(provider)
         .cloned()
         .or_else(|| default_base_url(provider).map(|s| s.to_string()))
-        .with_context(|| format!("未知 provider，且無 provider_base_urls 覆寫：{provider}"))?;
+        .ok_or_else(|| AppError::new("config.unknownProvider").p("provider", provider))?;
     let has_api_key = match env_key(provider) {
         Some(k) => std::env::var(k).map(|v| !v.is_empty()).unwrap_or(false),
         None => true, // ollama 等 no-auth
