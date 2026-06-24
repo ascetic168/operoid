@@ -288,6 +288,17 @@ export const brainSourceAdd = (
 export const brainSourceRemove = (brainId: string, sourceId: string): Promise<void> =>
   invoke<void>("brain_source_remove", { req: { brain_id: brainId, source_id: sourceId } });
 
+// ---- Note view（點擊 wikilink → 該 .md 轉 HTML 用預設瀏覽器開啟）----
+
+export interface NoteViewResult {
+  title: string;
+}
+
+/** 把 wikilink 指向的筆記轉成 HTML 並以系統預設瀏覽器開啟。
+ *  `target` 為 `[[...]]` 內文（如 `people/JLin` 或 `people/JLin|JLin`）。 */
+export const openNote = (target: string): Promise<NoteViewResult> =>
+  invoke<NoteViewResult>("open_note", { target });
+
 /** 同步某腦：scope "all" | "one"（one 需 sourceId）。逐行串流。 */
 export async function brainSync(
   brainId: string,

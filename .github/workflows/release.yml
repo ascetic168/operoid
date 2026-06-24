@@ -1,0 +1,94 @@
+# 發布工作流程：推送版本標籤（v*）即自動在 Windows / macOS / Linux 三平台編譯，
+# 並把安裝包上傳到對應的 GitHub Release（草稿狀態，供你審閱後發布）。
+#
+# 使用方式：
+#   git tag v0.1.0
+#   git push origin v0.1.0
+# → 觸發本流程；完成後在 Releases 頁會出現 "GBrainStudio v0.1.0" 草稿，
+#   附帶各平台安裝包（Windows .msi/.exe、macOS .dmg、Linux .deb/.rpm/.AppImage）。
+#
+# 前置（一次性）：repo Settings → Actions → General → Workflow permissions
+#   需勾選「Read and write permissions」，GITHUB_TOKEN 才能建立 Release。
+#
+# 之後若要程式碼簽章（macOS 公證 / Windows Authenticode）或自動更新（updater），
+# 再透過 repo secrets 加入簽章金鑰並於此處帶入環境變數即可；目前為未簽章組建。
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: # 手動觸發（僅供測試編譯；正式發布請用上面的標籤推送）
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write # 建立 Release 並上傳 assets 需要 write 權限
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS：Apple Silicon 與 Intel 各編一份（都在 arm runner 上交叉編譯）
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          # Linux x86_64
+          - platform: 'ubuntu-22.04'
+            args: ''
+          # Windows x86_64
+          - platform: 'windows-latest'
+            args: ''
+          # 欲產出 Linux arm64 AppImage（僅公開 repo 支援 ubuntu-22.04-arm），取消下行註解即可：
+          # - platform: 'ubuntu-22.04-arm'
+          #   args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Linux system dependencies (Tauri v2 需 webkit2gtk-4.1)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+
+      - name: install Rust stable（macOS 一併裝交叉編譯 target）
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # 只有 macOS 需要額外 target（arm runner 上交叉編 x86_64 / 反之）
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: install frontend dependencies
+        run: npm ci
+
+      - name: build & publish（tauri build 會自動先跑前端建置 npm run build）
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'GBrainStudio ${{ github.ref_name }}'
+          releaseBody: |
+            各平台安裝包已自動產生，請依作業系統下載對應檔案：
+            - **Windows**：`.msi`（或 `.exe` NSIS 安裝包）
+            - **macOS**：`.dmg`（Apple Silicon 選 `aarch64`，Intel 選 `x86_64`）
+            - **Linux**：`.deb` / `.rpm` / `.AppImage`
+
+            完整說明見 [README](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md)。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

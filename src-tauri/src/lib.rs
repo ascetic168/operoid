@@ -10,6 +10,7 @@ mod factories;
 mod gbrain_cli;
 mod i18n;
 mod llm;
+mod note_view;
 mod prereq;
 
 use serde::Serialize;
@@ -85,6 +86,7 @@ pub fn run() {
             brains::brain_source_add,
             brains::brain_source_remove,
             brains::brain_sync,
+            note_view::open_note,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。

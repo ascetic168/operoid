@@ -19,6 +19,7 @@ import {
   extractCompaniesRun,
   formatError,
   tL10n,
+  openNote,
   type CliLine,
   type OpName,
 } from "@/lib/tauri";
@@ -91,6 +92,54 @@ async function run(id: OpName, needsArg?: "query" | "slug") {
 
 function clearLog() {
   log.value = [];
+}
+
+/** 一行輸出切成「純文字 / wikilink」段落，供模板分段渲染（不用 v-html，防 XSS）。
+ *  支援兩種 gbrain 標籤：雙括 `[[dir/slug]]`/`[[dir/slug|name]]`（筆記內文），
+ *  與單括 `[dir/slug]`（gbrain think/ask 輸出的引用格式）。單括須含 `/` 且後不接 `(`，
+ *  以避開 markdown 連結 `[text](url)`。 */
+interface LinkSeg {
+  kind: "text" | "link";
+  text: string;
+  target?: string;
+}
+function linkSegments(text: string): LinkSeg[] {
+  const segs: LinkSeg[] = [];
+  const re = /\[\[([^\]]+)\]\]|\[([^\]\[\s|\/]+\/[^\]\[\s|\/]+)\](?!\()/g;
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const idx = m.index ?? 0;
+    if (idx > last) segs.push({ kind: "text", text: text.slice(last, idx) });
+    let target: string;
+    let display: string;
+    if (m[1] !== undefined) {
+      // 雙括：inner 可能含 |name
+      const inner = m[1];
+      const pipe = inner.indexOf("|");
+      target = (pipe >= 0 ? inner.slice(0, pipe) : inner).trim();
+      const dispRaw = pipe >= 0 ? inner.slice(pipe + 1) : "";
+      display = dispRaw.trim() || target.split("/").pop()?.trim() || target;
+    } else {
+      // 單括：[dir/slug]
+      target = m[2].trim();
+      display = target.split("/").pop()?.trim() || target;
+    }
+    if (target) segs.push({ kind: "link", text: display, target });
+    else segs.push({ kind: "text", text: m[0] });
+    last = idx + m[0].length;
+  }
+  if (last < text.length) segs.push({ kind: "text", text: text.slice(last) });
+  return segs;
+}
+
+/** 點擊 wikilink → 後端轉 HTML 用預設瀏覽器開啟。 */
+async function openLink(target: string) {
+  try {
+    const res = await openNote(target);
+    await push({ stream: "step", text: t("note.opened", { title: res.title }) });
+  } catch (e) {
+    await push({ stream: "stderr", text: t("operations.errLine", { e: formatError(e) }) });
+  }
 }
 
 async function rebuildCompanies() {
@@ -192,7 +241,16 @@ async function rebuildCompanies() {
             'text-sky-400': entry.stream === 'step',
           }"
         >
-          {{ entry.text }}
+          <template v-for="(seg, j) in linkSegments(entry.text)" :key="j">
+            <span
+              v-if="seg.kind === 'link'"
+              class="cursor-pointer font-medium text-sky-400 underline-offset-2 hover:underline"
+              :title="seg.target"
+              @click="openLink(seg.target!)"
+              >{{ seg.text }}</span
+            >
+            <template v-else>{{ seg.text }}</template>
+          </template>
         </div>
       </div>
     </div>

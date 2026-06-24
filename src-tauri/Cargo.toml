@@ -3,6 +3,8 @@ name = "gbrain-studio"
 version = "0.1.0"
 edition = "2021"
 description = "GBrainStudio — preprocessing & operations GUI for GBrain"
+authors = ["朱國棟 (Charlie Chu)"]
+license = "MIT"
 
 [lib]
 name = "gbrain_studio_lib"
@@ -30,6 +32,8 @@ encoding_rs = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 log = "0.4"
+pulldown-cmark = "0.12"
+open = "5"
 
 [profile.dev]
 incremental = true

@@ -205,6 +205,10 @@
     "notesNotFound": "notes repo 不存在：{path}",
     "syncDone": "sync 完成（commit + sync + embed --stale + extract --stale）"
   },
+  "note": {
+    "opened": "↗ 已在浏览器打开：{title}",
+    "notFound": "找不到笔记：{target}"
+  },
   "source": {
     "listFailed": "sources list 失败（exit {code}）：{detail}",
     "notGitRepo": "来源路径不是 git repo（找不到 .git）：{path}",

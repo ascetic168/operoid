@@ -205,6 +205,10 @@
     "notesNotFound": "notes repo does not exist: {path}",
     "syncDone": "sync done (commit + sync + embed --stale + extract --stale)"
   },
+  "note": {
+    "opened": "↗ Opened in browser: {title}",
+    "notFound": "Note not found: {target}"
+  },
   "source": {
     "listFailed": "sources list failed (exit {code}): {detail}",
     "notGitRepo": "Source path is not a git repo (.git not found): {path}",

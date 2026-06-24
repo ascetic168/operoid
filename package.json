@@ -2,6 +2,8 @@
   "name": "gbrain-studio",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "author": "朱國棟 (Charlie Chu)",
   "type": "module",
   "scripts": {
     "dev": "vite",

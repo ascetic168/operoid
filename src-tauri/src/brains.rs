@@ -258,18 +258,18 @@ pub fn brains_set_active_source<R: Runtime>(
     Ok(())
 }
 
-/// 列出某腦的 sources（live：gbrain sources list --json）。
-#[tauri::command]
-pub async fn brain_sources<R: Runtime>(
-    app: AppHandle<R>,
-    brain_id: String,
+/// 列出某腦的 sources（live：gbrain sources list --json）。給 `brain_sources` 指令
+/// 與 `note_view`（點擊 wikilink → 在作用中來源 repo 找 .md）共用。
+pub(crate) async fn list_sources<R: Runtime>(
+    app: &AppHandle<R>,
+    brain_id: &str,
 ) -> Result<Vec<GbrainSource>, AppError> {
-    let c = cfg(&app)?;
-    let entry = brain_entry(&c, &brain_id)?;
+    let c = cfg(app)?;
+    let entry = brain_entry(&c, brain_id)?;
     let exe = exe_path(&c)?;
     let env = env_for_brain(entry.env_home());
     let env_ref: Vec<(&str, std::ffi::OsString)> = env;
-    let (code, out, err) = run_capture(&app, &exe, &["sources", "list", "--json"], &env_ref)
+    let (code, out, err) = run_capture(app, &exe, &["sources", "list", "--json"], &env_ref)
         .await
         .map_err(|e| e.to_string())?;
     if code != 0 {
@@ -283,6 +283,15 @@ pub async fn brain_sources<R: Runtime>(
     }
     let w: Wrap = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     Ok(w.sources)
+}
+
+/// 列出某腦的 sources（live：gbrain sources list --json）。
+#[tauri::command]
+pub async fn brain_sources<R: Runtime>(
+    app: AppHandle<R>,
+    brain_id: String,
+) -> Result<Vec<GbrainSource>, AppError> {
+    list_sources(&app, &brain_id).await
 }
 
 #[tauri::command]
@@ -394,7 +403,7 @@ pub async fn brain_sync<R: Runtime>(
 }
 
 /// 從 stdout 文字中取第一個 `{` 到最後一個 `}` 的 JSON 物件（容忍前後雜訊）。
-fn extract_json(s: &str) -> Option<String> {
+pub(crate) fn extract_json(s: &str) -> Option<String> {
     let start = s.find('{')?;
     let end = s.rfind('}')?;
     if end > start {
