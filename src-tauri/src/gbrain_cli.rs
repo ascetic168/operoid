@@ -68,6 +68,32 @@ pub(crate) fn decode_buf(bytes: &[u8]) -> String {
     }
 }
 
+/// 壓制 Windows console 子視窗。release build 為 GUI 子系統（見 `main.rs` 的
+/// `windows_subsystem = "windows"`），spawn 子行程時 Windows 會為其配置一個新 console，
+/// 造成黑色視窗閃現（dev 因附掛終端機不會）。設 `CREATE_NO_WINDOW` 即可避免。非 Windows 為 no-op。
+///
+/// `std::process::Command` 的 `creation_flags` 來自 std 的 `CommandExt` trait；
+/// `tokio::process::Command` 則是自帶 inherent method（且未實作 std 的 `CommandExt`），
+/// 故分兩個函式，無法用單一泛型涵蓋。
+#[cfg(windows)]
+pub(crate) fn no_console(cmd: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt as _;
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+}
+
+#[cfg(not(windows))]
+#[allow(unused_variables)]
+pub(crate) fn no_console(cmd: &mut std::process::Command) {}
+
+/// 同上，給 `tokio::process::Command`（串流/捕獲子行程用）。
+#[cfg(windows)]
+pub(crate) fn no_console_async(cmd: &mut Command) {
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+}
+
+#[cfg(not(windows))]
+pub(crate) fn no_console_async(_cmd: &mut Command) {}
+
 /// 跑一個子行程並**捕獲**整段 stdout（不串流），回傳 (exit_code, stdout)。
 /// 給需要解析 JSON 輸出的指令（如 `sources list --json`）用。
 pub(crate) async fn run_capture<R: Runtime>(
@@ -77,6 +103,7 @@ pub(crate) async fn run_capture<R: Runtime>(
     env: &[(&str, std::ffi::OsString)],
 ) -> std::io::Result<(i32, String, String)> {
     let mut cmd = Command::new(program);
+    no_console_async(&mut cmd);
     cmd.args(args);
     for (k, v) in env {
         cmd.env(k, v);
@@ -99,6 +126,7 @@ pub(crate) async fn run_child<R: Runtime>(
     env: &[(&str, std::ffi::OsString)],
 ) -> std::io::Result<i32> {
     let mut cmd = Command::new(program);
+    no_console_async(&mut cmd);
     cmd.args(args);
     if let Some(dir) = cwd {
         cmd.current_dir(dir);

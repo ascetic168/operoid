@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Runtime};
 
 use crate::config;
+use crate::gbrain_cli::no_console;
 use crate::i18n::L10n;
 
 #[derive(Debug, Serialize)]
@@ -21,11 +22,10 @@ pub struct DepStatus {
 
 /// 跑 `<cmd> <args>`;成功回 stdout(或 stderr)第一行,失敗回 None。
 fn probe(cmd: &str, args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new(cmd)
-        .args(args)
-        .env("PYTHONUTF8", "1")
-        .output()
-        .ok()?;
+    let mut c = std::process::Command::new(cmd);
+    c.args(args).env("PYTHONUTF8", "1");
+    no_console(&mut c);
+    let out = c.output().ok()?;
     if !out.status.success() {
         return None;
     }

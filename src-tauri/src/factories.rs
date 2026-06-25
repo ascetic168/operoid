@@ -11,6 +11,7 @@ use tauri::{AppHandle, Runtime};
 
 use crate::config;
 use crate::converters::{csv_people, extract_companies, pdf_text, text_to_md};
+use crate::gbrain_cli::no_console;
 use crate::i18n::{AppError, L10n};
 
 /// 單檔轉換/寫入失敗的在地化訊息（code=factory.fileError，含 file+detail）。
@@ -325,6 +326,7 @@ fn run_inbox(
         let mut cmd = std::process::Command::new(&cfg.gbrain_exe_path);
         cmd.args(["capture", "--file", p, "--type", "note", "--quiet"])
             .env("PYTHONUTF8", "1");
+        no_console(&mut cmd);
         if let Some(h) = cfg.active_env_home() {
             cmd.env("GBRAIN_HOME", h);
         }
