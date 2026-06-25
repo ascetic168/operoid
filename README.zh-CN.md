@@ -44,11 +44,12 @@
 
 | 工厂 | 接受 | 变成 |
 |---|---|---|
-| **people** | Google Contacts CSV | 人物笔记 |
+| **people** | CSV / TXT / MD | 人物笔记（CSV=通讯录；TXT/MD=一人一档，LLM 结构化） |
 | **companies** | TXT / PDF | 公司笔记（LLM 结构化） |
 | **meeting** | TXT / MD / PDF | 会议笔记（LLM 结构化） |
 | **inbox** | TXT / MD | 速记 capture |
 
+- **批量拖放：** 一次丢多个文件；结果清单显示每个文件的状态，可点任一文件预览、编辑后再同步。
 - **来源感知：** 笔记写对位置 —— 作用中脑的作用中来源 repo —— 所以一键 **Sync 到脑** 就接得上。
 - **手写编辑器（`+`）：** 从 template 开始自然书写；保存时你提到的人名/公司名会自动连进图谱。
 

@@ -56,11 +56,12 @@ straight into your notes:
 
 | Factory | Accepts | Becomes |
 |---|---|---|
-| **people** | Google Contacts CSV | people notes |
+| **people** | CSV / TXT / MD | people notes (CSV = contacts; TXT/MD = one person, LLM-structured) |
 | **companies** | TXT / PDF | company notes (LLM-structured) |
 | **meeting** | TXT / MD / PDF | meeting notes (LLM-structured) |
 | **inbox** | TXT / MD | a quick capture |
 
+- **Batch drop:** drop several files at once; a results list shows each file's status — click any one to preview and edit it before syncing.
 - **Source-aware:** notes land in the right place — the active brain's active
   source repo — so a one-click **Sync to brain** picks them up.
 - **Authoring editor (`+`):** start from a template and write naturally; on save,

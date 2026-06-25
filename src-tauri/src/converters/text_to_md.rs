@@ -42,6 +42,7 @@ pub fn render(factory: &str, sp: &StructuredPage, targets: &FactoryTargets) -> (
     let (dir, default_type, default_tags): (&str, &str, Vec<&str>) = match factory {
         "companies" => (&targets.companies, "company", vec!["companies", "contact"]),
         "meeting" => (&targets.meetings, "meeting", vec!["meeting"]),
+        "people" => (&targets.people, "person", vec!["people", "contact"]),
         _ => ("concepts", "concept", vec![]),
     };
 
@@ -131,6 +132,7 @@ fn system_prompt(factory: &str) -> String {
     let role = match factory {
         "companies" => "公司（company）",
         "meeting" => "會議（meeting）",
+        "people" => "人物（person）",
         _ => "主題（concept）",
     };
     format!(
@@ -149,6 +151,7 @@ fn system_prompt(factory: &str) -> String {
         ptype = match factory {
             "companies" => "company",
             "meeting" => "meeting",
+            "people" => "person",
             _ => "concept",
         }
     )

@@ -169,6 +169,14 @@ export interface PreviewPage {
   markdown: string;
 }
 
+/** 一個輸入檔的處理結果(檔案層級)。前端 >1 檔時顯示清單。 */
+export interface ProcessedFile {
+  path: string;
+  ok: boolean;
+  message: L10n | null;
+  pages: PreviewPage[];
+}
+
 export interface PreviewResult {
   factory: string;
   summary: L10n;
@@ -176,6 +184,7 @@ export interface PreviewResult {
   total: number;
   written: string[];
   errors: L10n[];
+  files: ProcessedFile[];
 }
 
 export interface WritePage {

@@ -35,6 +35,15 @@ pub struct PreviewPage {
     pub markdown: String,
 }
 
+/// 一個輸入檔的處理結果(檔案層級)。前端 >1 檔時顯示清單。
+#[derive(Debug, Serialize)]
+pub struct ProcessedFile {
+    pub path: String,
+    pub ok: bool,
+    pub message: Option<L10n>,
+    pub pages: Vec<PreviewPage>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PreviewResult {
     pub factory: String,
@@ -44,6 +53,9 @@ pub struct PreviewResult {
     /// 已立即寫入的檔案路徑。
     pub written: Vec<String>,
     pub errors: Vec<L10n>,
+    /// 檔案層級結果(逐輸入檔)。前端 >1 檔時顯示清單;空 = 舊路徑(inbox)。
+    #[serde(default)]
+    pub files: Vec<ProcessedFile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,66 +190,132 @@ pub async fn factory_run<R: Runtime>(
     let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
 
     match factory.as_str() {
-        "people" => run_people(&cfg, &notes, &paths),
+        "people" => run_people(&cfg, &notes, &paths).await,
         "companies" | "meeting" => run_textual(&factory, &cfg, &notes, &paths).await,
         "inbox" => run_inbox(&cfg, &notes, &paths),
         other => Err(AppError::new("factory.unknown").p("factory", other)),
     }
 }
 
-fn run_people(
+async fn run_people(
     cfg: &config::AppConfig,
     notes: &Path,
     paths: &[String],
 ) -> Result<PreviewResult, AppError> {
     let target = cfg.factory_targets.people.clone();
-    let mut all = Vec::new();
+    let targets = cfg.factory_targets.clone();
+
+    // 僅當含 txt/md 才載 LLM endpoint(純 CSV 批次不要求 API key)。
+    let has_text = paths.iter().any(|p| {
+        Path::new(p)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("txt") || e.eq_ignore_ascii_case("md"))
+            .unwrap_or(false)
+    });
+    let endpoint = if has_text {
+        let loaded = config::gbrain_config::load_for(cfg.active_env_home())?;
+        let ep = config::gbrain_config::resolve_endpoint(&loaded.config)?;
+        if !ep.has_api_key && ep.provider != "ollama" {
+            return Err(AppError::new("llm.noApiKey")
+                .p("provider", &ep.provider)
+                .p("envKey", config::gbrain_config::env_key(&ep.provider).unwrap_or("?")));
+        }
+        Some(ep)
+    } else {
+        None
+    };
+
+    let mut files: Vec<ProcessedFile> = Vec::new();
+    let mut all_pages: Vec<PreviewPage> = Vec::new();
+    let mut written: Vec<String> = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
     let mut rows = 0usize;
     let mut merged = 0usize;
+
     for p in paths {
         let path = Path::new(p);
-        if path.extension().and_then(|e| e.to_str()).map_or(true, |e| !e.eq_ignore_ascii_case("csv")) {
-            errors.push(L10n::new("factory.csvOnly").p("file", p));
-            continue;
-        }
-        match read_text(path) {
-            Ok(text) => match csv_people::parse(&text, true) {
-                Ok(imp) => {
-                    rows += imp.rows_read;
-                    merged += imp.groups_merged;
-                    all.extend(imp.pages);
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let mut pf = ProcessedFile {
+            path: p.clone(),
+            ok: true,
+            message: None,
+            pages: vec![],
+        };
+
+        // 逐檔依副檔名分流:csv→結構化解析(一檔多人);txt/md→LLM 結構化(一檔一人)。
+        let parsed: Result<Vec<PreviewPage>, L10n> = if ext.eq_ignore_ascii_case("csv") {
+            match read_text(path) {
+                Ok(text) => match csv_people::parse(&text, true) {
+                    Ok(imp) => {
+                        rows += imp.rows_read;
+                        merged += imp.groups_merged;
+                        Ok(imp
+                            .pages
+                            .iter()
+                            .map(|pg| PreviewPage {
+                                slug: pg.slug.clone(),
+                                target_dir: target.clone(),
+                                name: pg.name.clone(),
+                                markdown: pg.markdown.clone(),
+                            })
+                            .collect())
+                    }
+                    Err(e) => Err(file_err(p, e)),
+                },
+                Err(e) => Err(file_err(p, e)),
+            }
+        } else if ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("md") {
+            let ep = endpoint.as_ref().expect("has_text ⇒ endpoint loaded");
+            match read_text(path) {
+                Ok(raw) => match text_to_md::text_to_page("people", &raw, cfg, ep).await {
+                    Ok(sp) => {
+                        let (slug, markdown) = text_to_md::render("people", &sp, &targets);
+                        Ok(vec![PreviewPage {
+                            slug,
+                            target_dir: target.clone(),
+                            name: sp.title,
+                            markdown,
+                        }])
+                    }
+                    Err(e) => Err(file_err(p, e)),
+                },
+                Err(e) => Err(file_err(p, e)),
+            }
+        } else {
+            Err(L10n::new("factory.csvOnly").p("file", p))
+        };
+
+        match parsed {
+            Ok(pages) => {
+                for page in &pages {
+                    match write_page(notes, &page.target_dir, &page.slug, &page.markdown) {
+                        Ok(f) => written.push(f.to_string_lossy().into_owned()),
+                        Err(e) => errors.push(file_err(format!("{}/{}", page.target_dir, page.slug), e)),
+                    }
                 }
-                Err(e) => errors.push(file_err(p, e)),
-            },
-            Err(e) => errors.push(file_err(p, e)),
+                all_pages.extend(pages.iter().cloned());
+                pf.pages = pages;
+            }
+            Err(m) => {
+                pf.ok = false;
+                pf.message = Some(m.clone());
+                errors.push(m);
+            }
         }
+        files.push(pf);
     }
 
-    // 立即全部寫入
-    let mut written = Vec::new();
-    for pg in &all {
-        match write_page(notes, &target, &pg.slug, &pg.markdown) {
-            Ok(f) => written.push(f.to_string_lossy().into_owned()),
-            Err(e) => errors.push(file_err(format!("{}/{}", target, pg.slug), e)),
-        }
-    }
-
-    let total = all.len();
-    let sample: Vec<PreviewPage> = all
-        .iter()
-        .take(10)
-        .map(|p| PreviewPage {
-            slug: p.slug.clone(),
-            target_dir: target.clone(),
-            name: p.name.clone(),
-            markdown: p.markdown.clone(),
-        })
-        .collect();
-    let summary = L10n::new("factory.peopleSummary")
-        .p("rows", rows)
-        .p("merged", merged)
-        .p("written", written.len());
+    let total = all_pages.len();
+    let sample: Vec<PreviewPage> = all_pages.iter().take(10).cloned().collect();
+    let summary = if rows > 0 {
+        L10n::new("factory.peopleSummary")
+            .p("rows", rows)
+            .p("merged", merged)
+            .p("written", written.len())
+    } else {
+        L10n::new("factory.writtenN").p("factory", "people").p("n", written.len())
+    };
 
     Ok(PreviewResult {
         factory: "people".into(),
@@ -246,6 +324,7 @@ fn run_people(
         total,
         written,
         errors,
+        files,
     })
 }
 
@@ -269,15 +348,25 @@ async fn run_textual(
         _ => "concepts".into(),
     };
 
-    let mut sample = Vec::new();
+    let mut files: Vec<ProcessedFile> = Vec::new();
     let mut written = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
     for p in paths {
         let path = Path::new(p);
+        let mut pf = ProcessedFile {
+            path: p.clone(),
+            ok: true,
+            message: None,
+            pages: vec![],
+        };
         let raw = match extract_raw(path) {
             Ok(t) => t,
             Err(e) => {
-                errors.push(file_err(p, e));
+                let m = file_err(p, e);
+                pf.ok = false;
+                pf.message = Some(m.clone());
+                errors.push(m);
+                files.push(pf);
                 continue;
             }
         };
@@ -287,20 +376,30 @@ async fn run_textual(
                 match write_page(notes, &target_dir, &slug, &markdown) {
                     Ok(f) => written.push(f.to_string_lossy().into_owned()),
                     Err(e) => {
-                        errors.push(file_err(format!("{target_dir}/{slug}"), e));
+                        let m = file_err(format!("{target_dir}/{slug}"), e);
+                        pf.ok = false;
+                        pf.message = Some(m.clone());
+                        errors.push(m);
                     }
                 }
-                sample.push(PreviewPage {
+                pf.pages.push(PreviewPage {
                     slug,
                     target_dir: target_dir.clone(),
                     name: sp.title,
                     markdown,
                 });
             }
-            Err(e) => errors.push(file_err(p, e)),
+            Err(e) => {
+                let m = file_err(p, e);
+                pf.ok = false;
+                pf.message = Some(m.clone());
+                errors.push(m);
+            }
         }
+        files.push(pf);
     }
-    let total = sample.len();
+    let sample: Vec<PreviewPage> = files.iter().flat_map(|f| f.pages.iter().cloned()).take(10).collect();
+    let total: usize = files.iter().map(|f| f.pages.len()).sum();
     let summary = L10n::new("factory.writtenN").p("factory", factory).p("n", written.len());
     Ok(PreviewResult {
         factory: factory.into(),
@@ -309,6 +408,7 @@ async fn run_textual(
         total,
         written,
         errors,
+        files,
     })
 }
 
@@ -355,6 +455,7 @@ fn run_inbox(
         total,
         written,
         errors,
+        files: vec![],
     })
 }
 

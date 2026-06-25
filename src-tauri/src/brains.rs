@@ -15,7 +15,7 @@ use crate::config::{
     gbrain_config::{self},
     AppConfig, BrainEntry, DEFAULT_BRAIN_ID,
 };
-use crate::gbrain_cli::{env_for_brain, run_capture, run_child, CliLine, OpResult};
+use crate::gbrain_cli::{env_for_brain, git_add_commit, run_capture, run_child, CliLine, OpResult};
 use crate::i18n::{AppError, L10n};
 
 /// 一個 gbrain source（來自 `sources list --json`）。
@@ -357,6 +357,27 @@ pub async fn brain_sync<R: Runtime>(
     let exe = exe_path(&c)?;
     let env = env_for_brain(entry.env_home());
     let env_ref: Vec<(&str, std::ffi::OsString)> = env.clone();
+
+    // sync 前對涉及的 source repo 做 git add+commit（best-effort，不中斷 sync）。
+    // gbrain sync 是 git-based incremental，未 commit 的變更不會被同步——工廠頁寫檔後
+    // 若直接 sync 會漏掉新檔，故在此確保先進 git。
+    let targets: Vec<String> = match list_sources(&app, &brain_id).await {
+        Ok(srcs) => match scope.as_str() {
+            "one" => srcs
+                .iter()
+                .filter(|s| source_id.as_deref() == Some(s.id.as_str()))
+                .map(|s| s.local_path.clone())
+                .collect(),
+            _ => srcs.iter().map(|s| s.local_path.clone()).collect(),
+        },
+        Err(_) => Vec::new(),
+    };
+    for path in &targets {
+        let repo = Path::new(path);
+        if repo.join(".git").exists() {
+            let _ = git_add_commit(&app, &on_event, repo).await;
+        }
+    }
 
     let mut sync_args: Vec<String> = vec!["sync".into()];
     match scope.as_str() {

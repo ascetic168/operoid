@@ -277,6 +277,32 @@ impl OpResult {
     }
 }
 
+/// git add -A + commit（best-effort：非零退出碼＝無新變更，不視為錯誤）。
+/// 用於 sync 前確保 working-tree 變更已進 git（gbrain sync 是 git-based incremental，
+/// 未 commit 的變更不會被同步）。回傳 commit 的 exit code；io 層級錯誤（指令啟動失敗）
+/// 以 Err 傳播，由呼叫者決定是否中斷。
+pub(crate) async fn git_add_commit<R: Runtime>(
+    app: &AppHandle<R>,
+    ch: &Channel<CliLine>,
+    repo: &Path,
+) -> std::io::Result<i32> {
+    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git add -A".into() });
+    // add 失敗不中斷（best-effort）；commit 才回傳結果。
+    let _ = run_child(app, ch, "git", &["add", "-A"], Some(repo), &[]).await;
+
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let msg = format!("GBrainStudio sync {stamp}");
+    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git commit".into() });
+    let commit_code = run_child(app, ch, "git", &["commit", "-m", &msg], Some(repo), &[]).await?;
+    if commit_code != 0 {
+        let _ = ch.send(CliLine {
+            stream: "step".into(),
+            text: "（無新變更可 commit；仍繼續 sync 已 commit 的差異）".into(),
+        });
+    }
+    Ok(commit_code)
+}
+
 /// sync 完整流程：git add+commit → gbrain sync →（偵測 defer）embed --stale → extract --stale。
 async fn run_sync<R: Runtime>(
     app: &AppHandle<R>,
@@ -289,23 +315,8 @@ async fn run_sync<R: Runtime>(
     if !notes.exists() {
         return Err(AppError::new("op.notesNotFound").p("path", notes.display()));
     }
-    // git add -A（無 remote，永不 push）
-    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git add -A".into() });
-    let _ = run_child(app, ch, "git", &["add", "-A"], Some(notes), &[]).await;
-
-    // git commit（可能「nothing to commit」→ 非零，視為無新變更但繼續）
-    let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let msg = format!("GBrainStudio sync {stamp}");
-    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git commit".into() });
-    let commit_code = run_child(app, ch, "git", &["commit", "-m", &msg], Some(notes), &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    if commit_code != 0 {
-        let _ = ch.send(CliLine {
-            stream: "step".into(),
-            text: "（無新變更可 commit；仍繼續 sync 已 commit 的差異）".into(),
-        });
-    }
+    // git add -A + commit（io 錯誤才中斷；無新變更不中斷）。
+    let _ = git_add_commit(app, ch, notes).await.map_err(|e| e.to_string())?;
 
     // gbrain sync --repo <notes> [--no-pull] --yes
     let notes_str = notes.to_string_lossy().into_owned();

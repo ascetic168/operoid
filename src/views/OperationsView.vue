@@ -188,7 +188,7 @@ async function rebuildCompanies() {
         v-model="query"
         :placeholder="$t('operations.askPlaceholder')"
         class="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-        @keydown.enter="run('ask', 'query')"
+        @keydown.enter="run('think', 'query')"
       />
     </div>
 

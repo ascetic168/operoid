@@ -25,6 +25,7 @@ import {
   formatError,
   tL10n,
   type Factory,
+  type PreviewPage,
   type PreviewResult,
   type WriteResult,
   type AuthoredResult,
@@ -50,7 +51,7 @@ const factories: FactoryDef[] = [
 
 // 點選擇器的副檔名過濾(每個工廠不同)。名稱為檔案類型標籤，語言中立，不譯。
 const FILTERS: Record<Factory, { name: string; extensions: string[] }[]> = {
-  people: [{ name: "CSV", extensions: ["csv"] }],
+  people: [{ name: "CSV / Text / Markdown", extensions: ["csv", "txt", "md"] }],
   companies: [{ name: "Text / PDF", extensions: ["txt", "pdf"] }],
   meeting: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
   inbox: [{ name: "Text / Markdown", extensions: ["txt", "md"] }],
@@ -68,8 +69,19 @@ const preview = ref<PreviewResult | null>(null);
 const errorMsg = ref<string | null>(null);
 
 const selectedSample = ref(0);
+const selectedFile = ref<number | null>(null); // >1 檔:null=清單, 數字=預覽某檔
 const editedMd = ref("");
 const overwriteRes = ref<WriteResult | null>(null);
+
+// 當前預覽的頁陣列:多檔模式=選中檔的 pages;否則=sample。
+const currentPages = computed<PreviewPage[]>(() => {
+  const p = preview.value;
+  if (!p) return [];
+  if (p.files.length > 1 && selectedFile.value !== null) {
+    return p.files[selectedFile.value]?.pages ?? [];
+  }
+  return p.sample;
+});
 
 const syncLog = ref<string[]>([]);
 const syncRunning = ref(false);
@@ -144,6 +156,7 @@ async function doRun(factoryId: string, paths: string[]) {
   syncLog.value = [];
   syncDone.value = false;
   selectedSample.value = 0;
+  selectedFile.value = null;
   try {
     preview.value = await factoryRun(factoryId as Factory, paths, targetRepo.value);
     syncEditedFromSample();
@@ -155,14 +168,14 @@ async function doRun(factoryId: string, paths: string[]) {
 }
 
 function syncEditedFromSample() {
-  const s = preview.value?.sample[selectedSample.value];
+  const s = currentPages.value[selectedSample.value];
   editedMd.value = s ? s.markdown : "";
 }
 
 watch(selectedSample, syncEditedFromSample);
 
 async function doOverwrite() {
-  const s = preview.value?.sample[selectedSample.value];
+  const s = currentPages.value[selectedSample.value];
   if (!s) return;
   busy.value = "overwrite";
   try {
@@ -332,32 +345,60 @@ async function saveEditorAndSync() {
           <div v-for="(e, i) in preview.errors" :key="i">{{ tL10n(e) }}</div>
         </div>
 
-        <div v-if="preview.sample.length > 1" class="mb-2 flex items-center gap-2">
-          <span class="text-xs text-muted-foreground">{{ $t("factories.previewN") }}</span>
-          <select v-model.number="selectedSample" class="rounded border border-border bg-background px-2 py-1 text-xs">
-            <option v-for="(s, i) in preview.sample" :key="i" :value="i">{{ s.slug }}</option>
-          </select>
-          <span class="text-xs text-muted-foreground">{{ $t("factories.pageEditable") }}</span>
+        <!-- 多檔批次:檔案清單(點選進入單檔預覽) -->
+        <div v-if="preview.files.length > 1 && selectedFile === null" class="mb-2">
+          <div class="mb-2 text-xs text-muted-foreground">{{ $t("factories.filesProcessed") }}</div>
+          <div class="divide-y divide-border rounded-md border border-border">
+            <button
+              v-for="(f, i) in preview.files"
+              :key="i"
+              type="button"
+              class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-accent/50"
+              @click="selectedFile = i; selectedSample = 0; syncEditedFromSample()"
+            >
+              <component :is="f.ok ? CheckCircle2 : AlertTriangle" :size="14" :class="f.ok ? 'text-green-500' : 'text-destructive'" />
+              <span class="flex-1 truncate font-mono">{{ f.path }}</span>
+              <span class="text-muted-foreground">{{ $t("factories.pagesN", { n: f.pages.length }) }}</span>
+            </button>
+          </div>
         </div>
 
-        <div v-if="preview.sample.length" class="mb-2 flex items-center justify-between">
-          <span class="text-xs text-muted-foreground">
-            <code>{{ preview.sample[selectedSample]?.target_dir }}/{{ preview.sample[selectedSample]?.slug }}.md</code>
-          </span>
-          <button
-            :disabled="busy !== null"
-            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            @click="doOverwrite"
-          >
-            <Save :size="14" /> {{ $t("factories.overwrite") }}
-          </button>
-        </div>
-        <textarea
-          v-if="preview.sample.length"
-          v-model="editedMd"
-          spellcheck="false"
-          class="h-80 w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed"
-        />
+        <!-- 單檔預覽/編輯;或多檔選了某檔後 -->
+        <template v-else>
+          <div v-if="preview.files.length > 1" class="mb-2 flex items-center gap-2">
+            <button type="button" class="text-xs text-muted-foreground hover:text-foreground" @click="selectedFile = null">
+              ← {{ $t("factories.backToList") }}
+            </button>
+            <span class="truncate font-mono text-xs text-muted-foreground">{{ preview.files[selectedFile ?? 0]?.path }}</span>
+          </div>
+
+          <div v-if="currentPages.length > 1" class="mb-2 flex items-center gap-2">
+            <span class="text-xs text-muted-foreground">{{ $t("factories.previewN") }}</span>
+            <select v-model.number="selectedSample" class="rounded border border-border bg-background px-2 py-1 text-xs">
+              <option v-for="(s, i) in currentPages" :key="i" :value="i">{{ s.slug }}</option>
+            </select>
+            <span class="text-xs text-muted-foreground">{{ $t("factories.pageEditable") }}</span>
+          </div>
+
+          <div v-if="currentPages.length" class="mb-2 flex items-center justify-between">
+            <span class="text-xs text-muted-foreground">
+              <code>{{ currentPages[selectedSample]?.target_dir }}/{{ currentPages[selectedSample]?.slug }}.md</code>
+            </span>
+            <button
+              :disabled="busy !== null"
+              class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              @click="doOverwrite"
+            >
+              <Save :size="14" /> {{ $t("factories.overwrite") }}
+            </button>
+          </div>
+          <textarea
+            v-if="currentPages.length"
+            v-model="editedMd"
+            spellcheck="false"
+            class="h-80 w-full resize-y rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed"
+          />
+        </template>
         <div v-if="overwriteRes" class="mt-2 flex items-center gap-2 text-xs text-green-500">
           <CheckCircle2 :size="13" /> {{ $t("factories.overwrittenN", { n: overwriteRes.written.length }) }}
         </div>

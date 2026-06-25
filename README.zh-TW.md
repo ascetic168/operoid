@@ -44,11 +44,12 @@
 
 | 工廠 | 接受 | 變成 |
 |---|---|---|
-| **people** | Google Contacts CSV | 人物筆記 |
+| **people** | CSV / TXT / MD | 人物筆記（CSV=聯絡人；TXT/MD=一人一檔，LLM 結構化） |
 | **companies** | TXT / PDF | 公司筆記（LLM 結構化） |
 | **meeting** | TXT / MD / PDF | 會議筆記（LLM 結構化） |
 | **inbox** | TXT / MD | 速記 capture |
 
+- **批次拖放：** 一次丟多個檔案；結果清單顯示每個檔的狀態，可點任一檔預覽、編輯後再同步。
 - **來源感知：** 筆記寫對位置 —— 作用中腦的作用中來源 repo —— 所以一鍵 **Sync 到腦** 就接得上。
 - **手寫編輯器（`+`）：** 從 template 開始自然書寫；存檔時你提到的人名/公司名會自動連進圖譜。
 
