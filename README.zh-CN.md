@@ -44,7 +44,7 @@
 
 | 工厂 | 接受 | 变成 |
 |---|---|---|
-| **people** | CSV / TXT / MD | 人物笔记（CSV=通讯录；TXT/MD=一人一档，LLM 结构化） |
+| **people** | Google Contacts CSV / TXT / MD | 人物笔记（CSV 一档多人；TXT/MD 一人一档，LLM 结构化） |
 | **companies** | TXT / PDF | 公司笔记（LLM 结构化） |
 | **meeting** | TXT / MD / PDF | 会议笔记（LLM 结构化） |
 | **inbox** | TXT / MD | 速记 capture |

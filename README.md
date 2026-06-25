@@ -56,7 +56,7 @@ straight into your notes:
 
 | Factory | Accepts | Becomes |
 |---|---|---|
-| **people** | CSV / TXT / MD | people notes (CSV = contacts; TXT/MD = one person, LLM-structured) |
+| **people** | Google Contacts CSV / TXT / MD | people notes (CSV = many contacts per file; TXT/MD = one person, LLM-structured) |
 | **companies** | TXT / PDF | company notes (LLM-structured) |
 | **meeting** | TXT / MD / PDF | meeting notes (LLM-structured) |
 | **inbox** | TXT / MD | a quick capture |

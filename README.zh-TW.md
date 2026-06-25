@@ -44,7 +44,7 @@
 
 | 工廠 | 接受 | 變成 |
 |---|---|---|
-| **people** | CSV / TXT / MD | 人物筆記（CSV=聯絡人；TXT/MD=一人一檔，LLM 結構化） |
+| **people** | Google Contacts CSV / TXT / MD | 人物筆記（CSV 一檔多人；TXT/MD 一人一檔，LLM 結構化） |
 | **companies** | TXT / PDF | 公司筆記（LLM 結構化） |
 | **meeting** | TXT / MD / PDF | 會議筆記（LLM 結構化） |
 | **inbox** | TXT / MD | 速記 capture |
