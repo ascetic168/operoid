@@ -43,6 +43,8 @@ pub fn render(factory: &str, sp: &StructuredPage, targets: &FactoryTargets) -> (
         "companies" => (&targets.companies, "company", vec!["companies", "contact"]),
         "meeting" => (&targets.meetings, "meeting", vec!["meeting"]),
         "people" => (&targets.people, "person", vec!["people", "contact"]),
+        "concepts" => ("concepts", "concept", vec!["concept"]),
+        "projects" => ("projects", "project", vec!["project"]),
         _ => ("concepts", "concept", vec![]),
     };
 
@@ -116,7 +118,7 @@ pub fn render(factory: &str, sp: &StructuredPage, targets: &FactoryTargets) -> (
 }
 
 /// 把 LLM 回應去掉 ```json / ``` 圍欄，取出 JSON 物件。
-fn strip_fence(resp: &str) -> String {
+pub(crate) fn strip_fence(resp: &str) -> String {
     let t = resp.trim();
     let t = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")).unwrap_or(t).trim();
     // 取第一個 { 到最後一個 }（容忍前後廢話）
@@ -133,6 +135,8 @@ fn system_prompt(factory: &str) -> String {
         "companies" => "公司（company）",
         "meeting" => "會議（meeting）",
         "people" => "人物（person）",
+        "concepts" => "主題／概念（concept）",
+        "projects" => "專案（project）",
         _ => "主題（concept）",
     };
     format!(
@@ -143,7 +147,7 @@ fn system_prompt(factory: &str) -> String {
          \"timeline\": [{{\"date\": \"YYYY-MM-DD\", \"title\": \"事件標題\", \"detail\": \"細節散文\"}}],\n  \
          \"mentioned_names\": [\"文中出現的人物全名\"]\n}}\n\
          規則：\n\
-         - title 為簡潔專有名稱（公司名／會議主題）。\n\
+         - title 為簡潔專有名稱（公司名／會議主題／專案名／概念名）。\n\
          - body_markdown 用中文散文概述，不要含 wikilink 語法（連結由系統自動產生）。\n\
          - mentioned_names 列出實際出現的人物全名（若文件提到該人在腦中有 people 頁才會解析成邊）。\n\
          - timeline 的 date 必須是 YYYY-MM-DD；沒有明確日期的事件不要放 timeline。\n\
@@ -152,6 +156,8 @@ fn system_prompt(factory: &str) -> String {
             "companies" => "company",
             "meeting" => "meeting",
             "people" => "person",
+            "concepts" => "concept",
+            "projects" => "project",
             _ => "concept",
         }
     )

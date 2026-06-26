@@ -15,12 +15,16 @@ import {
   RefreshCw,
   FileDown,
   Plus,
+  Wand2,
+  Lightbulb,
+  Target,
   X,
 } from "lucide-vue-next";
 import {
   factoryRun,
   factoryWritePages,
   factorySaveAuthored,
+  factoryClassify,
   brainSync,
   formatError,
   tL10n,
@@ -46,6 +50,8 @@ const factories: FactoryDef[] = [
   { id: "people", icon: Users, titleKey: "factories.defs.people.title", acceptKey: "factories.defs.people.accept", targetKey: "factories.defs.people.target" },
   { id: "companies", icon: Building2, titleKey: "factories.defs.companies.title", acceptKey: "factories.defs.companies.accept", targetKey: "factories.defs.companies.target" },
   { id: "meeting", icon: CalendarDays, titleKey: "factories.defs.meeting.title", acceptKey: "factories.defs.meeting.accept", targetKey: "factories.defs.meeting.target" },
+  { id: "projects", icon: Target, titleKey: "factories.defs.projects.title", acceptKey: "factories.defs.projects.accept", targetKey: "factories.defs.projects.target" },
+  { id: "concepts", icon: Lightbulb, titleKey: "factories.defs.concepts.title", acceptKey: "factories.defs.concepts.accept", targetKey: "factories.defs.concepts.target" },
   { id: "inbox", icon: Inbox, titleKey: "factories.defs.inbox.title", acceptKey: "factories.defs.inbox.accept", targetKey: "factories.defs.inbox.target" },
 ];
 
@@ -54,8 +60,14 @@ const FILTERS: Record<Factory, { name: string; extensions: string[] }[]> = {
   people: [{ name: "CSV / Text / Markdown", extensions: ["csv", "txt", "md"] }],
   companies: [{ name: "Text / PDF", extensions: ["txt", "pdf"] }],
   meeting: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
+  projects: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
+  concepts: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
   inbox: [{ name: "Text / Markdown", extensions: ["txt", "md"] }],
 };
+
+// 自動分類入口接受所有目前工廠支援的副檔名。
+const AUTO_FILTER = [{ name: "CSV / Text / Markdown / PDF", extensions: ["csv", "txt", "md", "pdf"] }];
+const factoryOptions: Factory[] = ["people", "companies", "meeting", "projects", "concepts", "inbox"];
 
 const cardEls = new Map<string, HTMLElement>();
 function setCardRef(id: string, el: Element | null) {
@@ -96,6 +108,16 @@ const editorResult = ref<AuthoredResult | null>(null);
 const editorError = ref<string | null>(null);
 const editorBusy = ref(false);
 
+// 自動分類確認框狀態
+interface ClassifyItem {
+  path: string;
+  chosen: string;
+  reason: string;
+}
+const classifyOpen = ref(false);
+const classifyItems = ref<ClassifyItem[]>([]);
+const classifyBusy = ref(false);
+
 // 來源感知：作用中腦的來源清單 + 選定來源 → targetRepo / sync 對象
 const brains = useBrainsStore();
 const targetRepo = computed<string | null>(() => {
@@ -126,7 +148,8 @@ onMounted(async () => {
   unlisten = await webview.onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
       const target = hovered.value;
-      if (target) doRun(target, event.payload.paths);
+      if (target === "auto") onAuto(event.payload.paths);
+      else if (target) doRun(target, event.payload.paths);
     } else if (event.payload.type === "leave") {
       hovered.value = null;
     } else {
@@ -145,6 +168,112 @@ async function pickFiles(f: Factory) {
     if (paths.length) doRun(f, paths);
   } catch (e) {
     errorMsg.value = formatError(e);
+  }
+}
+
+// ── 自動分類（統一入口）──────────────────────────────────────────────
+// 點自動卡 → 選檔 → 分類；高/中信心直接跑，低信心跳確認框。
+async function onAutoPick() {
+  try {
+    const selected = await openDialog({ multiple: true, filters: AUTO_FILTER });
+    if (!selected) return;
+    const paths = Array.isArray(selected) ? selected : [selected];
+    if (paths.length) onAuto(paths);
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+
+async function onAuto(paths: string[]) {
+  busy.value = "auto";
+  preview.value = null;
+  overwriteRes.value = null;
+  errorMsg.value = null;
+  syncLog.value = [];
+  syncDone.value = false;
+  selectedFile.value = null;
+  selectedSample.value = 0;
+  try {
+    const cls = await factoryClassify(paths);
+    const skipped = cls.filter((c) => !c.factory); // 不支援的副檔名
+    const autoCls = cls.filter((c) => c.factory && c.confidence !== "low"); // 高/中 → 自動跑
+    const confirmCls = cls.filter((c) => c.factory && c.confidence === "low"); // 低 → 確認
+
+    // 依判定的 factory 分組，逐群呼叫既有 factory_run。
+    const groups: Record<string, string[]> = {};
+    for (const c of autoCls) (groups[c.factory] ??= []).push(c.path);
+    const parts = await runGroups(groups);
+
+    preview.value = parts.length || skipped.length ? mergePreview(parts, skipped.length) : null;
+
+    if (confirmCls.length) {
+      classifyItems.value = confirmCls.map((c) => ({
+        path: c.path,
+        chosen: c.factory || "inbox",
+        reason: c.reason,
+      }));
+      classifyOpen.value = true;
+    }
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  } finally {
+    busy.value = null;
+  }
+}
+
+/** 依分組跑各工廠；單群失敗不中斷其餘，轉成含 errors 的結果。 */
+async function runGroups(groups: Record<string, string[]>): Promise<PreviewResult[]> {
+  const results: PreviewResult[] = [];
+  for (const [f, ps] of Object.entries(groups)) {
+    try {
+      results.push(await factoryRun(f as Factory, ps, targetRepo.value));
+    } catch (e) {
+      const detail = formatError(e);
+      const err = { code: "factory.fileError", params: { file: f, detail } };
+      results.push({ factory: f, summary: err, sample: [], total: 0, written: [], errors: [err], files: [] });
+    }
+  }
+  return results;
+}
+
+/** 把多個工廠的 PreviewResult 合併成一個（factory="auto"）餵給既有預覽面板。 */
+function mergePreview(parts: PreviewResult[], skippedCount = 0): PreviewResult {
+  const sample = parts.flatMap((p) => p.sample).slice(0, 10);
+  const files = parts.flatMap((p) => p.files);
+  const written = parts.flatMap((p) => p.written);
+  const errors = parts.flatMap((p) => p.errors);
+  const total = parts.reduce((n, p) => n + p.total, 0);
+  const code = skippedCount > 0 ? "factories.classify.autoSummarySkipped" : "factories.classify.autoSummary";
+  return {
+    factory: "auto",
+    summary: { code, params: { n: String(written.length), skipped: String(skippedCount) } },
+    sample,
+    total,
+    written,
+    errors,
+    files,
+  };
+}
+
+/** 確認框：依使用者選定的工廠分組跑，結果併入現有預覽。 */
+async function confirmClassify() {
+  classifyOpen.value = false;
+  if (!classifyItems.value.length) return;
+  classifyBusy.value = true;
+  busy.value = "auto";
+  try {
+    const groups: Record<string, string[]> = {};
+    for (const it of classifyItems.value) (groups[it.chosen] ??= []).push(it.path);
+    const parts = await runGroups(groups);
+    if (parts.length) {
+      preview.value = preview.value ? mergePreview([preview.value, ...parts]) : mergePreview(parts);
+    }
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  } finally {
+    classifyBusy.value = false;
+    busy.value = null;
+    classifyItems.value = [];
   }
 }
 
@@ -255,7 +384,7 @@ async function saveEditorAndSync() {
 
 <template>
   <div class="flex h-full flex-col overflow-y-auto p-6">
-    <header class="mb-5">
+    <header class="mb-3">
       <h1 class="text-xl font-semibold">{{ $t("factories.title") }}</h1>
       <p class="mt-1 text-sm text-muted-foreground">
         {{ $t("factories.desc") }}
@@ -263,7 +392,7 @@ async function saveEditorAndSync() {
     </header>
 
     <!-- 來源選擇：作用中腦 / 作用中來源（工廠寫入與 sync 的目標） -->
-    <div class="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card/30 px-4 py-2.5 text-sm">
+    <div class="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card/30 px-4 py-2.5 text-sm">
       <span class="text-muted-foreground">{{ $t("factories.activeBrain") }}</span>
       <code class="font-semibold">{{ activeBrainName ?? $t("common.dash") }}</code>
       <span class="text-muted-foreground">{{ $t("factories.sourceSep") }}</span>
@@ -279,23 +408,59 @@ async function saveEditorAndSync() {
       <span v-else class="text-xs text-warning">{{ $t("factories.noSource") }}</span>
     </div>
 
-    <!-- 工廠卡 -->
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <!-- 工廠卡（第一張為自動分類統一入口；其餘各對應一個 DIR_PATTERN 白名單目錄）-->
+    <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+      <!-- 自動分類：丟任何 csv/txt/md/pdf，程式判斷歸屬 -->
+      <div
+        :ref="(el) => setCardRef('auto', el as Element | null)"
+        :class="[
+          'col-span-2 flex flex-col gap-2 rounded-xl border-2 p-4 transition-colors',
+          hovered === 'auto' ? 'border-primary bg-primary/10' : 'border-primary/40 bg-primary/5',
+        ]"
+      >
+        <div class="flex items-center gap-3">
+          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15">
+            <component :is="busy === 'auto' ? Loader2 : Wand2" :size="18" :class="busy === 'auto' ? 'animate-spin' : ''" />
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="font-medium">{{ $t("factories.defs.auto.title") }}</div>
+            <div class="text-xs text-muted-foreground">{{ $t("factories.accept") }}{{ $t("factories.defs.auto.accept") }}</div>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 px-3 py-2.5 text-sm transition-colors hover:bg-primary/10"
+          @click="onAutoPick"
+        >
+          <component :is="busy === 'auto' ? Loader2 : FileDown" :size="16" :class="busy === 'auto' ? 'animate-spin' : ''" />
+          <span class="truncate">{{ hovered === 'auto' ? $t("factories.dropActive") : $t("factories.defs.auto.hint") }}</span>
+        </button>
+        <div class="text-xs text-muted-foreground">{{ $t("factories.output") }} <code>{{ $t("factories.defs.auto.target") }}</code></div>
+      </div>
+
       <div
         v-for="f in factories"
         :key="f.id"
         :ref="(el) => setCardRef(f.id, el as Element | null)"
         :class="[
-          'flex flex-col gap-3 rounded-xl border-2 p-5 transition-colors',
+          'flex flex-col gap-2 rounded-xl border-2 p-4 transition-colors',
           hovered === f.id ? 'border-primary bg-primary/5' : 'border-dashed border-border bg-card/40',
         ]"
       >
         <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-accent">
-            <component :is="busy === f.id ? Loader2 : f.icon" :size="20" :class="busy === f.id ? 'animate-spin' : ''" />
+          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent">
+            <component :is="busy === f.id ? Loader2 : f.icon" :size="18" :class="busy === f.id ? 'animate-spin' : ''" />
           </div>
           <div class="min-w-0 flex-1">
-            <div class="font-medium">{{ $t(f.titleKey) }}</div>
+            <div class="font-medium">
+              {{ $t(f.titleKey) }}
+              <span
+                v-if="f.id === 'inbox'"
+                :title="$t('factories.defs.inbox.noGraphHint')"
+                class="ml-1 rounded bg-warning/15 px-1.5 py-0.5 align-middle text-[10px] font-normal text-warning"
+                >{{ $t("factories.defs.inbox.noGraph") }}</span
+              >
+            </div>
             <div class="text-xs text-muted-foreground">{{ $t("factories.accept") }}{{ $t(f.acceptKey) }}</div>
           </div>
           <button
@@ -308,7 +473,7 @@ async function saveEditorAndSync() {
         </div>
         <button
           type="button"
-          class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/60 py-8 text-center text-sm transition-colors hover:border-primary/50 hover:bg-accent/30"
+          class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/60 py-3 text-center text-sm transition-colors hover:border-primary/50 hover:bg-accent/30"
           :class="hovered === f.id ? 'text-foreground' : 'text-muted-foreground'"
           @click="pickFiles(f.id)"
         >
@@ -466,6 +631,46 @@ async function saveEditorAndSync() {
             @click="saveEditorAndSync"
           >
             <RefreshCw :size="14" /> {{ $t("factories.editorSaveAndSync") }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 自動分類確認框（低信心檔案） -->
+    <div v-if="classifyOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4" @click.self="classifyOpen = false">
+      <div class="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-card shadow-2xl">
+        <div class="flex items-center justify-between border-b border-border px-5 py-3">
+          <div class="flex items-center gap-2">
+            <Wand2 :size="16" />
+            <span class="font-medium">{{ $t("factories.classify.confirmTitle") }}</span>
+          </div>
+          <button class="text-muted-foreground hover:text-foreground" @click="classifyOpen = false">
+            <X :size="18" />
+          </button>
+        </div>
+        <div class="border-b border-border px-5 py-2 text-xs text-muted-foreground">{{ $t("factories.classify.confirmHint") }}</div>
+        <div class="flex-1 overflow-auto px-5 py-3">
+          <div v-for="(it, i) in classifyItems" :key="i" class="mb-2 flex items-center gap-3 rounded-md border border-border p-2">
+            <span class="min-w-0 flex-1">
+              <span class="block truncate font-mono text-xs">{{ it.path }}</span>
+              <span class="block text-xs text-muted-foreground">{{ it.reason }}</span>
+            </span>
+            <select v-model="it.chosen" class="rounded border border-border bg-background px-2 py-1 text-xs">
+              <option v-for="fo in factoryOptions" :key="fo" :value="fo">{{ fo }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button class="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent" @click="classifyOpen = false">
+            {{ $t("common.close") }}
+          </button>
+          <button
+            :disabled="classifyBusy"
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            @click="confirmClassify"
+          >
+            <component :is="classifyBusy ? Loader2 : CheckCircle2" :size="14" :class="classifyBusy ? 'animate-spin' : ''" />
+            {{ $t("factories.classify.confirmRun") }}
           </button>
         </div>
       </div>

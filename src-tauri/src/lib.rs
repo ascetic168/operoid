@@ -4,6 +4,7 @@
 //! llm + factories (Phase 4).
 
 mod brains;
+mod classifier;
 mod config;
 mod converters;
 mod factories;
@@ -77,6 +78,7 @@ pub fn run() {
             factories::factory_write_pages,
             factories::factory_save_authored,
             factories::extract_companies_run,
+            classifier::factory_classify,
             brains::brains_list,
             brains::brains_add,
             brains::brains_remove,

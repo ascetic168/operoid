@@ -199,7 +199,11 @@ export interface WriteResult {
   note: L10n | null;
 }
 
-export type Factory = "people" | "companies" | "meeting" | "inbox";
+/**
+ * 工廠／自動分類目標。target_dir 須落在 gbrain 的 DIR_PATTERN 連結白名單，
+ * 產出的頁才會在知識圖譜成邊（見 memory: factory-targets-dir-whitelist）。
+ */
+export type Factory = "people" | "companies" | "meeting" | "inbox" | "concepts" | "projects";
 
 /** 轉換 + 立即寫入 + 回傳預覽。target_repo=來源 repo 路徑（未給則用 app notes_repo_path）。 */
 export const factoryRun = (
@@ -243,6 +247,24 @@ export const factorySaveAuthored = (
     existingSlug,
     targetRepo,
   });
+
+// ---- Factory auto-classify（統一入口：丟任意檔 → 程式判斷歸屬）----
+
+export type Confidence = "high" | "medium" | "low";
+export type ClassifySource = "extension" | "heuristic" | "llm";
+
+/** Rust `FileClassification`（對應 src-tauri/src/classifier.rs）。factory 空字串 = 不支援。 */
+export interface FileClassification {
+  path: string;
+  factory: string;
+  confidence: Confidence;
+  reason: string;
+  source: ClassifySource;
+}
+
+/** 逐檔判斷歸屬工廠（副檔名/特徵優先，模糊才用 LLM；無 key 退回純規則）。 */
+export const factoryClassify = (paths: string[]): Promise<FileClassification[]> =>
+  invoke<FileClassification[]>("factory_classify", { paths });
 
 // ---- Brains management (多腦 + 每腦多來源) ----
 

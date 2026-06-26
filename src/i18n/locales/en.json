@@ -69,12 +69,24 @@
       "people": { "title": "people factory", "accept": "CSV (Google Contacts)", "target": "people/" },
       "companies": { "title": "companies factory", "accept": "txt / pdf", "target": "companies/" },
       "meeting": { "title": "meeting factory", "accept": "txt / md / pdf", "target": "meetings/" },
-      "inbox": { "title": "inbox (quick note)", "accept": "txt / md", "target": "inbox/ (gbrain capture)" }
+      "projects": { "title": "projects factory", "accept": "txt / md / pdf", "target": "projects/" },
+      "concepts": { "title": "concepts factory", "accept": "txt / md / pdf", "target": "concepts/" },
+      "inbox": { "title": "inbox (quick note)", "accept": "txt / md", "target": "inbox/ (gbrain capture)", "noGraph": "not in graph", "noGraphHint": "inbox uses gbrain capture as notes; it's outside the knowledge-graph link whitelist (DIR_PATTERN), so it forms no edges with other pages." },
+      "auto": { "title": "Auto (drop it, I'll sort it)", "accept": "csv / txt / md / pdf", "target": "routed by content → people/companies/meeting/inbox", "hint": "Drop any file, or click to choose" }
+    },
+    "classify": {
+      "confirmTitle": "Confirm file classification",
+      "confirmHint": "These files could not be classified automatically — pick a factory for each:",
+      "confirmRun": "Confirm & convert",
+      "autoSummary": "Auto-classified: {n} page(s) written",
+      "autoSummarySkipped": "Auto-classified: {n} page(s) written ({skipped} unsupported file(s) skipped)"
     },
     "templates": {
       "people": "---\ntype: person\ntitle: ''\ntags: [people, contact]\n---\n\n# \n\nAffiliation: Acme Corp, Title .\n\nEmail:\n- \n\nPhone:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "companies": "---\ntype: company\ntitle: ''\ntags: [companies, contact]\n---\n\n# \n\nAbout: .\n\nMembers: Jane Doe, John Smith, Alex Lee, Mary Chen\n",
       "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\nDate: YYYY-MM-DD\nLocation:\n\nAttendees: Jane Doe, John Smith, Alex Lee, Mary Chen\n\nDiscussion:\n- \n\nDecisions:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\nGoal: .\n\nOwner:\n\nMilestones:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\nDefinition: .\n\nKey points:\n- \n",
       "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
     }
   },

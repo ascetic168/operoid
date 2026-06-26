@@ -128,6 +128,8 @@ pub async fn factory_save_authored<R: Runtime>(
         "companies" => cfg.factory_targets.companies.clone(),
         "meeting" => cfg.factory_targets.meetings.clone(),
         "inbox" => "inbox".to_string(),
+        "concepts" => "concepts".to_string(),
+        "projects" => "projects".to_string(),
         other => return Err(AppError::new("factory.unknown").p("factory", other)),
     };
 
@@ -136,6 +138,8 @@ pub async fn factory_save_authored<R: Runtime>(
         "people" => "people",
         "companies" => "companies",
         "meeting" => "meetings",
+        "concepts" => "concepts",
+        "projects" => "projects",
         _ => "",
     };
     let own_slug = crate::converters::slug::slugify(&title, "");
@@ -191,7 +195,9 @@ pub async fn factory_run<R: Runtime>(
 
     match factory.as_str() {
         "people" => run_people(&cfg, &notes, &paths).await,
-        "companies" | "meeting" => run_textual(&factory, &cfg, &notes, &paths).await,
+        "companies" | "meeting" | "concepts" | "projects" => {
+            run_textual(&factory, &cfg, &notes, &paths).await
+        }
         "inbox" => run_inbox(&cfg, &notes, &paths),
         other => Err(AppError::new("factory.unknown").p("factory", other)),
     }
@@ -345,6 +351,8 @@ async fn run_textual(
     let target_dir = match factory {
         "companies" => targets.companies.clone(),
         "meeting" => targets.meetings.clone(),
+        "concepts" => "concepts".into(),
+        "projects" => "projects".into(),
         _ => "concepts".into(),
     };
 

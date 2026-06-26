@@ -69,12 +69,24 @@
       "people": { "title": "people 工厂", "accept": "CSV（Google 通讯录）", "target": "people/" },
       "companies": { "title": "companies 工厂", "accept": "txt / pdf", "target": "companies/" },
       "meeting": { "title": "meeting 工厂", "accept": "txt / md / pdf", "target": "meetings/" },
-      "inbox": { "title": "inbox（速记）", "accept": "txt / md", "target": "inbox/（gbrain capture）" }
+      "projects": { "title": "projects 工厂", "accept": "txt / md / pdf", "target": "projects/" },
+      "concepts": { "title": "concepts 工厂", "accept": "txt / md / pdf", "target": "concepts/" },
+      "inbox": { "title": "inbox（速记）", "accept": "txt / md", "target": "inbox/（gbrain capture）", "noGraph": "不进图谱", "noGraphHint": "inbox 走 gbrain capture 当 note 速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。" },
+      "auto": { "title": "自动（丢进来我帮你分）", "accept": "csv / txt / md / pdf", "target": "依判断分派 → people/companies/meeting/inbox", "hint": "拖放任何文件，或点此选择" }
+    },
+    "classify": {
+      "confirmTitle": "确认文件分类",
+      "confirmHint": "以下文件无法自动判定，请选择归入的工厂：",
+      "confirmRun": "确认并转换",
+      "autoSummary": "自动分类完成：已写入 {n} 个页",
+      "autoSummarySkipped": "自动分类完成：已写入 {n} 个页（略过 {skipped} 个不支持的文件）"
     },
     "templates": {
       "people": "---\ntype: person\ntitle: ''\ntags: [people, contact]\n---\n\n# \n\n任职于 晶瀚半导体，职称 。\n\nEmail：\n- \n\nPhone：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "companies": "---\ntype: company\ntitle: ''\ntags: [companies, contact]\n---\n\n# \n\n简介：。\n\n成员：赵建宏、陈志远、林家豪、王淑芬\n",
       "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\n日期：YYYY-MM-DD\n地点：\n\n与会者：赵建宏、陈志远、林家豪、王淑芬\n\n讨论：\n- \n\n决议：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目标：。\n\n负责人：\n\n里程碑：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定义：。\n\n要点：\n- \n",
       "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
     }
   },

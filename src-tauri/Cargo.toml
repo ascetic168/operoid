@@ -1,6 +1,6 @@
 [package]
 name = "gbrain-studio"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "GBrainStudio — preprocessing & operations GUI for GBrain"
 authors = ["朱國棟 (Charlie Chu)"]
