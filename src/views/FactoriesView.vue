@@ -58,7 +58,7 @@ const factories: FactoryDef[] = [
 // 點選擇器的副檔名過濾(每個工廠不同)。名稱為檔案類型標籤，語言中立，不譯。
 const FILTERS: Record<Factory, { name: string; extensions: string[] }[]> = {
   people: [{ name: "CSV / Text / Markdown", extensions: ["csv", "txt", "md"] }],
-  companies: [{ name: "Text / PDF", extensions: ["txt", "pdf"] }],
+  companies: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
   meeting: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
   projects: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
   concepts: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],

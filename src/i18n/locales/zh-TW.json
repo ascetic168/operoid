@@ -67,7 +67,7 @@
     "editorSaveAndSync": "儲存並 Sync",
     "defs": {
       "people": { "title": "people 工廠", "accept": "CSV（Google Contacts）", "target": "people/" },
-      "companies": { "title": "companies 工廠", "accept": "txt / pdf", "target": "companies/" },
+      "companies": { "title": "companies 工廠", "accept": "txt / md / pdf", "target": "companies/" },
       "meeting": { "title": "meeting 工廠", "accept": "txt / md / pdf", "target": "meetings/" },
       "projects": { "title": "projects 工廠", "accept": "txt / md / pdf", "target": "projects/" },
       "concepts": { "title": "concepts 工廠", "accept": "txt / md / pdf", "target": "concepts/" },

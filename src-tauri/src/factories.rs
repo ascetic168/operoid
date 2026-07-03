@@ -477,7 +477,7 @@ fn extract_raw(path: &Path) -> anyhow::Result<String> {
     match ext.as_str() {
         "txt" | "md" | "markdown" => read_text(path),
         "pdf" => pdf_text::extract(path),
-        other => Err(anyhow::anyhow!("不支援的副檔名：{other}（people=csv；companies=txt,pdf；meeting=txt,md,pdf）")),
+        other => Err(anyhow::anyhow!("不支援的副檔名：{other}（people=csv；companies/meeting/projects/concepts=txt,md,pdf）")),
     }
 }
 

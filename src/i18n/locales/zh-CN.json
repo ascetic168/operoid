@@ -67,7 +67,7 @@
     "editorSaveAndSync": "保存并 Sync",
     "defs": {
       "people": { "title": "people 工厂", "accept": "CSV（Google 通讯录）", "target": "people/" },
-      "companies": { "title": "companies 工厂", "accept": "txt / pdf", "target": "companies/" },
+      "companies": { "title": "companies 工厂", "accept": "txt / md / pdf", "target": "companies/" },
       "meeting": { "title": "meeting 工厂", "accept": "txt / md / pdf", "target": "meetings/" },
       "projects": { "title": "projects 工厂", "accept": "txt / md / pdf", "target": "projects/" },
       "concepts": { "title": "concepts 工厂", "accept": "txt / md / pdf", "target": "concepts/" },

@@ -67,7 +67,7 @@
     "editorSaveAndSync": "Save & Sync",
     "defs": {
       "people": { "title": "people factory", "accept": "CSV (Google Contacts)", "target": "people/" },
-      "companies": { "title": "companies factory", "accept": "txt / pdf", "target": "companies/" },
+      "companies": { "title": "companies factory", "accept": "txt / md / pdf", "target": "companies/" },
       "meeting": { "title": "meeting factory", "accept": "txt / md / pdf", "target": "meetings/" },
       "projects": { "title": "projects factory", "accept": "txt / md / pdf", "target": "projects/" },
       "concepts": { "title": "concepts factory", "accept": "txt / md / pdf", "target": "concepts/" },
