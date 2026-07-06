@@ -24,3 +24,6 @@ src-tauri/target/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# ZCode workspace (本地專案記憶，不共享)
+.zcode/
