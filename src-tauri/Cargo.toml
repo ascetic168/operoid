@@ -1,6 +1,6 @@
 [package]
 name = "gbrain-studio"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "GBrainStudio — preprocessing & operations GUI for GBrain"
 authors = ["朱國棟 (Charlie Chu)"]
@@ -34,6 +34,8 @@ dirs = "5"
 log = "0.4"
 pulldown-cmark = "0.12"
 open = "5"
+axum = "0.8"
+percent-encoding = "2"
 
 [profile.dev]
 incremental = true

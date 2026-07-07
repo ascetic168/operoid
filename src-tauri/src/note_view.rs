@@ -1,19 +1,56 @@
-//! 點擊 wikilink → 把該筆記 `.md` 轉成自足 HTML，用系統預設瀏覽器開啟。
+//! 點擊 wikilink → 把該筆記 `.md` 轉成自足 HTML。
 //!
-//! 觸發點在前端 console：`ask`/`think` 回覆裡的 `[[dir/slug]]` 標籤被點擊。
+//! 第一層入口（前端 console：`ask`/`think` 回覆裡的 `[[dir/slug]]` 標籤）走
+//! [`open_note`]：組 `http://127.0.0.1:{port}/n/{target}` URL → 系統預設瀏覽器開啟。
+//! 瀏覽器內的 HTML 由 [`note_server`] 提供；頁內 wikilink 是 `<a target="_blank">`，
+//! 點下去開新分頁向同一個 server 請求該筆目標的 HTML——可任意深度跳、每層都開新分頁，
+//! 方便並排參考。
+//!
 //! 檔案位置是**來源感知**的——在「作用中腦」的作用中來源 repo 找（與 factories 一致），
 //! 找不到再退其他來源、最後退 `notes_repo_path`。
 
+/// URL 路徑段 percent-encode：保留 `/`（target 常含 `dir/slug`），其餘非保留字元編碼，
+/// 讓 CJK / 空白安全放入 href。
+const URL_PATH_ENCODE: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}')
+    .add(b'|')
+    .add(b'^')
+    .add(b'%')
+    .add(b'[')
+    .add(b']')
+    .add(b'@')
+    .add(b'!')
+    .add(b'$')
+    .add(b'&')
+    .add(b'\'')
+    .add(b'(')
+    .add(b')')
+    .add(b'*')
+    .add(b'+')
+    .add(b',')
+    .add(b';')
+    .add(b'=');
+
 use std::path::{Path, PathBuf};
 
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use pulldown_cmark::{html::push_html, Options, Parser};
 use regex::Regex;
 use serde::Serialize;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::config;
-use crate::converters::{frontmatter, slug};
+use crate::converters::frontmatter;
 use crate::i18n::AppError;
+use crate::note_server::NoteServer;
 use crate::{brains};
 
 /// 開啟結果（前端用 title 推一行成功訊息）。
@@ -115,7 +152,8 @@ fn read_note(path: &Path) -> std::io::Result<String> {
         .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
-/// `.md` → 自足 HTML 文件（含內嵌 CSS；頁內 `[[...]]` 只變色不連結）。
+/// `.md` → 自足 HTML 文件（含內嵌 CSS；頁內 `[[...]]` 變成指向本地 server 的
+/// `<a target="_blank">` 連結，點下去開新分頁請求該筆記）。
 fn render_html(md: &str) -> String {
     let (fm, body) = frontmatter::split(md);
     let ptype = frontmatter::get(fm, "type").unwrap_or_default();
@@ -133,15 +171,17 @@ fn render_html(md: &str) -> String {
     let mut body_html = String::new();
     push_html(&mut body_html, parser);
 
-    // 頁內 wikilink → 藍色 span（display 已經被 pulldown escape 過，不再二次 escape）
+    // 頁內 wikilink → 指向本地 server 的 <a target="_blank">（display 已被 pulldown escape 過，不再二次 escape）
     let body_html = inline_wikilinks(&body_html);
 
     assemble_html(&ptype, &tags, &body_html)
 }
 
-/// 把頁內 wikilink 換成藍色 span：`[[dir/slug|name]]`/`[[dir/slug]]`（雙括）或
-/// `[dir/slug]`（單括）。輸入是 pulldown-cmark 產出（已 escape、且 `[text](url)`
-/// 已被轉成 `<a>`），故 name 原樣回放、不需 lookahead。
+/// 把頁內 wikilink 換成指向本地 server 的 `<a target="_blank">`：
+/// `[[dir/slug|name]]`/`[[dir/slug]]`（雙括）或 `[dir/slug]`（單括）→
+/// `<a class="glink" href="/n/{encoded}" target="_blank" rel="noopener">{label}</a>`。
+/// 輸入是 pulldown-cmark 產出（已 escape、且 `[text](url)` 已被轉成 `<a>`），
+/// 故 label 原樣回放、不需 lookahead。
 fn inline_wikilinks(html: &str) -> String {
     let re = Regex::new(r"\[\[([^\]]+)\]\]|\[([^\]\[\s|/]+/[^\]\[\s|/]+)\]").unwrap();
     re.replace_all(html, |caps: &regex::Captures| {
@@ -156,7 +196,11 @@ fn inline_wikilinks(html: &str) -> String {
         } else {
             display
         };
-        format!("<span class=\"glink\">{}</span>", label.trim())
+        let encoded = utf8_percent_encode(path, URL_PATH_ENCODE);
+        format!(
+            "<a class=\"glink\" href=\"/n/{encoded}\" target=\"_blank\" rel=\"noopener\">{}</a>",
+            label.trim()
+        )
     })
     .into_owned()
 }
@@ -231,18 +275,19 @@ async fn collect_roots<R: Runtime>(app: &AppHandle<R>, cfg: &config::AppConfig) 
     }
 }
 
-/// 點擊 wikilink：解析→讀檔→轉 HTML→寫 temp→系統預設瀏覽器開啟。
-#[tauri::command]
-pub async fn open_note<R: Runtime>(
-    app: AppHandle<R>,
-    target: String,
-) -> Result<NoteViewResult, AppError> {
-    let cfg = config::app_config::load(&app).map_err(|e| e.to_string())?;
-    let (dir, stem) = parse_target(&target)
-        .ok_or_else(|| AppError::new("note.notFound").p("target", &target))?;
+/// 解析 target → 來源感知找檔 → 讀檔。回傳 `(title, md)`。
+/// title 取自 frontmatter，否則退檔名莖。給 [`render_target`] 與 [`open_note`] 共用前半，
+/// 不做 markdown 渲染（`open_note` 只需 title，不必跑 `render_html`）。
+async fn resolve_note<R: Runtime>(
+    app: &AppHandle<R>,
+    target: &str,
+) -> Result<(String, String), AppError> {
+    let cfg = config::app_config::load(app).map_err(|e| e.to_string())?;
+    let (dir, stem) = parse_target(target)
+        .ok_or_else(|| AppError::new("note.notFound").p("target", target))?;
     let dirs = candidate_dirs(&cfg);
 
-    let roots = collect_roots(&app, &cfg).await;
+    let roots = collect_roots(app, &cfg).await;
     let file = {
         let mut found = None;
         for root in &roots {
@@ -253,7 +298,7 @@ pub async fn open_note<R: Runtime>(
         }
         found
     }
-    .ok_or_else(|| AppError::new("note.notFound").p("target", &target))?;
+    .ok_or_else(|| AppError::new("note.notFound").p("target", target))?;
 
     let md = read_note(&file).map_err(|e| e.to_string())?;
     let (fm, _) = frontmatter::split(&md);
@@ -263,23 +308,35 @@ pub async fn open_note<R: Runtime>(
             .unwrap_or("note")
             .to_string()
     });
+    Ok((title, md))
+}
+
+/// 解析→找檔→讀檔→渲染成自足 HTML。回傳 `(title, html)`。
+/// 給 [`note_server`](crate::note_server) 的 HTTP handler 呼叫（按需渲染）。
+pub async fn render_target<R: Runtime>(
+    app: &AppHandle<R>,
+    target: &str,
+) -> Result<(String, String), AppError> {
+    let (title, md) = resolve_note(app, target).await?;
     let html = render_html(&md);
+    Ok((title, html))
+}
 
-    // 寫 temp（檔名用 slug，ASCII/CJK 安全）
-    let temp_dir = std::env::temp_dir().join("gbrain-studio");
-    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
-    let dir_seg = if dir.is_empty() {
-        "note".to_string()
-    } else {
-        slug::slugify(dir, "dir")
-    };
-    let name_seg = slug::slugify(stem, "note");
-    let out = temp_dir.join(format!("gbrain-{dir_seg}-{name_seg}.html"));
-    std::fs::write(&out, html).map_err(|e| e.to_string())?;
-
-    // 系統預設程式開啟（.html → 預設瀏覽器）
-    open::that(&out).map_err(|e| e.to_string())?;
-
+/// 點擊 wikilink（第一層入口）：組本地 server URL → 系統預設瀏覽器開啟。
+///
+/// 先用 [`resolve_note`] 驗證 target 可解析且檔案存在（避免對不存在的筆記開出
+/// 顯示 404 的瀏覽器分頁），再開 `http://127.0.0.1:{port}/n/{target}`。筆記 HTML
+/// 本身由 [`note_server`](crate::note_server) 在瀏覽器發請求時按需渲染。
+#[tauri::command]
+pub async fn open_note<R: Runtime>(
+    app: AppHandle<R>,
+    target: String,
+) -> Result<NoteViewResult, AppError> {
+    let (title, _md) = resolve_note(&app, &target).await?;
+    let port = app.state::<NoteServer>().port;
+    let encoded = utf8_percent_encode(&target, URL_PATH_ENCODE);
+    let url = format!("http://127.0.0.1:{port}/n/{encoded}");
+    open::that(&url).map_err(|e| e.to_string())?;
     Ok(NoteViewResult { title })
 }
 
@@ -323,7 +380,7 @@ hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.6em 0; }
   padding: .1em .6em; border-radius: 999px; font-size: .8em; font-weight: 600;
 }
 .tags { color: #6b7280; font-size: .82em; font-family: ui-monospace, Consolas, monospace; }
-.glink { color: #0284c7; font-weight: 500; } /* sky-600，頁內 wikilink 變色 */
+.glink { color: #0284c7; font-weight: 500; } /* sky-600，頁內 wikilink 連結 */
 a { color: #0284c7; }
 "#;
 
@@ -349,13 +406,25 @@ mod tests {
     }
 
     #[test]
-    fn inline_wikilinks_become_spans() {
-        // 雙括 + 單括混合
+    fn inline_wikilinks_become_links() {
+        // 雙括 + 單括混合 → 指向本地 server 的 <a target="_blank">
+        // ASCII path 可完整斷言；CJK path 由 percent_encodes 測試覆蓋（CJK 會被編碼）。
         let h = inline_wikilinks("找 [[people/jlin|林家豪]] 與 [companies/晶瀚半導體] 討論。");
-        assert!(h.contains("<span class=\"glink\">林家豪</span>"));
-        assert!(h.contains("<span class=\"glink\">晶瀚半導體</span>"));
+        assert!(h.contains("<a class=\"glink\" href=\"/n/people/jlin\" target=\"_blank\" rel=\"noopener\">林家豪</a>"));
+        // CJK path：只驗結構（href 前綴 + label），實際編碼在 percent_encodes 測試
+        assert!(h.contains("<a class=\"glink\" href=\"/n/companies/"));
+        assert!(h.contains("target=\"_blank\" rel=\"noopener\">晶瀚半導體</a>"));
         assert!(!h.contains("[["));
         assert!(!h.contains("[companies"));
+        assert!(!h.contains("<span class=\"glink\">"));
+    }
+
+    #[test]
+    fn inline_wikilinks_percent_encodes_special_chars() {
+        // 空白與 CJK 應安全編碼進 href，但保留 `/`
+        let h = inline_wikilinks("見 [[meetings/e 07 良率|良率會議]]。");
+        assert!(h.contains("href=\"/n/meetings/e%2007%20%E8%89%AF%E7%8E%87\""));
+        assert!(h.contains(">良率會議</a>"));
     }
 
     #[test]
@@ -364,7 +433,9 @@ mod tests {
         let html = render_html(md);
         assert!(html.contains("<h1>林家豪</h1>"));
         assert!(html.contains("蝕刻設備工程師"));
-        assert!(html.contains("<span class=\"glink\">陳志遠</span>"));
+        // CJK path 會被 percent-encode；驗結構與 label
+        assert!(html.contains("<a class=\"glink\" href=\"/n/people/"));
+        assert!(html.contains("target=\"_blank\" rel=\"noopener\">陳志遠</a>"));
         assert!(html.contains("class=\"badge\""));
     }
 }

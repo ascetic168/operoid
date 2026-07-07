@@ -11,6 +11,7 @@ mod factories;
 mod gbrain_cli;
 mod i18n;
 mod llm;
+mod note_server;
 mod note_view;
 mod prereq;
 
@@ -95,6 +96,10 @@ pub fn run() {
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
             }
+            // 啟動本地（迴環）HTTP server：瀏覽器預覽筆記時的回呼通道。
+            // 渲染為按需（僅瀏覽器請求時），不寫磁碟檔案。
+            let port = note_server::start(app.handle().clone());
+            app.manage(note_server::NoteServer { port });
             Ok(())
         })
         .run(tauri::generate_context!())
