@@ -45,8 +45,10 @@
 | 工廠 | 接受 | 變成 |
 |---|---|---|
 | **people** | Google Contacts CSV / TXT / MD | 人物筆記（CSV 一檔多人；TXT/MD 一人一檔，LLM 結構化） |
-| **companies** | TXT / PDF | 公司筆記（LLM 結構化） |
+| **companies** | TXT / MD / PDF | 公司筆記（LLM 結構化） |
 | **meeting** | TXT / MD / PDF | 會議筆記（LLM 結構化） |
+| **projects** | TXT / MD / PDF | 專案筆記（LLM 結構化） |
+| **concepts** | TXT / MD / PDF | 概念筆記（LLM 結構化） |
 | **inbox** | TXT / MD | 速記 capture |
 
 - **批次拖放：** 一次丟多個檔案；結果清單顯示每個檔的狀態，可點任一檔預覽、編輯後再同步。
@@ -93,9 +95,17 @@
 
 ## 安裝與執行
 
-> 建置桌面應用需要 **Rust 工具鏈**與 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)。
+**一般使用者 —— 直接下載預編譯安裝包即可。** 到
+[**Releases** 頁面](https://github.com/ascetic168/GBrainStudio/releases)下載對應平台的最新版本並執行。
+**除非你要開發 GBrainStudio 本身，否則不需要 `git clone` 或從原始碼建置。**
+
+### 開發者（從原始碼建置）
+
+建置桌面應用需要 **Rust 工具鏈**與 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
+git clone https://github.com/ascetic168/GBrainStudio.git
+cd GBrainStudio
 npm install          # 安裝依賴
 npm run tauri dev    # 執行應用（熱重載）
 npm run tauri build  # 建置散布用安裝包

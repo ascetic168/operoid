@@ -57,8 +57,10 @@ straight into your notes:
 | Factory | Accepts | Becomes |
 |---|---|---|
 | **people** | Google Contacts CSV / TXT / MD | people notes (CSV = many contacts per file; TXT/MD = one person, LLM-structured) |
-| **companies** | TXT / PDF | company notes (LLM-structured) |
+| **companies** | TXT / MD / PDF | company notes (LLM-structured) |
 | **meeting** | TXT / MD / PDF | meeting notes (LLM-structured) |
+| **projects** | TXT / MD / PDF | project notes (LLM-structured) |
+| **concepts** | TXT / MD / PDF | concept notes (LLM-structured) |
 | **inbox** | TXT / MD | a quick capture |
 
 - **Batch drop:** drop several files at once; a results list shows each file's status — click any one to preview and edit it before syncing.
@@ -114,10 +116,20 @@ on the **Config** page if needed.
 
 ## Install & run
 
-> Building the desktop app needs the **Rust toolchain** and the
-> [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).
+**For most users — just grab the prebuilt installer.** Download the latest
+build for your platform from the
+[**Releases** page](https://github.com/ascetic168/GBrainStudio/releases) and run
+it. There is **no need to `git clone` or build from source** unless you intend
+to develop GBrainStudio itself.
+
+### For developers (build from source)
+
+Building the desktop app needs the **Rust toolchain** and the
+[Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
+git clone https://github.com/ascetic168/GBrainStudio.git
+cd GBrainStudio
 npm install          # install dependencies
 npm run tauri dev    # run the app (hot reload)
 npm run tauri build  # build a distributable installer
