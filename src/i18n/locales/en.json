@@ -199,7 +199,11 @@
     "register": "Register",
     "addSourceTitle": "Add source (git repo)",
     "sourceIdLabel": "Source id (short name, e.g. notes)",
-    "repoPathLabel": "git repo path"
+    "repoPathLabel": "git repo path",
+    "notesRepoLabel": "Notes folder (git repo, optional)",
+    "notBound": "not bound",
+    "bindPath": "Bind folder",
+    "bindStart": "▶ Bind source {id} → {path}"
   },
   "factory": {
     "csvOnly": "people factory only accepts .csv: {file}",
@@ -231,7 +235,9 @@
     "removeFailed": "sources remove failed (exit {code}): {detail}",
     "needId": "scope=one requires source_id",
     "unknownScope": "Unknown scope: {scope} (all/one)",
-    "syncDone": "sync ({scope}) + embed --stale + extract --stale done"
+    "syncDone": "sync ({scope}) + embed --stale + extract --stale done",
+    "bindFailed": "bind failed (exit {code}): {detail}",
+    "bindDone": "Bound default source path: {path}"
   },
   "brain": {
     "notFound": "Brain not found: {id}",

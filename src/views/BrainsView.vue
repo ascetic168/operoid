@@ -33,6 +33,7 @@ const addHome = ref("");
 const addEm = ref("ollama:embeddinggemma");
 const addDim = ref(768);
 const addCm = ref("groq:llama-3.3-70b-versatile");
+const addNotesRepo = ref("");
 const addBusy = ref(false);
 const addError = ref<string | null>(null);
 
@@ -43,8 +44,14 @@ function openAdd() {
   addEm.value = "ollama:embeddinggemma";
   addDim.value = 768;
   addCm.value = "groq:llama-3.3-70b-versatile";
+  addNotesRepo.value = "";
   addError.value = null;
   addOpen.value = true;
+}
+
+async function pickNotesDir() {
+  const d = await openDialog({ directory: true, multiple: false });
+  if (typeof d === "string") addNotesRepo.value = d;
 }
 
 async function pickHomeDir() {
@@ -60,7 +67,7 @@ async function submitAdd() {
   }
   addBusy.value = true;
   try {
-    await store.add({
+    const b = await store.add({
       name: addName.value.trim(),
       gbrain_home: addHome.value.trim(),
       create: addCreate.value,
@@ -68,6 +75,17 @@ async function submitAdd() {
       embedding_dimensions: addDim.value || undefined,
       chat_model: addCm.value.trim() || undefined,
     });
+    // 建立腦後可選綁定筆記目錄到 default 來源（自動 git init + sync --repo）。
+    const repo = addNotesRepo.value.trim();
+    if (repo) {
+      try {
+        await store.bindSourcePath(b.id, repo, (l) => push(`[${l.stream}] ${l.text}`));
+      } catch (e) {
+        // 綁定失敗不視為建立腦失敗：腦已建立，僅提示綁定錯誤。
+        addError.value = formatError(e);
+        return;
+      }
+    }
     addOpen.value = false;
   } catch (e) {
     addError.value = formatError(e);
@@ -117,6 +135,35 @@ const syncing = ref(false);
 async function push(line: string) {
   log.value.push(line);
 }
+
+// ── 移除來源（gbrain 引擎會拒絕移除 default 來源，需顯示錯誤）──
+const removeError = ref<string | null>(null);
+async function removeSource(brainId: string, s: GbrainSource) {
+  removeError.value = null;
+  try {
+    await store.removeSource(brainId, s.id);
+  } catch (e) {
+    removeError.value = formatError(e);
+  }
+}
+
+// ── 補綁 default 來源路徑（local_path 為 null 時）──
+async function bindSource(brainId: string, s: GbrainSource) {
+  const d = await openDialog({ directory: true, multiple: false });
+  if (typeof d !== "string") return;
+  removeError.value = null;
+  syncing.value = true;
+  log.value = [t("brainsView.bindStart", { id: s.id, path: d })];
+  try {
+    const res = await store.bindSourcePath(brainId, d, (l) => push(`[${l.stream}] ${l.text}`));
+    push(res.success ? t("brainsView.syncDoneOk") : t("brainsView.syncDoneFail", { code: res.exit_code ?? "?" }));
+  } catch (e) {
+    push(t("brainsView.syncErr", { e: formatError(e) }));
+  } finally {
+    syncing.value = false;
+  }
+}
+
 async function syncAll() {
   if (!selected.value) return;
   syncing.value = true;
@@ -233,6 +280,7 @@ function fmtDate(s: string | null) {
         <div v-if="store.sourcesLoading" class="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 :size="14" class="animate-spin" /> {{ $t("brainsView.loadingSources") }}</div>
         <div v-else-if="store.sourcesError" class="flex items-center gap-2 text-sm text-destructive"><AlertTriangle :size="14" /> {{ store.sourcesError }}</div>
         <div v-else-if="store.sources.length === 0" class="text-sm text-muted-foreground">{{ $t("brainsView.noSources") }}</div>
+        <div v-if="removeError" class="mb-3 flex items-center gap-2 text-sm text-destructive"><AlertTriangle :size="14" /> {{ removeError }}</div>
         <div v-else class="mb-3 overflow-hidden rounded-lg border border-border">
           <table class="w-full text-sm">
             <thead class="bg-card/60 text-xs text-muted-foreground">
@@ -250,7 +298,13 @@ function fmtDate(s: string | null) {
                   {{ s.id }}
                   <Star v-if="store.activeId === selected.id && store.activeSourceId === s.id" :size="11" class="ml-1 inline text-amber-400 fill-amber-400" />
                 </td>
-                <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{{ s.local_path ?? '—' }}</td>
+                <td class="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  <template v-if="s.local_path">{{ s.local_path }}</template>
+                  <template v-else>
+                    <span class="text-warning">{{ $t("brainsView.notBound") }}</span>
+                    <button :disabled="syncing" class="ml-2 rounded border border-border px-1.5 py-0.5 text-xs hover:bg-accent/50 disabled:opacity-50" @click="bindSource(selected.id, s)">{{ $t("brainsView.bindPath") }}</button>
+                  </template>
+                </td>
                 <td class="px-3 py-2 text-right">{{ s.page_count }}</td>
                 <td class="px-3 py-2 text-xs text-muted-foreground">{{ fmtDate(s.last_sync_at) }}</td>
                 <td class="px-3 py-2 text-right">
@@ -260,7 +314,7 @@ function fmtDate(s: string | null) {
                     class="mr-1 rounded border border-border px-1.5 py-0.5 text-xs hover:bg-accent/50"
                     @click="store.setActiveSource(s.id)"
                   >{{ $t("brainsView.setActiveSource") }}</button>
-                  <button class="rounded border border-border px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10" @click="store.removeSource(selected.id, s.id)">{{ $t("brainsView.remove") }}</button>
+                  <button class="rounded border border-border px-1.5 py-0.5 text-xs text-destructive hover:bg-destructive/10" @click="removeSource(selected.id, s)">{{ $t("brainsView.remove") }}</button>
                 </td>
               </tr>
             </tbody>
@@ -300,6 +354,13 @@ function fmtDate(s: string | null) {
             <label class="block"><span class="text-muted-foreground">{{ $t("brainsView.embeddingModel") }}</span><input v-model="addEm" class="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5" /></label>
             <label class="block"><span class="text-muted-foreground">{{ $t("brainsView.embeddingDim") }}</span><input v-model.number="addDim" type="number" class="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5" /></label>
             <label class="block"><span class="text-muted-foreground">{{ $t("brainsView.chatModel") }}</span><input v-model="addCm" class="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5" /></label>
+            <label class="block">
+              <span class="text-muted-foreground">{{ $t("brainsView.notesRepoLabel") }}</span>
+              <div class="mt-1 flex gap-2">
+                <input v-model="addNotesRepo" class="flex-1 rounded-md border border-border bg-background px-2 py-1.5" />
+                <button type="button" class="rounded-md border border-border px-2 hover:bg-accent/50" @click="pickNotesDir"><FolderOpen :size="15" /></button>
+              </div>
+            </label>
           </template>
           <div v-if="addError" class="text-xs text-destructive">{{ addError }}</div>
         </div>

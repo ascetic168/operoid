@@ -199,7 +199,11 @@
     "register": "登錄",
     "addSourceTitle": "新增來源（git repo）",
     "sourceIdLabel": "來源 id（短名，如 notes）",
-    "repoPathLabel": "git repo 路徑"
+    "repoPathLabel": "git repo 路徑",
+    "notesRepoLabel": "筆記目錄（git repo，可選）",
+    "notBound": "未綁定",
+    "bindPath": "綁定目錄",
+    "bindStart": "▶ 綁定來源 {id} → {path}"
   },
   "factory": {
     "csvOnly": "people 工廠只接受 .csv：{file}",
@@ -231,7 +235,9 @@
     "removeFailed": "sources remove 失敗（exit {code}）：{detail}",
     "needId": "scope=one 需 source_id",
     "unknownScope": "未知 scope：{scope}（all/one）",
-    "syncDone": "sync（{scope}）+ embed --stale + extract --stale 完成"
+    "syncDone": "sync（{scope}）+ embed --stale + extract --stale 完成",
+    "bindFailed": "綁定失敗（exit {code}）：{detail}",
+    "bindDone": "已綁定 default 來源路徑：{path}"
   },
   "brain": {
     "notFound": "找不到腦：{id}",

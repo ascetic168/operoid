@@ -347,3 +347,14 @@ export async function brainSync(
     sourceId: sourceId,
   });
 }
+
+/** 綁定 default 來源路徑：確保 path 是 git repo（自動 init）→ gbrain sync --repo 綁定。 */
+export async function brainBindSourcePath(
+  brainId: string,
+  path: string,
+  onLine: (line: CliLine) => void,
+): Promise<OpResult> {
+  const ch = new Channel<CliLine>();
+  ch.onmessage = onLine;
+  return invoke<OpResult>("brain_bind_source_path", { onEvent: ch, brainId, path });
+}

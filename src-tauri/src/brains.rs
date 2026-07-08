@@ -15,7 +15,9 @@ use crate::config::{
     gbrain_config::{self},
     AppConfig, BrainEntry, DEFAULT_BRAIN_ID,
 };
-use crate::gbrain_cli::{env_for_brain, git_add_commit, run_capture, run_child, CliLine, OpResult};
+use crate::gbrain_cli::{
+    env_for_brain, git_add_commit, git_init_commit, run_capture, run_child, CliLine, OpResult,
+};
 use crate::i18n::{AppError, L10n};
 
 /// 一個 gbrain source（來自 `sources list --json`）。
@@ -344,6 +346,63 @@ pub async fn brain_source_remove<R: Runtime>(
         return Err(AppError::new("source.removeFailed").p("code", code).p("detail", err));
     }
     Ok(())
+}
+
+/// 綁定 default 來源路徑：確保 `path` 是有 commit 的 git repo（自動 git init），
+/// 再跑 `gbrain sync --repo <path>` 將該路徑綁定到腦的 default 來源（存進 DB）。
+/// 用於新建腦後綁定筆記目錄，或對 local_path 為 null 的 default 來源補綁。
+#[tauri::command]
+pub async fn brain_bind_source_path<R: Runtime>(
+    app: AppHandle<R>,
+    on_event: Channel<CliLine>,
+    brain_id: String,
+    path: String,
+) -> Result<OpResult, AppError> {
+    let c = cfg(&app)?;
+    let entry = brain_entry(&c, &brain_id)?;
+    let exe = exe_path(&c)?;
+    let env = env_for_brain(entry.env_home());
+    let env_ref: Vec<(&str, std::ffi::OsString)> = env.clone();
+
+    // 1. 確保 path 是有 commit 的 git repo（不存在→建立；非 git→init + 初始 commit）。
+    let repo = Path::new(&path);
+    git_init_commit(&app, &on_event, repo)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 2. gbrain sync --repo <path> 綁定 default 來源路徑（首次 sync 寫進 DB）。
+    let _ = on_event.send(CliLine {
+        stream: "step".into(),
+        text: format!("▶ gbrain sync --repo {path} --no-pull"),
+    });
+    let code = run_child(
+        &app,
+        &on_event,
+        &exe,
+        &["sync", "--repo", &path, "--no-pull", "--yes"],
+        None,
+        &env_ref,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // 3. 補 embed --stale + extract --stale（idempotent；與 brain_sync 一致）。
+    let _ = on_event.send(CliLine {
+        stream: "step".into(),
+        text: "▶ gbrain embed --stale".into(),
+    });
+    let _ = run_child(&app, &on_event, &exe, &["embed", "--stale"], None, &env_ref).await;
+    let _ = on_event.send(CliLine {
+        stream: "step".into(),
+        text: "▶ gbrain extract --stale".into(),
+    });
+    let _ = run_child(&app, &on_event, &exe, &["extract", "--stale"], None, &env_ref).await;
+
+    Ok(OpResult {
+        success: code == 0,
+        exit_code: Some(code),
+        note: Some(L10n::new("source.bindDone").p("path", &path)),
+    })
 }
 
 /// 同步某腦：scope="all" → sync --all；scope="one" → sync --source <id>。

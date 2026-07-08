@@ -88,6 +88,7 @@ pub fn run() {
             brains::brain_sources,
             brains::brain_source_add,
             brains::brain_source_remove,
+            brains::brain_bind_source_path,
             brains::brain_sync,
             note_view::open_note,
         ])

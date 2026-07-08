@@ -9,11 +9,14 @@ import {
   brainSources,
   brainSourceAdd,
   brainSourceRemove,
+  brainBindSourcePath,
   DEFAULT_BRAIN_ID,
   formatError,
   type BrainEntry,
   type GbrainSource,
   type AddBrainReq,
+  type OpResult,
+  type CliLine,
 } from "@/lib/tauri";
 import { useConfigStore } from "@/stores/config";
 
@@ -107,6 +110,17 @@ export const useBrainsStore = defineStore("brains", () => {
     await loadSources(brainId);
   }
 
+  /** 綁定 default 來源路徑（確保 git repo → sync --repo）；成功後重載來源清單。 */
+  async function bindSourcePath(
+    brainId: string,
+    path: string,
+    onLine: (line: CliLine) => void,
+  ): Promise<OpResult> {
+    const res = await brainBindSourcePath(brainId, path, onLine);
+    await loadSources(brainId);
+    return res;
+  }
+
   /** 設作用中來源（作用中腦內）。 */
   async function setActiveSource(sourceId: string | null) {
     activeSourceId.value = sourceId;
@@ -129,6 +143,7 @@ export const useBrainsStore = defineStore("brains", () => {
     loadSources,
     addSource,
     removeSource,
+    bindSourcePath,
     setActiveSource,
   };
 });

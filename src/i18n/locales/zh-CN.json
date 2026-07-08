@@ -199,7 +199,11 @@
     "register": "登录",
     "addSourceTitle": "新增来源（git repo）",
     "sourceIdLabel": "来源 id（短名，如 notes）",
-    "repoPathLabel": "git repo 路径"
+    "repoPathLabel": "git repo 路径",
+    "notesRepoLabel": "笔记目录（git repo，可选）",
+    "notBound": "未绑定",
+    "bindPath": "绑定目录",
+    "bindStart": "▶ 绑定来源 {id} → {path}"
   },
   "factory": {
     "csvOnly": "people 工厂只接受 .csv：{file}",
@@ -231,7 +235,9 @@
     "removeFailed": "sources remove 失败（exit {code}）：{detail}",
     "needId": "scope=one 需 source_id",
     "unknownScope": "未知 scope：{scope}（all/one）",
-    "syncDone": "sync（{scope}）+ embed --stale + extract --stale 完成"
+    "syncDone": "sync（{scope}）+ embed --stale + extract --stale 完成",
+    "bindFailed": "绑定失败（exit {code}）：{detail}",
+    "bindDone": "已绑定 default 来源路径：{path}"
   },
   "brain": {
     "notFound": "找不到脑：{id}",

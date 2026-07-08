@@ -303,6 +303,45 @@ pub(crate) async fn git_add_commit<R: Runtime>(
     Ok(commit_code)
 }
 
+/// 確保 `repo` 是「有 commit 的 git repo」：不存在→建立；非 git→git init + 初始 commit。
+/// 已是 git repo 則不動。gbrain `sync --repo` 要求目標有 HEAD（至少一個 commit），
+/// 否則報 `No commits` 失敗。初始 commit 帶 `-c user.email/name` 防呆（機器可能無 git 身份）。
+pub(crate) async fn git_init_commit<R: Runtime>(
+    app: &AppHandle<R>,
+    ch: &Channel<CliLine>,
+    repo: &Path,
+) -> std::io::Result<()> {
+    if repo.join(".git").exists() {
+        return Ok(()); // 已是 git repo，不動
+    }
+    std::fs::create_dir_all(repo)?;
+    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git init".into() });
+    let _ = run_child(app, ch, "git", &["init"], Some(repo), &[]).await;
+    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git add -A".into() });
+    let _ = run_child(app, ch, "git", &["add", "-A"], Some(repo), &[]).await;
+    // 初始 commit 帶 identity 防呆；非零（如「nothing to commit」於空目錄）不視為錯誤。
+    let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git commit (initial)".into() });
+    let _ = run_child(
+        app,
+        ch,
+        "git",
+        &[
+            "-c",
+            "user.email=gbrain-studio@local",
+            "-c",
+            "user.name=GBrainStudio",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        Some(repo),
+        &[],
+    )
+    .await;
+    Ok(())
+}
+
 /// sync 完整流程：git add+commit → gbrain sync →（偵測 defer）embed --stale → extract --stale。
 async fn run_sync<R: Runtime>(
     app: &AppHandle<R>,
