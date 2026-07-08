@@ -403,7 +403,7 @@ async function saveEditorAndSync() {
         @change="pickSource(($event.target as HTMLSelectElement).value)"
       >
         <option value="">{{ $t("factories.sourceNone") }}</option>
-        <option v-for="s in brains.sources" :key="s.id" :value="s.id">{{ s.id }} — {{ s.local_path }}</option>
+        <option v-for="s in brains.sources" :key="s.id" :value="s.id">{{ s.id }} — {{ s.local_path ?? '(federated)' }}</option>
       </select>
       <span v-else class="text-xs text-warning">{{ $t("factories.noSource") }}</span>
     </div>

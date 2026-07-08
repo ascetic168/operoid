@@ -250,7 +250,7 @@ function fmtDate(s: string | null) {
                   {{ s.id }}
                   <Star v-if="store.activeId === selected.id && store.activeSourceId === s.id" :size="11" class="ml-1 inline text-amber-400 fill-amber-400" />
                 </td>
-                <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{{ s.local_path }}</td>
+                <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{{ s.local_path ?? '—' }}</td>
                 <td class="px-3 py-2 text-right">{{ s.page_count }}</td>
                 <td class="px-3 py-2 text-xs text-muted-foreground">{{ fmtDate(s.last_sync_at) }}</td>
                 <td class="px-3 py-2 text-right">

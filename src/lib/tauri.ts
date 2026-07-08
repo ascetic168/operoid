@@ -285,7 +285,8 @@ export interface BrainsList {
 export interface GbrainSource {
   id: string;
   name: string;
-  local_path: string;
+  /** federated 或剛建立、尚未綁定本地目錄的來源為 null */
+  local_path: string | null;
   federated: boolean;
   page_count: number;
   last_sync_at: string | null;

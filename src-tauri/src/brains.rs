@@ -19,11 +19,15 @@ use crate::gbrain_cli::{env_for_brain, git_add_commit, run_capture, run_child, C
 use crate::i18n::{AppError, L10n};
 
 /// 一個 gbrain source（來自 `sources list --json`）。
+///
+/// `local_path` 可為 `None`：federated 或剛建立、尚未綁定本地目錄的來源，
+/// gbrain 會回傳 `null`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GbrainSource {
     pub id: String,
     pub name: String,
-    pub local_path: String,
+    #[serde(default)]
+    pub local_path: Option<String>,
     pub federated: bool,
     pub page_count: i64,
     #[serde(default)]
@@ -366,9 +370,9 @@ pub async fn brain_sync<R: Runtime>(
             "one" => srcs
                 .iter()
                 .filter(|s| source_id.as_deref() == Some(s.id.as_str()))
-                .map(|s| s.local_path.clone())
+                .filter_map(|s| s.local_path.clone())
                 .collect(),
-            _ => srcs.iter().map(|s| s.local_path.clone()).collect(),
+            _ => srcs.iter().filter_map(|s| s.local_path.clone()).collect(),
         },
         Err(_) => Vec::new(),
     };

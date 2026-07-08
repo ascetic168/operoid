@@ -259,12 +259,16 @@ async fn collect_roots<R: Runtime>(app: &AppHandle<R>, cfg: &config::AppConfig) 
     // 作用中來源優先
     if let Some(active) = cfg.active_source_id.as_deref() {
         if let Some(s) = sources.iter().find(|x| x.id == active) {
-            push(&mut roots, PathBuf::from(&s.local_path));
+            if let Some(p) = &s.local_path {
+                push(&mut roots, PathBuf::from(p));
+            }
         }
     }
     // 其餘來源
     for s in &sources {
-        push(&mut roots, PathBuf::from(&s.local_path));
+        if let Some(p) = &s.local_path {
+            push(&mut roots, PathBuf::from(p));
+        }
     }
     // 最終兜底
     push(&mut roots, notes_fallback);
