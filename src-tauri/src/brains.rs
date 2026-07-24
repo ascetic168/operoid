@@ -129,6 +129,20 @@ fn default_models(c: &AppConfig) -> (String, i64, String) {
     }
 }
 
+/// 新腦建立後，把 `models.default`/`models.think` 同步成 chat_model。
+///
+/// `gbrain init --chat-model` 只寫頂層 chat_model；但 `gbrain think`/`ask` 讀的是
+/// `models.default`（鏈：models.think → models.default → $GBRAIN_MODEL → opus），
+/// 完全不讀 chat_model。故新腦若不補 models.*，think 會 fallback 到 anthropic opus。
+///
+/// 讀該腦 config.json → sync → 寫回。IO/解析錯誤以 String 回傳（供呼叫端包成 AppError）。
+fn sync_new_brain_models(home: &str) -> Result<(), String> {
+    let loaded = gbrain_config::load_for(Some(home)).map_err(|e| e.to_string())?;
+    let mut raw = loaded.raw;
+    gbrain_config::sync_models_to_chat(&mut raw);
+    gbrain_config::save_raw(&loaded.path, &raw).map_err(|e| e.to_string())
+}
+
 // ── 指令 ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -194,6 +208,11 @@ pub async fn brains_add<R: Runtime>(
             .map_err(|e| e.to_string())?;
         if code != 0 || !config_json.exists() {
             return Err(AppError::new("brain.initFailed").p("code", code).p("detail", err));
+        }
+        // gbrain init 只寫 chat_model；think/ask 讀 models.default。同步寫入，否則
+        // 新腦 think 會 fallback 到 anthropic opus（跟你要 ANTHROPIC_API_KEY）。
+        if let Err(e) = sync_new_brain_models(&home) {
+            return Err(AppError::new("brain.modelsSyncFailed").p("detail", e));
         }
     } else {
         // 登錄既有：驗 config.json 存在

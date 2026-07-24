@@ -42,6 +42,38 @@ async function saveRaw() {
 
 const llm = computed(() => config.gbrain?.llm_endpoint ?? null);
 
+// ---- 主模型（chat_model ↔ models.default/think 同步） ----
+const mainModel = ref("");
+const mainModelSaved = ref(false);
+const mainModelError = ref<string | null>(null);
+
+watchEffect(() => {
+  if (config.gbrain) mainModel.value = config.gbrain.chat_model ?? "";
+});
+
+// models.default 是否已與 chat_model 同步（否則 think 仍會用舊模型或 fallback opus）
+const syncedOk = computed(() => {
+  const g = config.gbrain;
+  return !!g && !!g.chat_model && g.models_default === g.chat_model;
+});
+
+async function applyMainModel() {
+  mainModelError.value = null;
+  mainModelSaved.value = false;
+  if (!config.gbrain) return;
+  try {
+    const raw = clone(config.gbrain.raw) as Record<string, unknown>;
+    const v = mainModel.value.trim();
+    if (v) raw.chat_model = v;
+    else delete raw.chat_model;
+    // 後端 save_gbrain_config_raw 會自動同步 models.default/think = chat_model
+    await config.saveGbrainRaw(raw);
+    mainModelSaved.value = true;
+  } catch (e) {
+    mainModelError.value = formatError(e);
+  }
+}
+
 // ---- App config form ----
 const form = reactive<AppConfig>({
   notes_repo_path: "",
@@ -135,6 +167,37 @@ async function onLocaleChange(v: string) {
         </div>
         <div v-else-if="config.gbrain?.llm_error" class="text-warning">
           {{ $t("configView.llmResolveFail", { error: tL10n(config.gbrain.llm_error) }) }}
+        </div>
+      </div>
+
+      <!-- 主模型：套用時同步 chat_model + models.default + models.think -->
+      <div class="mt-4 rounded-lg border border-border/60 bg-background/40 p-3 text-sm">
+        <div class="mb-1 font-medium">{{ $t("configView.mainModelTitle") }}</div>
+        <p class="mb-2 text-xs text-muted-foreground">{{ $t("configView.mainModelHint") }}</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            v-model="mainModel"
+            :placeholder="$t('configView.mainModelPh')"
+            class="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+          />
+          <button
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            @click="applyMainModel"
+          >
+            <Save :size="14" /> {{ $t("configView.apply") }}
+          </button>
+          <span v-if="mainModelError" class="text-xs text-destructive">{{ mainModelError }}</span>
+          <span v-else-if="mainModelSaved" class="flex items-center gap-1 text-xs text-green-500">
+            <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
+          </span>
+        </div>
+        <div class="mt-2 text-xs text-muted-foreground">
+          <span>{{ $t("configView.modelsDefaultLabel") }}：</span>
+          <code>{{ config.gbrain?.models_default ?? $t("common.dash") }}</code>
+          <span v-if="syncedOk" class="ml-2 text-green-500">{{ $t("configView.synced") }}</span>
+          <span v-else-if="config.gbrain?.chat_model" class="ml-2 text-warning">
+            {{ $t("configView.notSynced") }}
+          </span>
         </div>
       </div>
 

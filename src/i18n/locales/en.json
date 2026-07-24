@@ -146,6 +146,13 @@
     "writeBack": "Write back config.json",
     "saved": "Saved",
     "jsonParseFail": "JSON parse failed: {e}",
+    "mainModelTitle": "Main model (chat + think)",
+    "mainModelHint": "gbrain think/ask reads models.default, not chat_model. Applying syncs models.default/think = chat_model so think uses this model.",
+    "mainModelPh": "provider:model (e.g. groq:llama-3.3-70b-versatile)",
+    "apply": "Apply",
+    "modelsDefaultLabel": "models.default (used by think/ask)",
+    "synced": "in sync",
+    "notSynced": "out of sync — apply to fix",
     "appSection": "App settings (app config)",
     "notesRepoLabel": "notes repo path (sync --repo target)",
     "exeLabel": "gbrain.exe path",
@@ -245,7 +252,8 @@
     "alreadyRegistered": "This path is already registered: {path}",
     "initFailed": "gbrain init failed (exit {code}): {detail}",
     "notABrain": "This path is not a gbrain brain ({path} not found): {home}",
-    "cannotRemoveDefault": "The default brain cannot be removed"
+    "cannotRemoveDefault": "The default brain cannot be removed",
+    "modelsSyncFailed": "Brain created, but failed to write models.default: {detail}"
   },
   "config": {
     "noChatModel": "config.json has no chat_model",

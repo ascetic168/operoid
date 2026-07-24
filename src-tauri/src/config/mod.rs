@@ -19,6 +19,8 @@ pub struct GBrainConfigView {
     pub exists: bool,
     pub raw: serde_json::Value,
     pub chat_model: Option<String>,
+    /// `models.default` — gbrain think/ask 實際讀取的模型（供前端確認同步生效）。
+    pub models_default: Option<String>,
     pub embedding_model: Option<String>,
     pub embedding_dimensions: Option<i64>,
     pub schema_pack: Option<String>,
@@ -43,6 +45,7 @@ fn to_view(loaded: LoadedConfig) -> GBrainConfigView {
         exists: loaded.exists,
         raw: loaded.raw.clone(),
         chat_model: c.chat_model.clone(),
+        models_default: gbrain_config::models_default_of(&loaded.raw),
         embedding_model: c.embedding_model.clone(),
         embedding_dimensions: c.embedding_dimensions,
         schema_pack: c.schema_pack.clone(),
@@ -69,10 +72,14 @@ pub fn get_gbrain_config<R: Runtime>(app: AppHandle<R>) -> Result<GBrainConfigVi
 #[tauri::command]
 pub fn save_gbrain_config_raw<R: Runtime>(
     app: AppHandle<R>,
-    raw_json: serde_json::Value,
+    mut raw_json: serde_json::Value,
 ) -> Result<(), AppError> {
     let home = active_home(&app);
     let path = gbrain_config::config_path_for(home.as_deref())?;
+    // 存檔前同步 models.default/think = chat_model：gbrain think/ask 不讀 chat_model，
+    // 若 models.* 缺失會 fallback 到 anthropic opus（跟你要 ANTHROPIC_API_KEY）。
+    // 這裡攔截，讓設定頁任何一次存檔都保證 think 用同一個模型。
+    gbrain_config::sync_models_to_chat(&mut raw_json);
     gbrain_config::save_raw(&path, &raw_json)?;
     Ok(())
 }

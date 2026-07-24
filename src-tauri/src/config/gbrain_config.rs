@@ -110,6 +110,56 @@ pub fn save_raw(path: &Path, json: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// 確保 raw config.json 的 `models.default` / `models.think` 與 `chat_model` 一致。
+///
+/// `gbrain think` 的 model 解析鏈為 `models.think → models.default → $GBRAIN_MODEL
+/// → anthropic:claude-opus`（hard-coded fallback），**完全不讀頂層 `chat_model`**。
+/// 本函式把 chat_model 的值同步寫進 `models.default`/`models.think`，讓 GUI 設的
+/// 主模型真正對 think/ask 生效（否則 think 靜默 fallback 到 anthropic opus，並跟你要
+/// ANTHROPIC_API_KEY）。
+///
+/// 冪等：已一致則不動。`chat_model` 缺失或空字串 → 不動。保留 `models` 內其他鍵。
+/// 回傳 `true` 表示有改動（用於測試/日誌）。
+pub fn sync_models_to_chat(raw: &mut serde_json::Value) -> bool {
+    // 先取出 chat_model 字串（own），避免後續 get_mut("models") 時借用衝突。
+    let chat = match raw.get("chat_model").and_then(|v| v.as_str()) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => return false,
+    };
+    // root 非物件（如 Null/陣列）無法寫入巢狀鍵，放棄。
+    if !raw.is_object() {
+        return false;
+    }
+    let target = serde_json::Value::String(chat);
+    if raw.get("models").map(|v| v.is_object()).unwrap_or(false) {
+        // models 已是物件，保留其他鍵
+    } else {
+        raw["models"] = serde_json::Value::Object(serde_json::Map::new());
+    }
+    let models = raw
+        .get_mut("models")
+        .and_then(|v| v.as_object_mut())
+        .expect("models 剛確保為物件");
+    let mut changed = false;
+    if models.get("default") != Some(&target) {
+        models.insert("default".into(), target.clone());
+        changed = true;
+    }
+    if models.get("think") != Some(&target) {
+        models.insert("think".into(), target);
+        changed = true;
+    }
+    changed
+}
+
+/// 讀 raw config.json 的 `models.default`（供設定頁顯示「think/ask 實際使用的模型」）。
+pub fn models_default_of(raw: &serde_json::Value) -> Option<String> {
+    raw.get("models")
+        .and_then(|m| m.get("default"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
 /// provider → 預設 OpenAI 相容 base URL。
 pub fn default_base_url(provider: &str) -> Option<&'static str> {
     match provider {
@@ -182,6 +232,55 @@ pub fn resolve_endpoint(config: &GBrainConfig) -> Result<LlmEndpoint, AppError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_creates_models_when_missing() {
+        let mut raw = serde_json::json!({"chat_model": "groq:llama-3.3-70b-versatile"});
+        assert!(sync_models_to_chat(&mut raw));
+        assert_eq!(raw["models"]["default"], "groq:llama-3.3-70b-versatile");
+        assert_eq!(raw["models"]["think"], "groq:llama-3.3-70b-versatile");
+    }
+
+    #[test]
+    fn sync_noop_without_chat_model() {
+        let mut raw = serde_json::json!({"engine": "pglite"});
+        assert!(!sync_models_to_chat(&mut raw));
+        assert!(raw.get("models").is_none());
+
+        // 空 chat_model 也不動
+        let mut raw2 = serde_json::json!({"chat_model": ""});
+        assert!(!sync_models_to_chat(&mut raw2));
+    }
+
+    #[test]
+    fn sync_preserves_other_model_keys() {
+        let mut raw = serde_json::json!({
+            "chat_model": "groq:x",
+            "models": {"default": "old", "custom": "keep-me"}
+        });
+        assert!(sync_models_to_chat(&mut raw));
+        assert_eq!(raw["models"]["default"], "groq:x");
+        assert_eq!(raw["models"]["think"], "groq:x");
+        assert_eq!(raw["models"]["custom"], "keep-me"); // 其他鍵保留
+    }
+
+    #[test]
+    fn sync_is_idempotent() {
+        let mut raw = serde_json::json!({"chat_model": "groq:x"});
+        assert!(sync_models_to_chat(&mut raw));
+        assert!(!sync_models_to_chat(&mut raw)); // 第二次無改動
+    }
+
+    #[test]
+    fn models_default_of_reads_nested() {
+        let raw = serde_json::json!({"models": {"default": "groq:y"}});
+        assert_eq!(models_default_of(&raw), Some("groq:y".into()));
+        assert_eq!(models_default_of(&serde_json::json!({})), None);
+        assert_eq!(
+            models_default_of(&serde_json::json!({"models": {"think": "groq:z"}})),
+            None
+        );
+    }
 
     #[test]
     fn splits_chat_model() {

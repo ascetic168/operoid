@@ -146,6 +146,13 @@
     "writeBack": "写回 config.json",
     "saved": "已保存",
     "jsonParseFail": "JSON 解析失败：{e}",
+    "mainModelTitle": "主模型（chat + think）",
+    "mainModelHint": "gbrain think/ask 读 models.default 而非 chat_model。套用时自动同步 models.default/think = chat_model，确保 think 使用此模型。",
+    "mainModelPh": "provider:model（例如 groq:llama-3.3-70b-versatile）",
+    "apply": "应用",
+    "modelsDefaultLabel": "models.default（think/ask 使用）",
+    "synced": "已同步",
+    "notSynced": "未同步 — 套用后即一致",
     "appSection": "本系统设置（app config）",
     "notesRepoLabel": "notes repo 路径（sync --repo 对象）",
     "exeLabel": "gbrain.exe 路径",
@@ -245,7 +252,8 @@
     "alreadyRegistered": "此路径已登录：{path}",
     "initFailed": "gbrain init 失败（exit {code}）：{detail}",
     "notABrain": "此路径不是 gbrain 脑（找不到 {path}）：{home}",
-    "cannotRemoveDefault": "默认脑不可移除"
+    "cannotRemoveDefault": "默认脑不可移除",
+    "modelsSyncFailed": "新脑已建立，但写入 models.default 失败：{detail}"
   },
   "config": {
     "noChatModel": "config.json 没有 chat_model",

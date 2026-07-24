@@ -82,6 +82,8 @@ export interface GBrainConfigView {
   exists: boolean;
   raw: unknown;
   chat_model: string | null;
+  /** models.default — gbrain think/ask 實際讀取的模型（與 chat_model 同步）。 */
+  models_default: string | null;
   embedding_model: string | null;
   embedding_dimensions: number | null;
   schema_pack: string | null;
