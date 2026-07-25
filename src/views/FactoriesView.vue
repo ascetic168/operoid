@@ -22,6 +22,7 @@ import {
 } from "lucide-vue-next";
 import {
   factoryRun,
+  factoryOpenDir,
   factoryWritePages,
   factorySaveAuthored,
   factoryClassify,
@@ -166,6 +167,15 @@ async function pickFiles(f: Factory) {
     if (!selected) return;
     const paths = Array.isArray(selected) ? selected : [selected];
     if (paths.length) doRun(f, paths);
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+
+// 點工廠卡左上角圖示：VS Code 開該工廠目錄；沒裝則以檔案總管開啟。inbox 開 GBRAIN_HOME。
+async function openDir(f: Factory) {
+  try {
+    await factoryOpenDir(f, targetRepo.value);
   } catch (e) {
     errorMsg.value = formatError(e);
   }
@@ -414,8 +424,12 @@ async function saveEditorAndSync() {
       <div
         :ref="(el) => setCardRef('auto', el as Element | null)"
         :class="[
-          'col-span-2 flex flex-col gap-2 rounded-xl border-2 p-4 transition-colors',
-          hovered === 'auto' ? 'border-primary bg-primary/10' : 'border-primary/40 bg-primary/5',
+          'col-span-2 flex flex-col gap-2 rounded-xl p-4 transition-all duration-200',
+          busy === 'auto'
+            ? 'border-4 border-destructive bg-destructive/5 animate-[gb-pulse_1.6s_ease-in-out_infinite]'
+            : hovered === 'auto'
+              ? 'border-2 border-primary bg-primary/10'
+              : 'border-2 border-primary/40 bg-primary/5',
         ]"
       >
         <div class="flex items-center gap-3">
@@ -443,14 +457,24 @@ async function saveEditorAndSync() {
         :key="f.id"
         :ref="(el) => setCardRef(f.id, el as Element | null)"
         :class="[
-          'flex flex-col gap-2 rounded-xl border-2 p-4 transition-colors',
-          hovered === f.id ? 'border-primary bg-primary/5' : 'border-dashed border-border bg-card/40',
+          'flex flex-col gap-2 rounded-xl p-4 transition-all duration-200',
+          busy === f.id
+            ? 'border-4 border-destructive bg-destructive/5 animate-[gb-pulse_1.6s_ease-in-out_infinite]'
+            : hovered === f.id
+              ? 'border-2 border-primary bg-primary/5'
+              : 'border-2 border-dashed border-border bg-card/40',
         ]"
       >
         <div class="flex items-center gap-3">
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent">
+          <button
+            type="button"
+            :disabled="f.id === 'inbox'"
+            :title="f.id === 'inbox' ? $t('factories.openDirInboxHint') : $t('factories.openDir')"
+            class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-muted-foreground transition-colors enabled:cursor-pointer enabled:hover:bg-accent/70 enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @click="openDir(f.id)"
+          >
             <component :is="busy === f.id ? Loader2 : f.icon" :size="18" :class="busy === f.id ? 'animate-spin' : ''" />
-          </div>
+          </button>
           <div class="min-w-0 flex-1">
             <div class="font-medium">
               {{ $t(f.titleKey) }}

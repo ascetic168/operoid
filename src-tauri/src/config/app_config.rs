@@ -111,6 +111,15 @@ pub struct AppConfig {
     /// 介面語言覆寫（None = 依系統語言自動偵測；Some = 使用者手動釘選）。
     #[serde(default)]
     pub locale: Option<String>,
+    /// 「開啟 Claude Code」最近用過的工作目錄（最多 3 個，前端維護）。
+    #[serde(default)]
+    pub recent_claude_cwds: Vec<String>,
+    /// 「開啟 Claude Code」偏好終端機 profile id（如 "wt"/"cmd"/"powershell"；或 "custom"）。
+    #[serde(default)]
+    pub claude_terminal: Option<String>,
+    /// 自訂終端機指令範本（claude_terminal == "custom" 時使用；含 {cwd}/{cmd} 佔位字元）。
+    #[serde(default)]
+    pub claude_terminal_template: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -234,6 +243,9 @@ impl Default for AppConfig {
             llm_temperature: default_temp(),
             llm_max_tokens: default_max_tokens(),
             locale: None,
+            recent_claude_cwds: Vec::new(),
+            claude_terminal: None,
+            claude_terminal_template: None,
         };
         cfg.normalize();
         cfg

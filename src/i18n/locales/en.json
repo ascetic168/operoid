@@ -25,6 +25,27 @@
       "ack": "Got it"
     }
   },
+  "claude": {
+    "title": "Open Claude Code",
+    "brain": "Brain",
+    "brainHint": "think / search covers all sources of this brain",
+    "terminal": "Terminal",
+    "terminalCustom": "Custom command template",
+    "terminalTemplateHint": "Use {cwd} (working dir) and {cmd} (claude launch command) placeholders; e.g. wt -d \"{cwd}\" cmd /k {cmd}",
+    "cwd": "Working directory",
+    "cwdHint": "Where Claude Code edits files; brain knowledge is unaffected",
+    "cwdFromSource": "Source directories",
+    "cwdBrowse": "Browse other folder…",
+    "cwdRecent": "Recent",
+    "cwdNone": "(none)",
+    "statusReady": "Claude Code is ready",
+    "statusClaudeMissing": "`claude` CLI not found. Install Claude Code and add `claude` to PATH.",
+    "statusGbrainMissing": "gbrain not ready (brain queries unavailable)",
+    "launch": "Open",
+    "cancel": "Cancel",
+    "cwdNotFound": "Working directory does not exist: {cwd}",
+    "noCustomTemplate": "Custom terminal selected but template is empty"
+  },
   "factories": {
     "title": "Factories — drop / click / create",
     "desc": "Drop or click a drop zone to pick files and auto-convert+write; press + to author a compliant page in the editor.",
@@ -37,6 +58,8 @@
     "dropHint": "Drop files, or click to choose",
     "dropActive": "Release to convert and write",
     "addTooltip": "New {title}",
+    "openDir": "Open folder (VS Code / file manager)",
+    "openDirInboxHint": "Inbox notes are captured into the gbrain knowledge base; there is no browsable folder.",
     "empty": "Drop files, click a drop zone, or press + on a factory to create.",
     "converting": "Converting and writing (LLM structuring may take a few seconds)…",
     "previewN": "Preview #",

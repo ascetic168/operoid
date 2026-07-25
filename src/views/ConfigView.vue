@@ -88,6 +88,9 @@ const form = reactive<AppConfig>({
   llm_temperature: 0.2,
   llm_max_tokens: 4096,
   locale: null,
+  recent_claude_cwds: [],
+  claude_terminal: null,
+  claude_terminal_template: null,
 });
 
 watchEffect(() => {

@@ -25,6 +25,27 @@
       "ack": "我知道了"
     }
   },
+  "claude": {
+    "title": "開啟 Claude Code",
+    "brain": "腦",
+    "brainHint": "think / search 涵蓋此腦全部來源",
+    "terminal": "終端機",
+    "terminalCustom": "自訂指令範本",
+    "terminalTemplateHint": "可用 {cwd}（工作目錄）與 {cmd}（claude 啟動指令）佔位字元；例：wt -d \"{cwd}\" cmd /k {cmd}",
+    "cwd": "工作目錄",
+    "cwdHint": "Claude Code 編輯檔案的位置；腦的知識不受此影響",
+    "cwdFromSource": "來源目錄",
+    "cwdBrowse": "瀏覽其他資料夾…",
+    "cwdRecent": "最近使用",
+    "cwdNone": "（未選擇）",
+    "statusReady": "Claude Code 已就緒",
+    "statusClaudeMissing": "偵測不到 `claude` CLI，請先安裝 Claude Code 並把 `claude` 加到 PATH。",
+    "statusGbrainMissing": "gbrain 未就緒（將無法查詢腦）",
+    "launch": "開啟",
+    "cancel": "取消",
+    "cwdNotFound": "工作目錄不存在：{cwd}",
+    "noCustomTemplate": "已選自訂終端機，但範本為空"
+  },
   "factories": {
     "title": "工廠 — 拖放 / 點選 / 新增",
     "desc": "拖放或點拖放區選檔即自動轉換並寫入；按 + 直接在編輯器以合規 template 新增。",
@@ -37,6 +58,8 @@
     "dropHint": "拖放，或點此選擇檔案",
     "dropActive": "放開即轉換並寫入",
     "addTooltip": "新增 {title}",
+    "openDir": "開啟資料夾（VS Code / 檔案總管）",
+    "openDirInboxHint": "inbox 筆記由 gbrain 整合進知識庫，沒有可瀏覽的獨立資料夾。",
     "empty": "拖放、點拖放區選檔，或按工廠右上 + 新增。",
     "converting": "轉換並寫入中（LLM 結構化可能需數秒）…",
     "previewN": "預覽第",

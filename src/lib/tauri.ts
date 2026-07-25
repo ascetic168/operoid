@@ -113,6 +113,9 @@ export interface AppConfig {
   llm_temperature: number;
   llm_max_tokens: number;
   locale: string | null;
+  recent_claude_cwds: string[];
+  claude_terminal: string | null;
+  claude_terminal_template: string | null;
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>
@@ -122,6 +125,31 @@ export const saveGbrainConfigRaw = (raw: unknown): Promise<void> =>
 export const getAppConfig = (): Promise<AppConfig> => invoke<AppConfig>("get_app_config");
 export const saveAppConfig = (config: AppConfig): Promise<void> =>
   invoke<void>("save_app_config", { config });
+
+/** 內建終端機 profile（已偵測可用性）。 */
+export interface TerminalInfo {
+  id: string;
+  label: string;
+  available: boolean;
+}
+/** `claude_code_status` 回傳：claude/gbrain 就緒狀態 + 可用終端機清單。 */
+export interface ClaudeStatus {
+  claude_installed: boolean;
+  claude_version: string | null;
+  gbrain_exe: string;
+  gbrain_ready: boolean;
+  terminals: TerminalInfo[];
+}
+export const claudeCodeStatus = (): Promise<ClaudeStatus> =>
+  invoke<ClaudeStatus>("claude_code_status");
+/** 以所選腦 + cwd + 終端機啟動 Claude Code（帶 gbrain MCP）。terminal="custom" 時用 template。 */
+export const claudeCodeLaunch = (
+  brainId: string | null,
+  cwd: string,
+  terminal: string | null,
+  template: string | null,
+): Promise<void> =>
+  invoke<void>("claude_code_launch", { brainId, cwd, terminal, template });
 /** 設定介面語言覆寫（null = 回到自動偵測）。回傳實際生效的 locale。 */
 export const setLocale = (locale: string | null): Promise<string | null> =>
   invoke<string | null>("set_locale", { locale });
@@ -214,6 +242,20 @@ export const factoryRun = (
   targetRepo: string | null,
 ): Promise<PreviewResult> =>
   invoke<PreviewResult>("factory_run", { factory, paths, targetRepo });
+
+/** `factory_open_dir` 回傳：以什麼方式開啟了目錄。 */
+export interface OpenDirResult {
+  /** "vscode" | "filemanager" */
+  opened_with: string;
+  /** 開啟的目錄絕對路徑 */
+  path: string;
+}
+/** 點工廠卡圖示：以 VS Code 開該工廠目錄；沒裝則以系統預設檔案管理員開啟。inbox 開 GBRAIN_HOME。 */
+export const factoryOpenDir = (
+  factory: Factory,
+  targetRepo: string | null,
+): Promise<OpenDirResult> =>
+  invoke<OpenDirResult>("factory_open_dir", { factory, targetRepo });
 /** 覆蓋寫入(預覽後編輯過的頁面)。 */
 export const factoryWritePages = (
   pages: WritePage[],

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, Boxes, AlertTriangle, ExternalLink, X } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, AlertTriangle, ExternalLink, Terminal, X } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
 import { checkPrerequisites, openUrl, tL10n, type DepStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import ClaudeCodeDialog from "@/components/ClaudeCodeDialog.vue";
 
 const config = useConfigStore();
 const missingDeps = ref<DepStatus[]>([]);
+const claudeOpen = ref(false);
 
 onMounted(async () => {
   config.load();
@@ -59,6 +61,19 @@ const nav = [
         </div>
         <span :class="isActive ? 'text-foreground' : 'text-muted-foreground'">{{ $t(item.labelKey) }}</span>
       </RouterLink>
+
+      <!-- 開啟 Claude Code（帶作用中腦的 gbrain MCP）-->
+      <button
+        class="group mt-auto flex w-full flex-col items-center gap-1 py-2 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        @click="claudeOpen = true"
+      >
+        <div
+          class="flex h-9 w-9 items-center justify-center rounded-lg transition-colors group-hover:bg-accent group-hover:text-foreground"
+        >
+          <Terminal :size="18" />
+        </div>
+        <span>Claude Code</span>
+      </button>
     </aside>
 
     <!-- 主內容 -->
@@ -115,5 +130,8 @@ const nav = [
         </div>
       </div>
     </div>
+
+    <!-- 開啟 Claude Code 對話框 -->
+    <ClaudeCodeDialog :open="claudeOpen" @close="claudeOpen = false" @launched="claudeOpen = false" />
   </div>
 </template>

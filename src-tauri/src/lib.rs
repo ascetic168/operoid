@@ -5,6 +5,7 @@
 
 mod brains;
 mod classifier;
+mod claude_code;
 mod config;
 mod converters;
 mod factories;
@@ -75,7 +76,10 @@ pub fn run() {
             config::save_app_config,
             config::set_locale,
             gbrain_cli::op_run,
+            claude_code::claude_code_status,
+            claude_code::claude_code_launch,
             factories::factory_run,
+            factories::factory_open_dir,
             factories::factory_write_pages,
             factories::factory_save_authored,
             factories::extract_companies_run,
