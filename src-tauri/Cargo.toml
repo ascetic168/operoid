@@ -1,13 +1,13 @@
 [package]
-name = "gbrain-studio"
-version = "0.1.9"
+name = "emploid"
+version = "0.2.0"
 edition = "2021"
-description = "GBrainStudio — preprocessing & operations GUI for GBrain"
+description = "Emploid — preprocessing & operations GUI for GBrain"
 authors = ["朱國棟 (Charlie Chu)"]
 license = "MIT"
 
 [lib]
-name = "gbrain_studio_lib"
+name = "emploid_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -1,126 +1,123 @@
-# GBrainStudio
+# Emploid
 
 **English** | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-**GBrainStudio** is a friendly desktop companion to
-[GBrain](https://github.com/garrytan/gbrain). Drop in your everyday files and
-get back a connected, queryable knowledge graph — without hand-writing links or
-touching the command line.
+> Emploid is not a chat application. It is an **AI Agent Operating System** — an
+> operating environment where AI agents, called **Employees**, continuously do
+> meaningful work inside a shared, persistent **Workspace**.
+
+Most AI products are conversation-centric: you ask, it answers, the window
+closes and the work is gone. Real work isn't like that. A buyer tracks an order
+for weeks; a QA engineer follows a nonconformance from report to corrective
+action to closure. Those responsibilities need an environment that
+**persists, remembers, and keeps working after the window closes.**
+
+Emploid exists to be that environment.
 
 Built with **Tauri v2 (Rust)** + **Vue 3 + TypeScript**.
-**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license)
+**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** early (v0.1.x) — see [Current status](#current-status)
 
 ---
 
-## Why GBrainStudio?
+## Why Emploid?
 
-[GBrain](https://github.com/garrytan/gbrain) is a powerful knowledge-graph
-engine — but it is CLI-first and expects **hand-authored notes**. Every
-cross-reference has to be a correctly-formatted, correctly-named link, or it
-silently fails to connect in the graph. Building a corpus that way is slow and
-unforgiving, and daily work means memorizing commands and reading terminal
-output.
+Today's AI behaves more like a **consultant** than an **employee**. A consultant
+gives advice and leaves. An employee joins the organization, owns outcomes, and
+stays accountable. Emploid is built for the latter.
 
-**GBrainStudio takes the friction out:**
+Today's AI systems generally lack:
 
-- 📥 **Drop a file, get a linked note.** Feed in a contacts CSV, a meeting-minutes
-  PDF, or a company write-up — GBrainStudio turns it into a valid note with all
-  cross-references generated for you, so links actually resolve in the graph.
-- 🔗 **Never hand-write a link.** Mention a person or company and it is
-  auto-connected to the graph; you write plain prose, the app writes the links.
-- 🖱️ **A GUI for the whole workflow.** Run sync / ask / think with live streamed
-  output; click any reference in an answer to open the source note in your
-  browser.
-- 🧠 **Multiple knowledge graphs, visualized.** Create, register, and sync
-  isolated brains and their sources without ever opening a terminal.
+- **persistent responsibilities** — work vanishes when the chat ends.
+- **long-term commitments** — no notion of "track this until it's done."
+- **shared workspaces** — nowhere for multiple agents and humans to collaborate on the same things.
+- **organizational knowledge** — what the model knows isn't what the organization knows.
+- **enterprise roles** — an agent has no identity, authority, or accountability.
+- **continuous execution** — nothing wakes the agent when something relevant happens.
 
-In short: GBrainStudio turns GBrain from a power-user CLI into an approachable
-tool for **building and exploring** your knowledge graph.
+Emploid treats AI as **organizational members, not chatbots.**
 
-## What is GBrain?
+## What is an "AI Agent Operating System"?
 
-[GBrain](https://github.com/garrytan/gbrain) is the underlying knowledge-graph
-engine: your notes become a queryable graph of people, companies, meetings, and
-concepts. Head to its repository for the engine itself.
+A conventional OS manages processes, memory, files, and devices so programs can
+run — it provides the environment, it doesn't do the programs' work. Emploid
+does the same for AI agents:
 
-> ℹ️ **GBrainStudio is a separate companion GUI — it is *not* GBrain.** It drives
-> the `gbrain` CLI for you; the engine, graph storage, and retrieval all remain
-> GBrain's.
+| OS concept | In Emploid |
+|---|---|
+| **Processes** | **Employees** — agents that are scheduled, run, and suspended |
+| **Files** | **Artifacts** — durable outputs owned by the workspace, not the chat |
+| **Memory** | **Working memory & knowledge** — restored on demand, not held resident |
+| **Devices** | **Tools** — external capabilities invoked through a controlled interface |
+| **The kernel** | **The Runtime** — wakes an Employee, restores its context, lets it execute, puts it back to sleep |
 
-## Features
+The Runtime manages **execution**. It never manages **reasoning** — what an
+Employee thinks is its own. That is why Emploid is an operating system, not an
+application.
 
-### 🏭 Factories — turn source files into linked notes
+## Core concepts
 
-Drag a file onto a card (or click to pick one) and it is converted and written
-straight into your notes:
+| Concept | One-line role |
+|---|---|
+| **Workspace** | The organization. Everything lives inside exactly one. |
+| **Employee** | The worker. An AI agent that owns responsibilities. |
+| **Brain** | The intelligence. Reusable, versioned knowledge and persona. |
+| **Artifact** | The result. Output of work, owned by the workspace. |
+| **Knowledge** | The organization's curated, durable memory. |
+| **Tool** | External capability an Employee may invoke. It never decides. |
+| **Project** | A bounded collaboration toward a goal. |
+| **Task** | A unit of work. Short-lived, executable. |
+| **Commitment** | A persistent responsibility that outlives tasks. |
+| **Trigger** | What decides an Employee should wake. |
+| **Runtime** | The engine that manages lifecycle, never reasoning. |
+| **Event** | The immutable record of what happened. |
+| **Memory** | An Employee's working context, restored each wake. |
 
-| Factory | Accepts | Becomes |
-|---|---|---|
-| **people** | Google Contacts CSV / TXT / MD | people notes (CSV = many contacts per file; TXT/MD = one person, LLM-structured) |
-| **companies** | TXT / MD / PDF | company notes (LLM-structured) |
-| **meeting** | TXT / MD / PDF | meeting notes (LLM-structured) |
-| **projects** | TXT / MD / PDF | project notes (LLM-structured) |
-| **concepts** | TXT / MD / PDF | concept notes (LLM-structured) |
-| **inbox** | TXT / MD | a quick capture |
+The full definitions — purpose, responsibilities, what each owns, lifecycle, and
+future extension — live in the **[Architecture Handbook](handbook/README.md)**,
+which is the constitution of this operating system.
 
-- **Batch drop:** drop several files at once; a results list shows each file's status — click any one to preview and edit it before syncing.
-- **Source-aware:** notes land in the right place — the active brain's active
-  source repo — so a one-click **Sync to brain** picks them up.
-- **Authoring editor (`+`):** start from a template and write naturally; on save,
-  the names you mention are linked into the graph for you.
+## Current status
 
-### 🔧 Operations — run GBrain without the terminal
+Emploid is early. The handbook is at **v0.1 (Draft)**, and the roadmap's first
+milestone — *one Employee that reliably wakes, does work, and sleeps* — is the
+near-term goal.
 
-Wrap the `gbrain` CLI; output streams live into a console.
+What exists in the current build (v0.1.x) is the **desktop shell and the first
+concrete surfaces** of that vision, not the finished OS:
 
-- **stats · sync · extract** — keep the corpus healthy.
-- **ask · think** — ask questions and get multi-hop, cited answers (`think`
-  accepts an optional `anchor:` to focus on a note).
-- **Diagnostics** — `doctor`, `orphans`, `storage`, `graph-query`.
-- **Rebuild companies** — regenerate company notes from your people notes.
-- **Clickable references:** any `[[people/JLin]]` / `[people/JLin]` tag in an
-  answer is highlighted; click it to read that note in your browser.
+- A **Tauri v2 desktop workspace** (Vue 3 + TypeScript frontend, Rust backend).
+- A **knowledge-graph foundation** built on [GBrain](https://github.com/garrytan/gbrain) — turn everyday files (contacts CSVs, meeting PDFs, company write-ups) into linked, queryable notes; sync, ask, and reason over them through a GUI instead of the CLI.
+- A first **agent entry point**: launch and monitor [Claude Code](https://claude.com/claude-code) from inside the workspace.
 
-### 🧠 Brains — manage multiple knowledge graphs
+> ℹ️ The GBrain knowledge-graph features are the *knowledge* layer of today's
+> build — a starting point, not the product's ceiling. The full
+> Employee / Runtime / Commitment architecture is defined in the handbook and
+> being built toward the roadmap.
 
-`gbrain` has no "list all brains" command, so GBrainStudio gives you one:
+## Tech stack
 
-- Register an existing brain or create a new one.
-- Give each brain multiple **sources** (git repos) and sync per-source or all at
-  once.
-- Switch brains and everything — config, sources, the active target — follows.
-
-### ⚙️ Config — one place for every setting
-
-Edit GBrain's authoritative `config.json` (models, embeddings, providers) and
-the app's own settings (paths, output folders, sync flags, language) side by
-side.
-
-### And more
-
-- **Startup check** — verifies `git` / `bun` / `gbrain` and points you to
-  installers for anything missing.
-- **Three languages** — Traditional Chinese, Simplified Chinese, English, with
-  automatic detection and a manual override.
+**Frontend:** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
+**Backend:** Tauri v2 · Rust
 
 ## Prerequisites
+
+To use the current knowledge-graph features, the desktop app expects:
 
 | Tool | Why | Install |
 |---|---|---|
 | **git** | the sync flow commits before updating the graph | <https://git-scm.com/downloads> |
 | **bun** | `gbrain` is installed and run through bun | <https://bun.com/docs/installation#installation> |
-| **gbrain** | the GBrain engine itself | <https://github.com/garrytan/gbrain> |
+| **gbrain** | the GBrain knowledge-graph engine | <https://github.com/garrytan/gbrain> |
 
-Paths are auto-detected (e.g. `~/.bun/bin/gbrain.exe` on Windows); override them
-on the **Config** page if needed.
+Paths are auto-detected (e.g. `~/.bun/bin/gbrain.exe` on Windows) and can be
+overridden on the **Config** page.
 
 ## Install & run
 
-**For most users — just grab the prebuilt installer.** Download the latest
-build for your platform from the
-[**Releases** page](https://github.com/ascetic168/GBrainStudio/releases) and run
-it. There is **no need to `git clone` or build from source** unless you intend
-to develop GBrainStudio itself.
+**For most users — grab the prebuilt installer.** Download the latest build for
+your platform from the
+[**Releases** page](https://github.com/ascetic168/Emploid/releases) and run it.
+No need to `git clone` or build from source unless you intend to develop Emploid.
 
 ### For developers (build from source)
 
@@ -128,8 +125,8 @@ Building the desktop app needs the **Rust toolchain** and the
 [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
-git clone https://github.com/ascetic168/GBrainStudio.git
-cd GBrainStudio
+git clone https://github.com/ascetic168/Emploid.git
+cd Emploid
 npm install          # install dependencies
 npm run tauri dev    # run the app (hot reload)
 npm run tauri build  # build a distributable installer
@@ -137,47 +134,6 @@ npm run tauri build  # build a distributable installer
 
 Frontend only (in a browser at http://localhost:1420): `npm run dev`,
 `npm run build`.
-
-## Quick start
-
-1. **Launch** GBrainStudio — a dialog lists anything still missing.
-2. **Config** — confirm the notes folder and `gbrain` path.
-3. **Brains** — pick or create a brain, add a **source** (a git repo for your
-   notes), and set it active.
-4. **Factories** — drag a file onto the matching card, then **Sync to brain**.
-5. **Operations** — run `think` with a question; click any highlighted name to
-   open that note.
-
-## Configuration
-
-Stored via `tauri-plugin-store` in app data:
-
-| Field | Meaning |
-|---|---|
-| `notes_repo_path` | fallback notes folder; factories prefer the active source's folder |
-| `gbrain_exe_path` | path to the `gbrain` executable |
-| `factory_targets` | output sub-folders (`people` / `companies` / `meetings`) |
-| `auto_sync` | commit + sync automatically after a factory write |
-| `sync_no_pull` | pass `--no-pull` (recommended for brains with no remote) |
-| `llm_temperature` / `llm_max_tokens` | sampling for factory LLM structuring |
-| `locale` | UI language (`null` = auto-detect) |
-
-> A note's file lives in the **active brain's active source repo**. Clicking a
-> reference searches that source first, then the others, then the fallback
-> folder — so you always open the right file.
-
-## Project structure
-
-```
-src/              Vue 3 frontend (views, Pinia stores, i18n, typed IPC wrappers)
-src-tauri/src/    Rust backend (config, converters, factories, gbrain_cli,
-                  brains, note_view, llm, prereq, i18n)
-```
-
-## Tech stack
-
-**Frontend:** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router ·
-vue-i18n · lucide-vue-next. **Backend:** Tauri v2 · Rust.
 
 ## Development
 
@@ -188,22 +144,28 @@ cd src-tauri && cargo test    # Rust unit tests
 cd src-tauri && cargo check   # fast backend typecheck
 ```
 
-## Troubleshooting
+## Project structure
 
-- **`think` / `ask` say "(no LLM available)"?** `gbrain think` picks its model
-  from `models.think → models.default → GBRAIN_MODEL → opus`. `gbrain init
-  --chat-model X` sets `chat_model` but **not** `models.default`, so `think` can
-  silently fall back to Anthropic Opus. Fix it on the brain:
-  `gbrain config set models.default <provider:model>`
-  (e.g. `groq:llama-3.3-70b-versatile`). (GBrainStudio's own factory structuring
-  reads `chat_model` directly and is unaffected.)
-- **Clicking a reference says "note not found"?** The note doesn't exist in any
-  source of the active brain, or its name differs in case. GBrainStudio tries an
-  exact match, then a case-insensitive scan — check the file really exists under
-  the active source.
+```
+src/              Vue 3 frontend (views, Pinia stores, i18n, typed IPC wrappers)
+src-tauri/src/    Rust backend (config, converters, factories, gbrain_cli,
+                  claude_code, brains, classifier, note_view, llm, prereq, i18n)
+handbook/         The Architecture Handbook — the constitution (EN + 中文)
+```
+
+## Roadmap
+
+The roadmap is sketched in the handbook, ordered by dependence:
+
+1. **One Employee that truly works** — wake on a trigger, restore context, invoke a tool, commit an artifact, sleep.
+2. **Persistence & Commitments** — work survives a full shutdown and restart.
+3. **Shared Brains & Knowledge** — upgrade one Brain, watch many Employees adopt it.
+4. **Templates & Instances** — one template, many independent employees.
+5. **Collaboration** — teams of Employees completing a Project together.
+
+See [Chapter 20 — Roadmap](handbook/20-Roadmap.md) for the full picture.
 
 ## License
 
 Released under the **[MIT License](LICENSE)**.
-
 Copyright © 2026 朱國棟 (Charlie Chu). See [LICENSE](LICENSE) for the full text.

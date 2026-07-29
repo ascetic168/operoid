@@ -1,155 +1,127 @@
-# GBrainStudio
+# Emploid
 
 [English](README.md) | **繁體中文** | [简体中文](README.zh-CN.md)
 
-**GBrainStudio** 是 [GBrain](https://github.com/garrytan/gbrain) 的友善桌面夥伴。
-把日常檔案丟進來，就能得到一張互相連結、可查詢的知識圖譜 —— 不必手寫連結、不必碰命令列。
+> Emploid 不是一個聊天應用程式。它是一套 **AI Agent 作業系統** —— 一個作業環境，
+> 讓 AI 代理（稱為 **Employee 員工**）在一個共享、持久的工作空間（**Workspace**）裡
+> 持續完成有意義的工作。
+
+多數 AI 產品以對話為中心：你問、它答，視窗一關工作就消失了。但真正的工作不是這樣。
+採購助理會追蹤一張訂單長達數週；品保工程師會從異常報告、到矯正措施、再到結案一路追蹤。
+這些職責需要一個能**持久、能記憶、並在視窗關閉後仍繼續運作**的環境。
+
+Emploid 的存在，就是為了成為那個環境。
 
 以 **Tauri v2（Rust）** + **Vue 3 + TypeScript** 打造。
-**作者：** 朱國棟 (Charlie Chu) · **授權：** [MIT](#授權)
+**作者：** 朱國棟 (Charlie Chu) · **授權：** [MIT](#授權) · **狀態：** 早期（v0.1.x）—— 見[目前狀態](#目前狀態)
 
 ---
 
-## 為什麼需要 GBrainStudio？
+## 為什麼需要 Emploid？
 
-[GBrain](https://github.com/garrytan/gbrain) 是一套強大的知識圖譜引擎 —— 但它以 CLI 為主，
-而且要求**手工撰寫筆記**：每個交叉引用都必須是格式正確、命名正確的連結，否則在圖譜裡會
-默默斷開。這樣累積語料既慢又容錯率低，日常工作還得背指令、讀終端機輸出。
+今日的 AI，行為更像一個**顧問**，而不是一個**員工**。顧問給完建議就離開；
+員工加入組織、承擔成果、並持續負責。Emploid 是為後者而打造的。
 
-**GBrainStudio 把這些摩擦拿掉：**
+今日的 AI 系統普遍缺乏：
 
-- 📥 **丟個檔案，得到一則已連結的筆記。** 丟進聯絡人 CSV、會議記錄 PDF、或公司介紹 ——
-  GBrainStudio 把它轉成合規筆記，所有交叉引用都自動產生，連結確實能在圖譜裡解析。
-- 🔗 **永遠不必手寫連結。** 提到某個人或某家公司，就自動接進圖譜；你只管寫白話文，連結交給程式。
-- 🖱️ **整套流程都有 GUI。** 跑 sync / ask / think 帶即時串流輸出；點答案裡的任一引用，
-  就能在瀏覽器開啟來源筆記。
-- 🧠 **多個知識圖譜，視覺化管理。** 建立、登錄、同步多個隔離的腦與其來源，全程不必開終端機。
+- **持久的職責** —— 對話結束，工作就消失。
+- **長期的承諾** —— 沒有「追蹤此事直到完成」的概念。
+- **共享的工作空間** —— 沒有一個地方讓多個代理與人類就相同事物協作。
+- **組織知識** —— 模型所知，並不等於組織所知。
+- **企業角色** —— 代理沒有身份、職權或問責。
+- **持續的執行** —— 沒有東西會在相關事件發生時把代理喚醒。
 
-一言以蔽之：GBrainStudio 把 GBrain 從進階玩家的 CLI，變成一套**好上手**的知識圖譜
-建立與探索工具。
+Emploid 把 AI 視為**組織成員，而不是聊天機器人。**
 
-## GBrain 是什麼？
+## 什麼是「AI Agent 作業系統」？
 
-[GBrain](https://github.com/garrytan/gbrain) 是底層的知識圖譜引擎：你的筆記會變成一張
-可查詢的圖，涵蓋人物、公司、會議與概念。引擎本身的細節請見它的 repo。
+傳統作業系統管理行程、記憶、檔案與裝置，讓程式得以執行 —— 它提供環境，不做程式的工作。
+Emploid 對 AI 代理做同樣的事：
 
-> ℹ️ **GBrainStudio 是獨立的搭配 GUI —— 它不是 GBrain。** 它幫你驅動 `gbrain` CLI；
-> 引擎、圖譜儲存與檢索都仍是 GBrain 的工作。
+| 作業系統概念 | 在 Emploid 裡 |
+|---|---|
+| **行程** | **Employee 員工** —— 被排程、執行與暫停的代理 |
+| **檔案** | **Artifact 成果物** —— 由工作空間擁有、而非由對話擁有的持久產出 |
+| **記憶** | **工作記憶與知識** —— 依需求恢復，而非長期駐留 |
+| **裝置** | **Tool 工具** —— 透過受控介面調用的外部能力 |
+| **核心（kernel）** | **Runtime 執行引擎** —— 喚醒 Employee、恢復其上下文、讓它執行、再讓它休眠 |
 
-## 功能
+Runtime 管理**執行**，從不管理**思考** —— Employee 想什麼，是它自己的事。
+這就是為什麼 Emploid 被稱為作業系統，而不是應用程式。
 
-### 🏭 工廠 —— 把來源檔案變成已連結的筆記
+## 核心概念
 
-把檔案拖到卡片上（或點擊選檔），即轉換並直接寫入筆記：
+| 概念 | 一句話角色 |
+|---|---|
+| **Workspace 工作空間** | 組織。一切事物都隸屬於恰好一個。 |
+| **Employee 員工** | 工作者。承擔責任的 AI 代理。 |
+| **Brain 大腦** | 智能。可重用、可版本化的知識與人格。 |
+| **Artifact 成果物** | 成果。工作的產出，歸工作空間所有。 |
+| **Knowledge 知識庫** | 組織經策展且持久的記憶。 |
+| **Tool 工具** | Employee 可調用的外部能力。它永遠不做決策。 |
+| **Project 專案** | 為某個目標而成立的有限度協作。 |
+| **Task 任務** | 工作單位。短期、可執行。 |
+| **Commitment 長期職責** | 比任務活得更久的持久職責。 |
+| **Trigger 觸發器** | 決定何時該喚醒 Employee。 |
+| **Runtime 執行引擎** | 管理生命週期的引擎，從不管理思考。 |
+| **Event 事件** | 已發生事實的不可變紀錄。 |
+| **Memory 工作記憶** | Employee 的工作上下文，每次喚醒時重新恢復。 |
 
-| 工廠 | 接受 | 變成 |
-|---|---|---|
-| **people** | Google Contacts CSV / TXT / MD | 人物筆記（CSV 一檔多人；TXT/MD 一人一檔，LLM 結構化） |
-| **companies** | TXT / MD / PDF | 公司筆記（LLM 結構化） |
-| **meeting** | TXT / MD / PDF | 會議筆記（LLM 結構化） |
-| **projects** | TXT / MD / PDF | 專案筆記（LLM 結構化） |
-| **concepts** | TXT / MD / PDF | 概念筆記（LLM 結構化） |
-| **inbox** | TXT / MD | 速記 capture |
+完整的定義 —— 目的、職責、各自擁有什麼、生命週期與未來擴展 —— 見
+**[架構手冊](handbook/Chinese/README.md)**，它是這套作業系統的憲法。
 
-- **批次拖放：** 一次丟多個檔案；結果清單顯示每個檔的狀態，可點任一檔預覽、編輯後再同步。
-- **來源感知：** 筆記寫對位置 —— 作用中腦的作用中來源 repo —— 所以一鍵 **Sync 到腦** 就接得上。
-- **手寫編輯器（`+`）：** 從 template 開始自然書寫；存檔時你提到的人名/公司名會自動連進圖譜。
+## 目前狀態
 
-### 🔧 操作 —— 不必開終端機就能用 GBrain
+Emploid 還在早期。手冊為 **v0.1（草稿）**，路線圖的第一個里程碑 ——
+*一個能可靠喚醒、工作、再休眠的 Employee* —— 是近期目標。
 
-包裝 `gbrain` CLI；輸出即時串流到 console。
+目前版本（v0.1.x）提供的是那個願景的**桌面外殼與第一批具體表面**，而不是完成的作業系統：
 
-- **stats · sync · extract** —— 維持語料健康。
-- **ask · think** —— 問問題，得到多跳、附引用的答案（`think` 可用 `anchor:` 聚焦某則筆記）。
-- **診斷** —— `doctor`、`orphans`、`storage`、`graph-query`。
-- **重建 companies** —— 從人物筆記重新產生公司筆記。
-- **可點擊引用：** 答案裡的 `[[people/JLin]]` / `[people/JLin]` 標籤會高亮；點下去就能在瀏覽器讀該筆記。
+- 一個 **Tauri v2 桌面工作空間**（Vue 3 + TypeScript 前端、Rust 後端）。
+- 一個以 [GBrain](https://github.com/garrytan/gbrain) 為基礎的**知識圖譜層** ——
+  把日常檔案（聯絡人 CSV、會議 PDF、公司介紹）變成互連、可查詢的筆記；
+  透過 GUI 而非命令列來同步、提問與推論。
+- 第一個**代理入口**：在工作空間內啟動並監看 [Claude Code](https://claude.com/claude-code)。
 
-### 🧠 腦 —— 管理多個知識圖譜
+> ℹ️ GBrain 知識圖譜功能是今日版本的*知識*層 —— 一個起點，而非產品的天花板。
+> 完整的 Employee / Runtime / Commitment 架構已定義於手冊中，並依路線圖逐步建置。
 
-`gbrain` 沒有「列出所有腦」的指令，GBrainStudio 給你一個：
+## 技術棧
 
-- 登錄既有腦，或建立新腦。
-- 每腦可有多個**來源**（git repo），可逐來源或全部同步。
-- 切換腦時，config、來源、作用中目標全部跟著走。
-
-### ⚙️ 設定 —— 所有設定集中一處
-
-並排編輯 GBrain 權威的 `config.json`（model、embedding、provider）與本系統自有設定
-（路徑、輸出資料夾、sync 旗標、語言）。
-
-### 還有
-
-- **啟動檢查** —— 檢查 `git` / `bun` / `gbrain`，缺漏者直接給安裝連結。
-- **三種語言** —— 繁中、簡中、英文，自動偵測並可手動覆寫。
+**前端：** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
+**後端：** Tauri v2 · Rust
 
 ## 前置需求
+
+要使用目前的知識圖譜功能，桌面應用需要：
 
 | 工具 | 用途 | 安裝 |
 |---|---|---|
 | **git** | sync 流程會在更新圖譜前先 commit | <https://git-scm.com/downloads> |
 | **bun** | `gbrain` 透過 bun 安裝與執行 | <https://bun.com/docs/installation#installation> |
-| **gbrain** | GBrain 引擎本體 | <https://github.com/garrytan/gbrain> |
+| **gbrain** | GBrain 知識圖譜引擎 | <https://github.com/garrytan/gbrain> |
 
 路徑會自動偵測（Windows 為 `~/.bun/bin/gbrain.exe`）；必要時可在「設定」頁覆寫。
 
 ## 安裝與執行
 
 **一般使用者 —— 直接下載預編譯安裝包即可。** 到
-[**Releases** 頁面](https://github.com/ascetic168/GBrainStudio/releases)下載對應平台的最新版本並執行。
-**除非你要開發 GBrainStudio 本身，否則不需要 `git clone` 或從原始碼建置。**
+[**Releases** 頁面](https://github.com/ascetic168/Emploid/releases)下載對應平台的最新版本並執行。
+除非你要開發 Emploid，否則不需要 `git clone` 或從原始碼建置。
 
 ### 開發者（從原始碼建置）
 
 建置桌面應用需要 **Rust 工具鏈**與 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
-git clone https://github.com/ascetic168/GBrainStudio.git
-cd GBrainStudio
+git clone https://github.com/ascetic168/Emploid.git
+cd Emploid
 npm install          # 安裝依賴
 npm run tauri dev    # 執行應用（熱重載）
 npm run tauri build  # 建置散布用安裝包
 ```
 
 僅前端（於 http://localhost:1420 在瀏覽器執行）：`npm run dev`、`npm run build`。
-
-## 快速上手
-
-1. **啟動** GBrainStudio —— 缺漏會以視窗列出。
-2. **設定** —— 確認筆記資料夾與 `gbrain` 路徑。
-3. **腦** —— 選擇或建立腦，加入一個**來源**（放筆記的 git repo），並設為作用中。
-4. **工廠** —— 把檔案拖到對應卡片，再按 **Sync 到腦**。
-5. **操作** —— 用一個問題跑 `think`；點任一高亮的人名即可開啟該筆記。
-
-## 設定
-
-經 `tauri-plugin-store` 存於 app data：
-
-| 欄位 | 意義 |
-|---|---|
-| `notes_repo_path` | 兜底的筆記資料夾；工廠優先用作用中來源的資料夾 |
-| `gbrain_exe_path` | `gbrain` 執行檔路徑 |
-| `factory_targets` | 輸出子資料夾（`people` / `companies` / `meetings`） |
-| `auto_sync` | 工廠寫檔後自動 commit + sync |
-| `sync_no_pull` | 加 `--no-pull`（無 remote 的腦建議開） |
-| `llm_temperature` / `llm_max_tokens` | 工廠 LLM 結構化的取樣參數 |
-| `locale` | 介面語言（`null` = 自動偵測） |
-
-> 一份筆記的檔案位於「作用中腦的作用中來源 repo」。點引用時會先搜該來源、再其他來源、
-> 最後才退到兜底資料夾 —— 永遠開對檔案。
-
-## 專案結構
-
-```
-src/              Vue 3 前端（views、Pinia stores、i18n、具型別 IPC 包裝）
-src-tauri/src/    Rust 後端（config、converters、factories、gbrain_cli、
-                  brains、note_view、llm、prereq、i18n）
-```
-
-## 技術棧
-
-**前端：** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router ·
-vue-i18n · lucide-vue-next。**後端：** Tauri v2 · Rust。
 
 ## 開發
 
@@ -160,18 +132,28 @@ cd src-tauri && cargo test    # Rust 單元測試
 cd src-tauri && cargo check   # 後端快速型別檢查
 ```
 
-## 疑難排解
+## 專案結構
 
-- **`think` / `ask` 顯示「(no LLM available)」？** `gbrain think` 的 model 取用順序為
-  `models.think → models.default → GBRAIN_MODEL → opus`。`gbrain init --chat-model X` 只設了
-  `chat_model` 而**未設** `models.default`，所以 `think` 可能默默退回 Anthropic Opus。修正：
-  在該腦上 `gbrain config set models.default <provider:model>`
-  （如 `groq:llama-3.3-70b-versatile`）。（GBrainStudio 自有的工廠結構化直接讀 `chat_model`，不受影響。）
-- **點引用顯示「找不到筆記」？** 該筆記不在作用中腦的任一來源中，或檔名大小寫不同。
-  GBrainStudio 會先精確比對、再大小寫寬容掃描 —— 請確認檔案確實在作用中來源下。
+```
+src/              Vue 3 前端（views、Pinia stores、i18n、具型別 IPC 包裝）
+src-tauri/src/    Rust 後端（config、converters、factories、gbrain_cli、
+                  claude_code、brains、classifier、note_view、llm、prereq、i18n）
+handbook/         架構手冊 —— 憲法（英文 + 中文）
+```
+
+## 路線圖
+
+路線圖勾勒於手冊中，依依賴關係排序：
+
+1. **一個真正能工作的 Employee** —— 因 Trigger 喚醒、恢復上下文、調用工具、提交成果物、休眠。
+2. **持久化與 Commitment** —— 工作能挺過完全關機與重啟。
+3. **共享的 Brain 與知識** —— 升級一個 Brain，多個 Employee 同步採用。
+4. **範本與實例** —— 一個範本，多個獨立員工。
+5. **協作** —— 一群 Employee 合作完成一個 Project。
+
+完整說明見[第二十章 — 路線圖](handbook/Chinese/20-Roadmap.md)。
 
 ## 授權
 
 本專案以 **[MIT 授權](LICENSE)** 釋出。
-
 Copyright © 2026 朱國棟 (Charlie Chu)。完整條文見 [LICENSE](LICENSE)。

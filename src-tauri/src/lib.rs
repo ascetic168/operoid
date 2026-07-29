@@ -1,4 +1,4 @@
-//! GBrainStudio — Tauri backend entry.
+//! Emploid — Tauri backend entry.
 //!
 //! Domain modules: config (Phase 1), converters (Phase 2), gbrain_cli (Phase 3),
 //! llm + factories (Phase 4).
@@ -32,7 +32,7 @@ pub struct AppInfo {
 #[tauri::command]
 fn app_info() -> AppInfo {
     AppInfo {
-        name: "GBrainStudio",
+        name: "Emploid",
         version: env!("CARGO_PKG_VERSION"),
         // GBrain 以 GBRAIN_HOME 為準（gbrain 會自己補上 .gbrain）；未設則為 ~/.gbrain
         gbrain_home: std::env::var("GBRAIN_HOME").unwrap_or_else(|_| {
@@ -108,5 +108,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running GBrainStudio");
+        .expect("error while running Emploid");
 }

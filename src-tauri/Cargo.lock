@@ -817,6 +817,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
+name = "emploid"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "csv",
+ "dirs 5.0.1",
+ "encoding_rs",
+ "log",
+ "open",
+ "pdf-extract",
+ "percent-encoding",
+ "pulldown-cmark",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-shell",
+ "tauri-plugin-store",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1034,35 +1063,6 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "gbrain-studio"
-version = "0.1.9"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "csv",
- "dirs 5.0.1",
- "encoding_rs",
- "log",
- "open",
- "pdf-extract",
- "percent-encoding",
- "pulldown-cmark",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_yaml",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-shell",
- "tauri-plugin-store",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]

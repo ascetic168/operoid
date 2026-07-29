@@ -1,7 +1,7 @@
 {
-  "productName": "GBrainStudio",
-  "version": "0.1.9",
-  "identifier": "com.gbrain.studio",
+  "productName": "Emploid",
+  "version": "0.2.0",
+  "identifier": "com.emploid.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "GBrainStudio",
+        "title": "Emploid",
         "width": 1280,
         "height": 840,
         "minWidth": 960,

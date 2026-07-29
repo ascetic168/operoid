@@ -4,7 +4,7 @@
 # 使用方式：
 #   git tag v0.1.0
 #   git push origin v0.1.0
-# → 觸發本流程；完成後在 Releases 頁會出現 "GBrainStudio v0.1.0" 草稿，
+# → 觸發本流程；完成後在 Releases 頁會出現 "Emploid v0.1.0" 草稿，
 #   附帶各平台安裝包（Windows .msi/.exe、macOS .dmg、Linux .deb/.rpm/.AppImage）。
 #
 # 前置（一次性）：repo Settings → Actions → General → Workflow permissions
@@ -81,7 +81,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'GBrainStudio ${{ github.ref_name }}'
+          releaseName: 'Emploid ${{ github.ref_name }}'
           releaseBody: |
             各平台安裝包已自動產生，請依作業系統下載對應檔案：
             - **Windows**：`.msi`（或 `.exe` NSIS 安裝包）

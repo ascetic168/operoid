@@ -27,3 +27,4 @@ src-tauri/target/
 
 # ZCode workspace (本地專案記憶，不共享)
 .zcode/
+

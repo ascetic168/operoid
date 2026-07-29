@@ -1,4 +1,4 @@
-//! 從 GBrainStudio 啟動 Claude Code：以所選腦的 GBRAIN_HOME 啟動 gbrain MCP server，
+//! 從 Emploid 啟動 Claude Code：以所選腦的 GBRAIN_HOME 啟動 gbrain MCP server，
 //! 在使用者選的工作目錄、用指定的終端機，執行 `claude --mcp-config <file>`。
 
 use std::path::{Path, PathBuf};
