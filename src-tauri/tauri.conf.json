@@ -1,7 +1,7 @@
 {
   "productName": "Emploid",
   "version": "0.2.0",
-  "identifier": "com.emploid.app",
+  "identifier": "com.emploid.studio",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
