@@ -8,6 +8,7 @@ mod classifier;
 mod claude_code;
 mod config;
 mod converters;
+mod domain;
 mod factories;
 mod gbrain_cli;
 mod i18n;
@@ -15,6 +16,7 @@ mod llm;
 mod note_server;
 mod note_view;
 mod prereq;
+mod runtime;
 
 use serde::Serialize;
 use tauri::Manager;
@@ -95,6 +97,8 @@ pub fn run() {
             brains::brain_bind_source_path,
             brains::brain_sync,
             note_view::open_note,
+            runtime::agent_seed,
+            runtime::agent_run,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。

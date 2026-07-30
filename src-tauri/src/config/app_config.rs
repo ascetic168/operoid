@@ -120,6 +120,10 @@ pub struct AppConfig {
     /// 自訂終端機指令範本（claude_terminal == "custom" 時使用；含 {cwd}/{cmd} 佔位字元）。
     #[serde(default)]
     pub claude_terminal_template: Option<String>,
+    /// Agent-OS 子系統開關（runtime feature flag）。Phase 0 不讀取；Phase 1 起的指令據此啟用。
+    /// 預設關閉；既有 app-settings.json 因 `#[serde(default)]` 可無痛載入。
+    #[serde(default)]
+    pub agent_os_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -246,6 +250,7 @@ impl Default for AppConfig {
             recent_claude_cwds: Vec::new(),
             claude_terminal: None,
             claude_terminal_template: None,
+            agent_os_enabled: false,
         };
         cfg.normalize();
         cfg

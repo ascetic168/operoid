@@ -87,7 +87,7 @@ fn exe_path(c: &AppConfig) -> Result<String, AppError> {
     }
 }
 
-fn brain_entry<'a>(c: &'a AppConfig, brain_id: &str) -> Result<&'a BrainEntry, AppError> {
+pub(crate) fn brain_entry<'a>(c: &'a AppConfig, brain_id: &str) -> Result<&'a BrainEntry, AppError> {
     c.brains
         .iter()
         .find(|b| b.id == brain_id)
