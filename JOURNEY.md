@@ -158,7 +158,8 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 - **目標：** 一個 Brain 服務多 Employee；Knowledge 可策展、可版本、可檢索。
 - **對應：** 驗證 Principle 1（知識≠工作者）、6（Brain 可共享）。**GBrain 給我們起跑優勢**——一個 graph 本就服務多次查詢，這階段把它做實成「Brain 可被多 Employee 引用」。
 - **退出條件：**
-  - [ ] 升級一個 Brain，多 Employee 採用，**不失身份、不失進行中工作**。
+  - [x] 升級一個 Brain，多 Employee 採用，**不失身份、不失進行中工作**。（結構上早已可行：`Employee.brain` 是共享 `BrainRef`，員工狀態各自獨立於 SQLite。Phase 3 把它**證明**出來——`shared_brain_two_employees_independent`＋`brain_upgrade_preserves_inflight_work`（stub v1→v2：舊員工 v1 進行中工作不失、新員工採 v2）＋真實 `real_shared_brain`（兩員工共用 demo 腦、Graph>0、各自 artifact/memory）。）
+- **狀態：✅ 完成（2026-07-30，含真實 gbrain 驗證）。** 落點：`agent_recruit` 指令（招募員工、可共用腦）、`agent_list_state` 加 employees。83 tests 全綠；真實兩員工共用 demo 腦跑通（Graph 1、Pages 21、Citations 12／1）。**無模型變更**（Brain 維持＝GBrain 後端，D1；Knowledge＝GBrain 圖譜）。
 
 ## Phase 4 — Template 與 Instance（≡ Handbook Milestone 4）
 
@@ -244,5 +245,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-07-30 | Phase 1 驗證 | 真實 gbrain 端到端通過：`real_gbrain_think_cycle`（ignored 測試）對 demo 腦跑 think → Graph 1、Pages 21、Model groq（非 opus）、4 citations，合成「晶瀚半導體會議」答案並 commit 為 artifact。一圈 wake→restore→execute→commit→sleep 全走通。 | Phase 2 | D3（延後） |
 | 2026-07-30 | **Phase 2 ✅** | `domain/sqlite_store.rs`（`SqliteStore`，D2 遷 SQLite；`Store` trait 保 JsonStore 對照）；Commitment 活化（create／satisfy）、Artifact provenance＋版本（`revise_artifact`）、run_cycle 繫結 commitment、新指令 `agent_create_commitment`／`agent_satisfy_commitment`／`agent_revise_artifact`／`agent_list_state`。81 tests 全綠（SQLite round-trip／重啟、commitment 跨重啟多 task、artifact revise 歷史），`cargo build` 0 warning。 | Phase 3（共享 Brain 與 Knowledge） | D3（延後）；package-lock.json 仍殘留舊名 |
 | 2026-07-30 | Phase 2 驗證 | 真實 gbrain 在 **SQLite** 上跑通：`real_gbrain_think_cycle` 改用 SqliteStore → Graph 1、Pages 21、Citations 10、Model groq。SQLite 持久化＋commitment／artifact 流程端到端正確。 | Phase 3 | D3（延後） |
+| 2026-07-30 | **Phase 3 ✅** | 共享 Brain 與 Knowledge（Milestone 3）。關鍵認知：共享/升級腦結構上早已可行（BrainRef 共享、員工狀態獨立），故 Phase 3 以**證明**為主、無模型變更。加 `agent_recruit`（招募員工、可共用腦）、`agent_list_state` 加 employees。83 tests 全綠（shared_brain 兩員工、upgrade_preserves_inflight_work）。 | Phase 4 | D3（延後） |
+| 2026-07-30 | Phase 3 驗證 | 真實 `real_shared_brain`：兩員工（emp-a／emp-b）共用 demo 腦各跑 think → Graph 1、Pages 21、Citations 12／1、groq；各產 artifact、memory 獨立。共用腦＋獨立狀態端到端正確。 | Phase 4（Template 與 Instance） | D3（延後） |
 
-**目前所在：** Phase 2 完成（程式碼＋測試＋真實 gbrain 驗證）。下一步 = Phase 3（共享 Brain 與 Knowledge）。
+**目前所在：** Phase 3 完成（程式碼＋測試＋真實 gbrain 驗證）。下一步 = Phase 4（Template 與 Instance）。

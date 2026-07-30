@@ -281,6 +281,53 @@ pub async fn agent_seed<R: tauri::Runtime>(
     })
 }
 
+#[derive(Serialize)]
+pub struct RecruitResult {
+    pub employee_id: String,
+}
+
+/// 招募另一個 Employee（可與既有員工**共用同一腦**，Principle 6）。
+/// `brain_id` 缺省＝作用中腦；腦是否存在於執行（`agent_run`）時驗證。
+#[tauri::command]
+pub async fn agent_recruit<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_id: String,
+    name: String,
+    brain_id: Option<String>,
+) -> Result<RecruitResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+
+    let brain_id = brain_id.unwrap_or_else(|| {
+        cfg.active_brain_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_BRAIN_ID.to_string())
+    });
+    let existing: Vec<String> = store
+        .list_employees(&workspace_id)?
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    let emp_id = id_from_name(&name, &existing);
+    store.put_employee(&Employee {
+        id: emp_id.clone(),
+        workspace_id,
+        name,
+        brain: BrainRef { brain_id },
+        role: None,
+        state: EmployeeState::Sleeping,
+        created_at: now_rfc3339(),
+    })?;
+    Ok(RecruitResult { employee_id: emp_id })
+}
+
 /// 跑一輪 Employee 循環：載入 employee→解析腦→建 ToolCtx→run_cycle（gbrain think）。
 /// `commitment_id` 可選：綁定則此循環的 task／artifact 連到該長期責任。
 #[tauri::command]
@@ -488,6 +535,7 @@ pub async fn agent_list_state<R: tauri::Runtime>(
         .map_err(|e| e.to_string())?;
     let store = SqliteStore::open(data_dir.join("emploid.db"))?;
     Ok(serde_json::json!({
+        "employees": store.list_employees(&workspace_id)?,
         "commitments": store.list_commitments(&workspace_id)?,
         "tasks": store.list_tasks(&workspace_id)?,
         "artifacts": store.list_artifacts(&workspace_id)?,
@@ -875,6 +923,213 @@ mod tests {
         assert_eq!(v2.revised_from_id.as_deref(), Some("a1"));
         assert_eq!(v2.version, 2);
         assert_eq!(store.list_artifacts("ws").unwrap().len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 多員工共用同一腦，各自產出、記憶互不污染（Principle 6）。
+    #[tokio::test]
+    async fn shared_brain_two_employees_independent() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        let brain = "__default__".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        for name in ["steve", "mary"] {
+            store
+                .put_employee(&Employee {
+                    id: name.into(),
+                    workspace_id: ws.clone(),
+                    name: name.into(),
+                    brain: BrainRef { brain_id: brain.clone() },
+                    role: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+        let s = StubTool::new("steve-out");
+        run_cycle("steve", "q".into(), None, None, &s, &ctx(), &store)
+            .await
+            .unwrap();
+        let m = StubTool::new("mary-out");
+        run_cycle("mary", "q".into(), None, None, &m, &ctx(), &store)
+            .await
+            .unwrap();
+
+        let arts = store.list_artifacts(&ws).unwrap();
+        assert_eq!(arts.len(), 2);
+        let by: Vec<String> = arts.iter().map(|a| a.produced_by.clone()).collect();
+        assert!(by.contains(&"steve".into()) && by.contains(&"mary".into()));
+        assert_eq!(store.get_memory("steve").unwrap().unwrap().notes.len(), 1);
+        assert_eq!(store.get_memory("mary").unwrap().unwrap().notes.len(), 1);
+        let emps = store.list_employees(&ws).unwrap();
+        assert!(emps.iter().all(|e| e.brain.brain_id == brain));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Milestone 3 核心：升級共享腦，新員工採用，舊員工的進行中工作不失（Principle 1）。
+    #[tokio::test]
+    async fn brain_upgrade_preserves_inflight_work() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        let brain = "demo".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        for name in ["steve", "mary"] {
+            store
+                .put_employee(&Employee {
+                    id: name.into(),
+                    workspace_id: ws.clone(),
+                    name: name.into(),
+                    brain: BrainRef { brain_id: brain.clone() },
+                    role: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+        // steve 在腦 v1 下跑
+        let s1 = StubTool::new("v1");
+        let r1 = run_cycle("steve", "q".into(), None, None, &s1, &ctx(), &store)
+            .await
+            .unwrap();
+        let steve_notes_before = store.get_memory("steve").unwrap().unwrap().notes.len();
+
+        // 腦「升級」：同一 brain_id，知識演化為 v2；mary 採用。
+        let m2 = StubTool::new("v2");
+        let r2 = run_cycle("mary", "q".into(), None, None, &m2, &ctx(), &store)
+            .await
+            .unwrap();
+
+        // steve 的進行中工作（v1 artifact）未因升級／mary 而失。
+        let steve_art = store.get_artifact(&r1.artifact_id).unwrap().unwrap();
+        assert_eq!(steve_art.content, "v1");
+        // mary 採用升級後的腦（v2）。
+        let mary_art = store.get_artifact(&r2.artifact_id).unwrap().unwrap();
+        assert_eq!(mary_art.content, "v2");
+        // steve memory 不受 mary 影響。
+        assert_eq!(
+            store.get_memory("steve").unwrap().unwrap().notes.len(),
+            steve_notes_before
+        );
+        let emps = store.list_employees(&ws).unwrap();
+        assert!(emps.iter().all(|e| e.brain.brain_id == brain));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 真實 gbrain：兩員工共用 demo 腦，各自 think、狀態獨立。
+    #[tokio::test]
+    #[ignore]
+    async fn real_shared_brain() {
+        let cfg_path = dirs::config_dir()
+            .expect("no config dir")
+            .join("com.emploid.studio")
+            .join("app-settings.json");
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg_path).expect("read app-settings.json"))
+                .expect("parse app-settings.json");
+        let app_cfg = raw.get("app_config").expect("app_config");
+        let exe = app_cfg
+            .get("gbrain_exe_path")
+            .and_then(|v| v.as_str())
+            .expect("gbrain_exe_path")
+            .to_string();
+        let active = app_cfg
+            .get("active_brain_id")
+            .and_then(|v| v.as_str())
+            .expect("active_brain_id")
+            .to_string();
+        let brains = app_cfg.get("brains").and_then(|v| v.as_array()).expect("brains");
+        let home = brains
+            .iter()
+            .find(|b| b.get("id").and_then(|v| v.as_str()) == Some(active.as_str()))
+            .and_then(|b| b.get("gbrain_home"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let ctx = ToolCtx {
+            gbrain_exe: exe,
+            gbrain_home: home,
+        };
+
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        for name in ["emp-a", "emp-b"] {
+            store
+                .put_employee(&Employee {
+                    id: name.into(),
+                    workspace_id: ws.clone(),
+                    name: name.into(),
+                    brain: BrainRef { brain_id: active.clone() },
+                    role: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+
+        let tool = GbrainThinkTool::new();
+        let ra = run_cycle(
+            "emp-a",
+            "晶瀚半導體開過幾場會議？".into(),
+            Some("晶瀚半導體".into()),
+            None,
+            &tool,
+            &ctx,
+            &store,
+        )
+        .await
+        .expect("run emp-a");
+        let rb = run_cycle(
+            "emp-b",
+            "誰主持了良率檢討會？".into(),
+            Some("晶瀚半導體".into()),
+            None,
+            &tool,
+            &ctx,
+            &store,
+        )
+        .await
+        .expect("run emp-b");
+
+        println!("== emp-a meta ==\n{}", ra.tool_meta);
+        println!("== emp-b meta ==\n{}", rb.tool_meta);
+        let arts = store.list_artifacts(&ws).unwrap();
+        assert_eq!(arts.len(), 2);
+        assert!(arts.iter().any(|a| a.produced_by == "emp-a"));
+        assert!(arts.iter().any(|a| a.produced_by == "emp-b"));
+        assert_eq!(store.get_memory("emp-a").unwrap().unwrap().notes.len(), 1);
+        assert_eq!(store.get_memory("emp-b").unwrap().unwrap().notes.len(), 1);
+        let ga = ra.tool_meta.get("graph").and_then(|v| v.as_i64()).unwrap_or(0);
+        assert!(ga > 0, "emp-a Graph 應 > 0（實際 {ga}）");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
