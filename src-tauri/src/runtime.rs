@@ -14,9 +14,9 @@ use crate::config::app_config;
 use crate::config::DEFAULT_BRAIN_ID;
 use crate::domain::tools::ToolFuture;
 use crate::domain::{
-    id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, BrainRef, Employee,
-    EmployeeState, JsonStore, Memory, Store, Task, TaskStatus, Tool, ToolCtx, ToolInput,
-    Workspace, WorkspaceStatus,
+    id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, BrainRef, Commitment,
+    CommitmentStatus, Employee, EmployeeState, Memory, SqliteStore, Store, Task, TaskStatus, Tool,
+    ToolCtx, ToolInput, Workspace, WorkspaceStatus,
 };
 use crate::domain::tools::{ToolOutput, ToolSpec};
 use crate::i18n::AppError;
@@ -42,6 +42,7 @@ pub async fn run_cycle(
     employee_id: &str,
     query: String,
     anchor: Option<String>,
+    commitment_id: Option<&str>,
     tool: &dyn Tool,
     ctx: &ToolCtx,
     store: &(dyn Store + Send + Sync),
@@ -73,7 +74,14 @@ pub async fn run_cycle(
         )
         .await?;
 
-    // 4. Commit Artifact：產出固化為 first-class Artifact（Committed）。
+    // 4. Commit Artifact：產出固化為 first-class Artifact（Committed），帶完整 provenance。
+    let existing_task_ids: Vec<String> = store
+        .list_tasks(&workspace_id)?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let task_id = next_id("task", &existing_task_ids);
+
     let existing_artifact_ids: Vec<String> = store
         .list_artifacts(&workspace_id)?
         .into_iter()
@@ -87,19 +95,16 @@ pub async fn run_cycle(
         artifact_type: "think".into(),
         content: output.text.clone(),
         produced_by: employee_id.to_string(),
+        source_task_id: Some(task_id.clone()),
+        source_commitment_id: commitment_id.map(str::to_string),
+        revised_from_id: None,
         version: 1,
         status: ArtifactStatus::Committed,
         created_at: now_rfc3339(),
     };
     store.put_artifact(&artifact)?;
 
-    // 本週期的最小工作單位 Task：Created→Completed（產出已提交）。
-    let existing_task_ids: Vec<String> = store
-        .list_tasks(&workspace_id)?
-        .into_iter()
-        .map(|t| t.id)
-        .collect();
-    let task_id = next_id("task", &existing_task_ids);
+    // 本週期的最小工作單位 Task：Created→Completed（產出已提交），連到所屬 commitment。
     let task = Task {
         id: task_id.clone(),
         workspace_id: workspace_id.clone(),
@@ -108,9 +113,18 @@ pub async fn run_cycle(
         input: query.clone(),
         status: TaskStatus::Completed,
         output_artifact_id: Some(artifact_id.clone()),
+        commitment_id: commitment_id.map(str::to_string),
         created_at: now_rfc3339(),
     };
     store.put_task(&task)?;
+
+    // 若綁定 commitment：更新活動時間（狀態維持 Active——不自動 Satisfied；Principle 9）。
+    if let Some(cid) = commitment_id {
+        if let Some(mut com) = store.get_commitment(cid)? {
+            com.updated_at = now_rfc3339();
+            store.put_commitment(&com)?;
+        }
+    }
 
     // 5. Sleep：持久化 memory（附本週期 note）＋ employee 狀態。離開前一切已落地。
     memory
@@ -232,7 +246,7 @@ pub async fn agent_seed<R: tauri::Runtime>(
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
-    let store = JsonStore::new(&data_dir);
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
 
     let ws_id = "ws-default".to_string();
     if store.get_workspace(&ws_id)?.is_none() {
@@ -268,12 +282,14 @@ pub async fn agent_seed<R: tauri::Runtime>(
 }
 
 /// 跑一輪 Employee 循環：載入 employee→解析腦→建 ToolCtx→run_cycle（gbrain think）。
+/// `commitment_id` 可選：綁定則此循環的 task／artifact 連到該長期責任。
 #[tauri::command]
 pub async fn agent_run<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     employee_id: String,
     query: String,
     anchor: Option<String>,
+    commitment_id: Option<String>,
 ) -> Result<CycleResult, AppError> {
     let cfg = app_config::load(&app)?;
     if !cfg.agent_os_enabled {
@@ -283,7 +299,7 @@ pub async fn agent_run<R: tauri::Runtime>(
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
-    let store = JsonStore::new(&data_dir);
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
 
     let emp = store
         .get_employee(&employee_id)?
@@ -295,13 +311,193 @@ pub async fn agent_run<R: tauri::Runtime>(
     };
 
     let tool = GbrainThinkTool::new();
-    let result = run_cycle(&employee_id, query, anchor, &tool, &ctx, &store).await?;
+    let result = run_cycle(
+        &employee_id,
+        query,
+        anchor,
+        commitment_id.as_deref(),
+        &tool,
+        &ctx,
+        &store,
+    )
+    .await?;
     Ok(result)
+}
+
+// ───────────────── Commitment 與 Artifact 版本指令 ─────────────────
+
+#[derive(Serialize)]
+pub struct CommitmentResult {
+    pub commitment_id: String,
+}
+
+/// 建立一個長期責任（Commitment）：Created→Active，擁有某 Employee，帶完成條件。
+#[tauri::command]
+pub async fn agent_create_commitment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+    title: String,
+    completion_condition: String,
+) -> Result<CommitmentResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+
+    let emp = store
+        .get_employee(&employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
+    let ws = emp.workspace_id.clone();
+    let now = now_rfc3339();
+    let commitment_id = id_from_name(&title, &{
+        let mut v: Vec<String> = store
+            .list_commitments(&ws)?
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        v.sort();
+        v
+    });
+    store.put_commitment(&Commitment {
+        id: commitment_id.clone(),
+        workspace_id: ws,
+        owner_employee_id: employee_id,
+        title,
+        completion_condition,
+        status: CommitmentStatus::Active,
+        created_at: now.clone(),
+        updated_at: now,
+    })?;
+    Ok(CommitmentResult { commitment_id })
+}
+
+/// 手動標記一個 Commitment 已滿足（Satisfied）。完成條件的自動判斷屬更成熟 Runtime。
+#[tauri::command]
+pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    commitment_id: String,
+) -> Result<(), AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+
+    let mut com = store
+        .get_commitment(&commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
+    com.status = CommitmentStatus::Satisfied;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct ReviseResult {
+    pub artifact_id: String,
+    pub version: u32,
+}
+
+/// 修訂一個 Artifact：舊版→Superseded、新版 Committed（version+1），承襲 provenance。
+/// 邏輯抽成此函式以便單測（免 AppHandle）。
+pub fn revise_artifact(
+    store: &(dyn Store + Send + Sync),
+    artifact_id: &str,
+    employee_id: &str,
+    new_content: String,
+) -> anyhow::Result<(String, u32)> {
+    let mut old = store
+        .get_artifact(artifact_id)?
+        .ok_or_else(|| anyhow::anyhow!("artifact not found: {artifact_id}"))?;
+    old.status = ArtifactStatus::Superseded;
+    store.put_artifact(&old)?;
+
+    let new_version = old.version + 1;
+    let new_id = id_from_name(
+        &old.id,
+        &store
+            .list_artifacts(&old.workspace_id)?
+            .into_iter()
+            .map(|a| a.id)
+            .collect::<Vec<_>>(),
+    );
+    let now = now_rfc3339();
+    let new_art = Artifact {
+        id: new_id.clone(),
+        workspace_id: old.workspace_id.clone(),
+        title: old.title.clone(),
+        artifact_type: old.artifact_type.clone(),
+        content: new_content,
+        produced_by: employee_id.to_string(),
+        source_task_id: old.source_task_id.clone(),
+        source_commitment_id: old.source_commitment_id.clone(),
+        revised_from_id: Some(old.id),
+        version: new_version,
+        status: ArtifactStatus::Committed,
+        created_at: now,
+    };
+    store.put_artifact(&new_art)?;
+    Ok((new_id, new_version))
+}
+
+#[tauri::command]
+pub async fn agent_revise_artifact<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    artifact_id: String,
+    employee_id: String,
+    new_content: String,
+) -> Result<ReviseResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let (artifact_id, version) = revise_artifact(&store, &artifact_id, &employee_id, new_content)?;
+    Ok(ReviseResult {
+        artifact_id,
+        version,
+    })
+}
+
+/// 一次取回某 workspace 的 commitments／tasks／artifacts 摘要（手動驗證用）。
+#[tauri::command]
+pub async fn agent_list_state<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_id: String,
+) -> Result<serde_json::Value, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    Ok(serde_json::json!({
+        "commitments": store.list_commitments(&workspace_id)?,
+        "tasks": store.list_tasks(&workspace_id)?,
+        "artifacts": store.list_artifacts(&workspace_id)?,
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::JsonStore;
     use crate::domain::tools::{ToolFuture, ToolOutput};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -355,8 +551,8 @@ mod tests {
         dir
     }
 
-    /// 種一個 workspace＋employee，回 employee_id。
-    fn seed(store: &JsonStore) -> String {
+    /// 種一個 workspace＋employee，回 employee_id（泛用於任一 store）。
+    fn seed(store: &dyn Store) -> String {
         store
             .put_workspace(&Workspace {
                 id: "ws".into(),
@@ -397,7 +593,7 @@ mod tests {
         let emp_id = seed(&store);
         let tool = StubTool::new("# 合成結果\n答案在這裡");
 
-        let res = run_cycle(&emp_id, "測試問題".into(), None, &tool, &ctx(), &store)
+        let res = run_cycle(&emp_id, "測試問題".into(), None, None, &tool, &ctx(), &store)
             .await
             .unwrap();
 
@@ -437,7 +633,7 @@ mod tests {
             let store = JsonStore::new(&dir);
             let id = seed(&store);
             let tool = StubTool::new("first");
-            run_cycle(&id, "第一題".into(), None, &tool, &ctx(), &store)
+            run_cycle(&id, "第一題".into(), None, None, &tool, &ctx(), &store)
                 .await
                 .unwrap();
             id
@@ -451,7 +647,7 @@ mod tests {
 
         // 再跑一輪：memory 還原後累積第二筆、artifact 兩個。
         let tool = StubTool::new("second");
-        run_cycle(&emp_id, "第二題".into(), None, &tool, &ctx(), &store)
+        run_cycle(&emp_id, "第二題".into(), None, None, &tool, &ctx(), &store)
             .await
             .unwrap();
         assert_eq!(store.list_artifacts(&emp.workspace_id).unwrap().len(), 2);
@@ -503,7 +699,7 @@ mod tests {
             .map(str::to_string); // None = 預設腦
 
         let dir = test_dir();
-        let store = JsonStore::new(&dir);
+        let store = SqliteStore::open(dir.join("test.db")).unwrap();
         store
             .put_workspace(&Workspace {
                 id: "ws".into(),
@@ -535,6 +731,7 @@ mod tests {
             &emp_id,
             "晶瀚半導體開過幾場會議？".into(),
             Some("晶瀚半導體".into()),
+            None,
             &tool,
             &ctx,
             &store,
@@ -551,6 +748,133 @@ mod tests {
             .unwrap_or(0);
         assert!(graph > 0, "Graph 應 > 0（實際 {graph}）；可能 think 掉到 opus 或未連邊");
         assert!(!res.artifact_content.trim().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Commitment 跨重啟連續生成多個 task（Principle 9），且 artifact 帶 commitment provenance。
+    #[tokio::test]
+    async fn commitment_spans_tasks_across_restart() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let ws = "ws".to_string();
+        let emp_id = "emp".to_string();
+        let cid = "track-po".to_string();
+        {
+            let store = SqliteStore::open(&db).unwrap();
+            store
+                .put_workspace(&Workspace {
+                    id: ws.clone(),
+                    name: "WS".into(),
+                    description: None,
+                    status: WorkspaceStatus::Active,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+            store
+                .put_employee(&Employee {
+                    id: emp_id.clone(),
+                    workspace_id: ws.clone(),
+                    name: "E".into(),
+                    brain: BrainRef { brain_id: "__default__".into() },
+                    role: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+            store
+                .put_commitment(&Commitment {
+                    id: cid.clone(),
+                    workspace_id: ws.clone(),
+                    owner_employee_id: emp_id.clone(),
+                    title: "track".into(),
+                    completion_condition: "done".into(),
+                    status: CommitmentStatus::Active,
+                    created_at: now_rfc3339(),
+                    updated_at: now_rfc3339(),
+                })
+                .unwrap();
+            let tool = StubTool::new("first");
+            run_cycle(&emp_id, "q1".into(), None, Some(&cid), &tool, &ctx(), &store)
+                .await
+                .unwrap();
+        }
+
+        // 模擬重啟：重開同一 db。commitment／task／artifact 皆在。
+        let store = SqliteStore::open(&db).unwrap();
+        assert_eq!(
+            store.get_commitment(&cid).unwrap().unwrap().status,
+            CommitmentStatus::Active
+        );
+        assert_eq!(store.list_tasks(&ws).unwrap().len(), 1);
+        assert_eq!(store.list_artifacts(&ws).unwrap().len(), 1);
+
+        // 第二個 task（同 commitment）——commitment 活過 task
+        let tool = StubTool::new("second");
+        run_cycle(&emp_id, "q2".into(), None, Some(&cid), &tool, &ctx(), &store)
+            .await
+            .unwrap();
+        assert_eq!(store.list_tasks(&ws).unwrap().len(), 2);
+        assert_eq!(store.list_artifacts(&ws).unwrap().len(), 2);
+        for a in store.list_artifacts(&ws).unwrap() {
+            assert_eq!(a.source_commitment_id.as_deref(), Some(cid.as_str()));
+            assert!(a.source_task_id.is_some());
+        }
+        assert_eq!(
+            store.get_commitment(&cid).unwrap().unwrap().status,
+            CommitmentStatus::Active
+        );
+
+        // 手動滿足
+        let mut com = store.get_commitment(&cid).unwrap().unwrap();
+        com.status = CommitmentStatus::Satisfied;
+        store.put_commitment(&com).unwrap();
+        assert_eq!(
+            store.get_commitment(&cid).unwrap().unwrap().status,
+            CommitmentStatus::Satisfied
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Artifact 修訂保留歷史（Principle 3）：舊版 Superseded、新版 Committed、revised_from 鍊正確。
+    #[test]
+    fn revise_artifact_keeps_history() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        store
+            .put_workspace(&Workspace {
+                id: "ws".into(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let v1 = Artifact {
+            id: "a1".into(),
+            workspace_id: "ws".into(),
+            title: "T".into(),
+            artifact_type: "report".into(),
+            content: "v1".into(),
+            produced_by: "e".into(),
+            source_task_id: None,
+            source_commitment_id: None,
+            revised_from_id: None,
+            version: 1,
+            status: ArtifactStatus::Committed,
+            created_at: "t".into(),
+        };
+        store.put_artifact(&v1).unwrap();
+
+        let (new_id, ver) = revise_artifact(&store, "a1", "e", "v2 body".into()).unwrap();
+        assert_eq!(ver, 2);
+
+        let v1b = store.get_artifact("a1").unwrap().unwrap();
+        let v2 = store.get_artifact(&new_id).unwrap().unwrap();
+        assert_eq!(v1b.status, ArtifactStatus::Superseded);
+        assert_eq!(v2.status, ArtifactStatus::Committed);
+        assert_eq!(v2.revised_from_id.as_deref(), Some("a1"));
+        assert_eq!(v2.version, 2);
+        assert_eq!(store.list_artifacts("ws").unwrap().len(), 2);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

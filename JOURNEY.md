@@ -148,9 +148,10 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 - **目標：** Commitment 跨 session 存活；Artifact 真 first-class（identity / provenance / version / ownership）；Memory 無瑕還原。
 - **對應：** 驗證 Principle 3（Artifact first-class）、8（context restored）、9（commitment 活過 task）。
 - **退出條件：**
-  - [ ] 系統**完全關機重啟**後，進行中的工作正確接續。
-  - [ ] Artifact 在產生它的 Employee／session 結束後仍存續、可追溯。
+  - [x] 系統**完全關機重啟**後，進行中的工作正確接續。（`commitment_spans_tasks_across_restart` 測試：重開同一 SQLite db 後 commitment/task/artifact 皆在、第二輪接續。持久化＝SQLite；接續＝手動 wake，見 D3／Phase 3+ 的自動喚醒。）
+  - [x] Artifact 在產生它的 Employee／session 結束後仍存續、可追溯。（完整 provenance：produced_by＋source_task_id＋source_commitment_id；版本歷史：`revise_artifact_keeps_history`——舊版 Superseded、新版 Committed、revised_from 鍊保留。）
 - **不做：** 多 Employee 共享 Brain、Template、協作。
+- **狀態：✅ 完成（2026-07-30，含真實 gbrain 驗證）。** 落點：`domain/sqlite_store.rs`（`SqliteStore`，D2 已遷 SQLite）＋ Commitment 活化（`agent_create_commitment`／`agent_satisfy_commitment`）＋ Artifact provenance／版本（`revise_artifact`）＋ run_cycle 繫結 commitment ＋ `agent_revise_artifact`／`agent_list_state` 指令。81 tests 全綠；真實 gbrain 在 SQLite 上跑通（Graph 1、Pages 21、Citations 10）。
 
 ## Phase 3 — 共享 Brain 與 Knowledge（≡ Handbook Milestone 3）
 
@@ -217,7 +218,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 ## 已定案（2026-07-30）
 
 - **D1 — Knowledge/Brain 後端邊界：✅ 先以 GBrain 為唯一後端，但透過 trait 抽象**（provider 介面），避免日後抽換困難。第二個 backend 等真有需求再做。
-- **D2 — 持久化技術：✅ JSON store 起步，Phase 1 末／Phase 2 初遷 SQLite**（當查詢／關聯需求出現時）。domain types 現在就設計成不綁死儲存後端。
+- **D2 — 持久化技術：✅ Phase 2 已遷 SQLite**（`SqliteStore`，rusqlite bundled；`Store` trait 仍保 `JsonStore` 對照）。原 JSON store 起步、需求出現時遷移——已於 Phase 2 落地。
 - **D4 — Employee 推理引擎（第一版）：✅ 先複用 gbrain think/ask 跑通一圈。** 故第一版 Brain ≈ GBrain 腦的 think/ask 能力；直接 LLM API／Claude Code 路徑等迴圈穩了再評估。
 
 ## 延後
@@ -240,6 +241,8 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-07-30 | 決策 | D1/D2/D4 定案（GBrain 唯一後端＋trait 抽象；JSON store 起步、Phase 1 末／2 初遷 SQLite；推理首版用 gbrain think/ask）；D3 延後。feature flag 機制定為 runtime（AppConfig 欄位）。 | 展開 Phase 0 | D3（延後） |
 | 2026-07-30 | **Phase 0 ✅** | 新增 `src-tauri/src/domain/`（models＋Store trait＋JsonStore＋id/timestamp helpers）；`AppConfig.agent_os_enabled`（runtime flag，預設 false）；`lib.rs` 加 `mod domain;`（不接指令）。72 tests 全綠（含 12 新測），`cargo build` 0 warning。 | Phase 1 | D3（延後）；package-lock.json 仍殘留舊名 |
 | 2026-07-30 | **Phase 1 ✅** | 新增 `domain/tools.rs`（`Tool` trait＋Spec/Input/Output/Ctx，純 Rust、boxed Send future）、`runtime.rs`（`run_cycle` 走 wake→restore→execute→commit→sleep、`GbrainThinkTool`、`agent_run`／`agent_seed` 指令）；models 加 Task／Memory、Store 加對應方法。觸發方式：測試驅動 stub-Tool（不加 UI，D3）。76 tests 全綠（含循環／重啟還原／Tool 邊界），`cargo build` 0 warning。 | 真實 gbrain 驗證 | D3（延後） |
-| 2026-07-30 | Phase 1 驗證 | 真實 gbrain 端到端通過：`real_gbrain_think_cycle`（ignored 測試）對 demo 腦跑 think → Graph 1、Pages 21、Model groq（非 opus）、4 citations，合成「晶瀚半導體會議」答案並 commit 為 artifact。一圈 wake→restore→execute→commit→sleep 全走通。 | Phase 2（持久化與 Commitment） | D3（延後） |
+| 2026-07-30 | Phase 1 驗證 | 真實 gbrain 端到端通過：`real_gbrain_think_cycle`（ignored 測試）對 demo 腦跑 think → Graph 1、Pages 21、Model groq（非 opus）、4 citations，合成「晶瀚半導體會議」答案並 commit 為 artifact。一圈 wake→restore→execute→commit→sleep 全走通。 | Phase 2 | D3（延後） |
+| 2026-07-30 | **Phase 2 ✅** | `domain/sqlite_store.rs`（`SqliteStore`，D2 遷 SQLite；`Store` trait 保 JsonStore 對照）；Commitment 活化（create／satisfy）、Artifact provenance＋版本（`revise_artifact`）、run_cycle 繫結 commitment、新指令 `agent_create_commitment`／`agent_satisfy_commitment`／`agent_revise_artifact`／`agent_list_state`。81 tests 全綠（SQLite round-trip／重啟、commitment 跨重啟多 task、artifact revise 歷史），`cargo build` 0 warning。 | Phase 3（共享 Brain 與 Knowledge） | D3（延後）；package-lock.json 仍殘留舊名 |
+| 2026-07-30 | Phase 2 驗證 | 真實 gbrain 在 **SQLite** 上跑通：`real_gbrain_think_cycle` 改用 SqliteStore → Graph 1、Pages 21、Citations 10、Model groq。SQLite 持久化＋commitment／artifact 流程端到端正確。 | Phase 3 | D3（延後） |
 
-**目前所在：** Phase 1 完成（程式碼＋測試＋真實 gbrain 驗證）。下一步 = Phase 2（持久化與 Commitment）。
+**目前所在：** Phase 2 完成（程式碼＋測試＋真實 gbrain 驗證）。下一步 = Phase 3（共享 Brain 與 Knowledge）。

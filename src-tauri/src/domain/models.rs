@@ -104,6 +104,15 @@ pub struct Artifact {
     pub content: String,
     /// 產出者 Employee id（provenance）。
     pub produced_by: String,
+    /// 產出此 Artifact 的 Task id（provenance）。
+    #[serde(default)]
+    pub source_task_id: Option<String>,
+    /// 此 Artifact 服務的 Commitment id（provenance）。
+    #[serde(default)]
+    pub source_commitment_id: Option<String>,
+    /// 前一版本 id（修訂鏈；原版為 None）。
+    #[serde(default)]
+    pub revised_from_id: Option<String>,
     pub version: u32,
     pub status: ArtifactStatus,
     pub created_at: Timestamp,
@@ -137,6 +146,9 @@ pub struct Commitment {
     pub completion_condition: String,
     pub status: CommitmentStatus,
     pub created_at: Timestamp,
+    /// 最近一次活動時間（task 產生／狀態變更時更新）。
+    #[serde(default)]
+    pub updated_at: Timestamp,
 }
 
 /// Commitment 生命週期狀態（Ch.11 §5）。
@@ -170,6 +182,9 @@ pub struct Task {
     /// 完成時產出的 Artifact id（provenance）。
     #[serde(default)]
     pub output_artifact_id: Option<String>,
+    /// 所屬 Commitment（linkage，Ch.10）；獨立 task 為 None。
+    #[serde(default)]
+    pub commitment_id: Option<String>,
     pub created_at: Timestamp,
 }
 
@@ -274,6 +289,9 @@ mod tests {
             artifact_type: "report".into(),
             content: "body".into(),
             produced_by: "procurement-steve".into(),
+            source_task_id: None,
+            source_commitment_id: None,
+            revised_from_id: None,
             version: 1,
             status: ArtifactStatus::Draft,
             created_at: "t".into(),
@@ -289,6 +307,7 @@ mod tests {
             completion_condition: "goods received".into(),
             status: CommitmentStatus::Active,
             created_at: "t".into(),
+            updated_at: "t".into(),
         };
         let v = serde_json::to_value(&com).unwrap();
         assert_eq!(serde_json::from_value::<Commitment>(v).unwrap(), com);

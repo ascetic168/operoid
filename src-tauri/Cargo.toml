@@ -36,6 +36,7 @@ pulldown-cmark = "0.12"
 open = "5"
 axum = "0.8"
 percent-encoding = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [profile.dev]
 incremental = true

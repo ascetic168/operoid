@@ -12,6 +12,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod models;
+pub mod sqlite_store;
 pub mod store;
 pub mod tools;
 
@@ -19,5 +20,6 @@ pub use models::{
     Artifact, ArtifactStatus, BrainRef, Commitment, CommitmentStatus, Employee, EmployeeState,
     Memory, Task, TaskStatus, Timestamp, Workspace, WorkspaceStatus,
 };
+pub use sqlite_store::SqliteStore;
 pub use store::{id_from_name, next_id, now_rfc3339, JsonStore, Store};
 pub use tools::{Tool, ToolCtx, ToolInput, ToolOutput, ToolSpec};

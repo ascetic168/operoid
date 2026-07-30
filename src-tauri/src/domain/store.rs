@@ -27,9 +27,11 @@ pub trait Store {
     fn put_task(&self, task: &Task) -> Result<()>;
 
     fn list_artifacts(&self, workspace_id: &str) -> Result<Vec<Artifact>>;
+    fn get_artifact(&self, id: &str) -> Result<Option<Artifact>>;
     fn put_artifact(&self, art: &Artifact) -> Result<()>;
 
     fn list_commitments(&self, workspace_id: &str) -> Result<Vec<Commitment>>;
+    fn get_commitment(&self, id: &str) -> Result<Option<Commitment>>;
     fn put_commitment(&self, c: &Commitment) -> Result<()>;
 
     fn get_memory(&self, employee_id: &str) -> Result<Option<Memory>>;
@@ -114,6 +116,13 @@ impl Store for JsonStore {
             .collect())
     }
 
+    fn get_artifact(&self, id: &str) -> Result<Option<Artifact>> {
+        Ok(self
+            .read::<Artifact>("artifacts.json")?
+            .into_iter()
+            .find(|a| a.id == id))
+    }
+
     fn put_artifact(&self, art: &Artifact) -> Result<()> {
         upsert_by_id(&self.path("artifacts.json"), art, |a| &a.id)
     }
@@ -124,6 +133,13 @@ impl Store for JsonStore {
             .into_iter()
             .filter(|c| c.workspace_id == workspace_id)
             .collect())
+    }
+
+    fn get_commitment(&self, id: &str) -> Result<Option<Commitment>> {
+        Ok(self
+            .read::<Commitment>("commitments.json")?
+            .into_iter()
+            .find(|c| c.id == id))
     }
 
     fn put_commitment(&self, c: &Commitment) -> Result<()> {
@@ -325,6 +341,9 @@ mod tests {
             artifact_type: "report".into(),
             content: "body".into(),
             produced_by: "steve".into(),
+            source_task_id: None,
+            source_commitment_id: None,
+            revised_from_id: None,
             version: 1,
             status: ArtifactStatus::Draft,
             created_at: "t".into(),
@@ -355,6 +374,7 @@ mod tests {
             completion_condition: "goods received".into(),
             status: CommitmentStatus::Active,
             created_at: "t".into(),
+            updated_at: "t".into(),
         };
         s.put_commitment(&c).unwrap();
         assert_eq!(s.list_commitments("acme").unwrap(), vec![c]);
@@ -401,6 +421,7 @@ mod tests {
             input: "who?".into(),
             status: TaskStatus::Completed,
             output_artifact_id: Some("a1".into()),
+            commitment_id: None,
             created_at: "t".into(),
         };
         s.put_task(&task).unwrap();

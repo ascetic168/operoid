@@ -99,6 +99,10 @@ pub fn run() {
             note_view::open_note,
             runtime::agent_seed,
             runtime::agent_run,
+            runtime::agent_create_commitment,
+            runtime::agent_satisfy_commitment,
+            runtime::agent_revise_artifact,
+            runtime::agent_list_state,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。
