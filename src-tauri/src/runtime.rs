@@ -15,8 +15,8 @@ use crate::config::DEFAULT_BRAIN_ID;
 use crate::domain::tools::ToolFuture;
 use crate::domain::{
     id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, BrainRef, Commitment,
-    CommitmentStatus, Employee, EmployeeState, Memory, SqliteStore, Store, Task, TaskStatus, Tool,
-    ToolCtx, ToolInput, Workspace, WorkspaceStatus,
+    CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Memory, SqliteStore, Store, Task,
+    TaskStatus, Tool, ToolCtx, ToolInput, Workspace, WorkspaceStatus,
 };
 use crate::domain::tools::{ToolOutput, ToolSpec};
 use crate::i18n::AppError;
@@ -271,6 +271,7 @@ pub async fn agent_seed<R: tauri::Runtime>(
             brain_id: active_brain,
         },
         role: Some("general".into()),
+        template_id: None,
         state: EmployeeState::Sleeping,
         created_at: now_rfc3339(),
     })?;
@@ -322,10 +323,111 @@ pub async fn agent_recruit<R: tauri::Runtime>(
         name,
         brain: BrainRef { brain_id },
         role: None,
+        template_id: None,
         state: EmployeeState::Sleeping,
         created_at: now_rfc3339(),
     })?;
     Ok(RecruitResult { employee_id: emp_id })
+}
+
+/// 從 template 部署一個獨立 Instance（Ch.04 §7）：抄襲 brain／role、設 `template_id`、
+/// fresh Sleeping。抽成函式以便單測（免 AppHandle）。
+pub fn deploy_instance(
+    store: &(dyn Store + Send + Sync),
+    template_id: &str,
+    instance_name: &str,
+) -> anyhow::Result<String> {
+    let tmpl = store
+        .get_template(template_id)?
+        .ok_or_else(|| anyhow::anyhow!("template not found: {template_id}"))?;
+    let existing: Vec<String> = store
+        .list_employees(&tmpl.workspace_id)?
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    let emp_id = id_from_name(instance_name, &existing);
+    store.put_employee(&Employee {
+        id: emp_id.clone(),
+        workspace_id: tmpl.workspace_id.clone(),
+        name: instance_name.to_string(),
+        brain: tmpl.brain.clone(),
+        role: tmpl.role.clone(),
+        template_id: Some(template_id.to_string()),
+        state: EmployeeState::Sleeping,
+        created_at: now_rfc3339(),
+    })?;
+    Ok(emp_id)
+}
+
+#[derive(Serialize)]
+pub struct TemplateResult {
+    pub template_id: String,
+}
+
+/// 建立一個可重用的 Employee Template（一種員工的定義：name＋brain＋role）。
+#[tauri::command]
+pub async fn agent_create_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_id: String,
+    name: String,
+    brain_id: Option<String>,
+    role: Option<String>,
+) -> Result<TemplateResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+
+    let brain_id = brain_id.unwrap_or_else(|| {
+        cfg.active_brain_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_BRAIN_ID.to_string())
+    });
+    let existing: Vec<String> = store
+        .list_templates(&workspace_id)?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let template_id = id_from_name(&name, &existing);
+    store.put_template(&EmployeeTemplate {
+        id: template_id.clone(),
+        workspace_id,
+        name,
+        brain: BrainRef { brain_id },
+        role,
+        created_at: now_rfc3339(),
+    })?;
+    Ok(TemplateResult { template_id })
+}
+
+#[derive(Serialize)]
+pub struct DeployResult {
+    pub employee_id: String,
+}
+
+/// 從 Template 部署一個獨立 Instance。
+#[tauri::command]
+pub async fn agent_deploy_instance<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    template_id: String,
+    instance_name: String,
+) -> Result<DeployResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let employee_id = deploy_instance(&store, &template_id, &instance_name)?;
+    Ok(DeployResult { employee_id })
 }
 
 /// 跑一輪 Employee 循環：載入 employee→解析腦→建 ToolCtx→run_cycle（gbrain think）。
@@ -535,6 +637,7 @@ pub async fn agent_list_state<R: tauri::Runtime>(
         .map_err(|e| e.to_string())?;
     let store = SqliteStore::open(data_dir.join("emploid.db"))?;
     Ok(serde_json::json!({
+        "templates": store.list_templates(&workspace_id)?,
         "employees": store.list_employees(&workspace_id)?,
         "commitments": store.list_commitments(&workspace_id)?,
         "tasks": store.list_tasks(&workspace_id)?,
@@ -620,6 +723,7 @@ mod tests {
                     brain_id: "__default__".into(),
                 },
                 role: None,
+                template_id: None,
                 state: EmployeeState::Sleeping,
                 created_at: "t".into(),
             })
@@ -765,6 +869,7 @@ mod tests {
                 name: "E".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
+                template_id: None,
                 state: EmployeeState::Sleeping,
                 created_at: now_rfc3339(),
             })
@@ -825,6 +930,7 @@ mod tests {
                     name: "E".into(),
                     brain: BrainRef { brain_id: "__default__".into() },
                     role: None,
+                    template_id: None,
                     state: EmployeeState::Sleeping,
                     created_at: now_rfc3339(),
                 })
@@ -951,6 +1057,7 @@ mod tests {
                     name: name.into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
+                    template_id: None,
                     state: EmployeeState::Sleeping,
                     created_at: now_rfc3339(),
                 })
@@ -1001,6 +1108,7 @@ mod tests {
                     name: name.into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
+                    template_id: None,
                     state: EmployeeState::Sleeping,
                     created_at: now_rfc3339(),
                 })
@@ -1090,6 +1198,7 @@ mod tests {
                     name: name.into(),
                     brain: BrainRef { brain_id: active.clone() },
                     role: None,
+                    template_id: None,
                     state: EmployeeState::Sleeping,
                     created_at: now_rfc3339(),
                 })
@@ -1130,6 +1239,78 @@ mod tests {
         assert_eq!(store.get_memory("emp-b").unwrap().unwrap().notes.len(), 1);
         let ga = ra.tool_meta.get("graph").and_then(|v| v.as_i64()).unwrap_or(0);
         assert!(ga > 0, "emp-a Graph 應 > 0（實際 {ga}）");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Milestone 4：一個 Template 部署多個獨立 Instance，共享 brain／role，各自現實。
+    #[tokio::test]
+    async fn template_deploys_independent_instances() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        // 建 template "steve"（腦 demo、role procurement）
+        store
+            .put_template(&EmployeeTemplate {
+                id: "steve".into(),
+                workspace_id: ws.clone(),
+                name: "Procurement Steve".into(),
+                brain: BrainRef { brain_id: "demo".into() },
+                role: Some("procurement".into()),
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        // 部署 3 個 instance
+        let tw = deploy_instance(&store, "steve", "Steve-TW").unwrap();
+        let nj = deploy_instance(&store, "steve", "Steve-NJ").unwrap();
+        let vn = deploy_instance(&store, "steve", "Steve-VN").unwrap();
+
+        let emps = store.list_employees(&ws).unwrap();
+        assert_eq!(emps.len(), 3);
+        for e in &emps {
+            assert_eq!(e.brain.brain_id, "demo");
+            assert_eq!(e.role.as_deref(), Some("procurement"));
+            assert_eq!(e.template_id.as_deref(), Some("steve"));
+        }
+        let ids: Vec<String> = emps.iter().map(|e| e.id.clone()).collect();
+        assert!(ids.contains(&tw) && ids.contains(&nj) && ids.contains(&vn));
+
+        // 各自跑一圈，獨立產出
+        for id in [&tw, &nj, &vn] {
+            let tool = StubTool::new(format!("out-{id}"));
+            run_cycle(id, "q".into(), None, None, &tool, &ctx(), &store)
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.list_artifacts(&ws).unwrap().len(), 3);
+        assert_eq!(store.get_memory(&tw).unwrap().unwrap().notes.len(), 1);
+        assert_eq!(store.get_memory(&nj).unwrap().unwrap().notes.len(), 1);
+
+        // 一個 instance 的 commitment 不影響他人
+        store
+            .put_commitment(&Commitment {
+                id: "c-tw".into(),
+                workspace_id: ws.clone(),
+                owner_employee_id: tw.clone(),
+                title: "tw only".into(),
+                completion_condition: "x".into(),
+                status: CommitmentStatus::Active,
+                created_at: now_rfc3339(),
+                updated_at: now_rfc3339(),
+            })
+            .unwrap();
+        let coms = store.list_commitments(&ws).unwrap();
+        assert_eq!(coms.len(), 1);
+        assert_eq!(coms[0].owner_employee_id, tw);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

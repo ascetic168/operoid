@@ -15,7 +15,7 @@ use rusqlite::{params, Connection};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::models::{Artifact, Commitment, Employee, Memory, Task, Workspace};
+use super::models::{Artifact, Commitment, Employee, EmployeeTemplate, Memory, Task, Workspace};
 use super::store::Store;
 
 /// SQLite-backed [`Store`]。
@@ -47,6 +47,8 @@ impl SqliteStore {
             "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS employees (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
              CREATE INDEX IF NOT EXISTS idx_employees_ws ON employees(workspace_id);
+             CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS idx_templates_ws ON templates(workspace_id);
              CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_employee_id TEXT, commitment_id TEXT, data TEXT NOT NULL);
              CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id);
              CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, produced_by TEXT, data TEXT NOT NULL);
@@ -202,6 +204,24 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn list_templates(&self, workspace_id: &str) -> Result<Vec<EmployeeTemplate>> {
+        let conn = self.lock()?;
+        select_all(&conn, "templates", "WHERE workspace_id = ?1", params![workspace_id])
+    }
+    fn get_template(&self, id: &str) -> Result<Option<EmployeeTemplate>> {
+        let conn = self.lock()?;
+        select_one(&conn, "templates", "id", id)
+    }
+    fn put_template(&self, tmpl: &EmployeeTemplate) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO templates (id, workspace_id, data) VALUES (?1, ?2, ?3)",
+            params![tmpl.id, tmpl.workspace_id, encode(tmpl)?],
+        )
+        .map_err(|e| anyhow!("put_template: {e}"))?;
+        Ok(())
+    }
+
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>> {
         let conn = self.lock()?;
         select_all(&conn, "tasks", "WHERE workspace_id = ?1", &[&workspace_id])
@@ -319,6 +339,7 @@ mod tests {
             name: id.into(),
             brain: BrainRef { brain_id: "__default__".into() },
             role: None,
+            template_id: None,
             state: EmployeeState::Sleeping,
             created_at: "t".into(),
         }

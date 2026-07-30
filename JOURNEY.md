@@ -165,7 +165,8 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 
 - **目標：** Employee Template 部署成多個獨立 Instance，共享 Brain 與 Role，各自擁有獨立 Inbox 與 Commitment。
 - **退出條件：**
-  - [ ] 一個 Template 產出多個獨立 Instance（「每座廠一個 Steve」），各追蹤各自的現實。
+  - [x] 一個 Template 產出多個獨立 Instance（「每座廠一個 Steve」），各追蹤各自的現實。（`template_deploys_independent_instances`：`steve` template → 部署 Steve-TW／NJ／VN 三 Instance，皆共享 brain_id＋role＋template_id；各跑一圈產獨立 artifact／memory；一 Instance 的 commitment 不影響另兩者。）
+- **狀態：✅ 完成（2026-07-30）。** 落點：`EmployeeTemplate` 實體＋`Employee.template_id` 溯源；Store 的 template collection（JsonStore＋SqliteStore）；`agent_create_template`／`agent_deploy_instance` 指令（`deploy_instance` helper）。84 tests 全綠、`cargo build` 0 warning。**無真實 gbrain 測試**（部署是資料層；Instance 執行已由 Phase 3 `real_shared_brain` 覆蓋）。
 
 ## Phase 5 — 協作（≡ Handbook Milestone 5）
 
@@ -246,6 +247,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-07-30 | **Phase 2 ✅** | `domain/sqlite_store.rs`（`SqliteStore`，D2 遷 SQLite；`Store` trait 保 JsonStore 對照）；Commitment 活化（create／satisfy）、Artifact provenance＋版本（`revise_artifact`）、run_cycle 繫結 commitment、新指令 `agent_create_commitment`／`agent_satisfy_commitment`／`agent_revise_artifact`／`agent_list_state`。81 tests 全綠（SQLite round-trip／重啟、commitment 跨重啟多 task、artifact revise 歷史），`cargo build` 0 warning。 | Phase 3（共享 Brain 與 Knowledge） | D3（延後）；package-lock.json 仍殘留舊名 |
 | 2026-07-30 | Phase 2 驗證 | 真實 gbrain 在 **SQLite** 上跑通：`real_gbrain_think_cycle` 改用 SqliteStore → Graph 1、Pages 21、Citations 10、Model groq。SQLite 持久化＋commitment／artifact 流程端到端正確。 | Phase 3 | D3（延後） |
 | 2026-07-30 | **Phase 3 ✅** | 共享 Brain 與 Knowledge（Milestone 3）。關鍵認知：共享/升級腦結構上早已可行（BrainRef 共享、員工狀態獨立），故 Phase 3 以**證明**為主、無模型變更。加 `agent_recruit`（招募員工、可共用腦）、`agent_list_state` 加 employees。83 tests 全綠（shared_brain 兩員工、upgrade_preserves_inflight_work）。 | Phase 4 | D3（延後） |
-| 2026-07-30 | Phase 3 驗證 | 真實 `real_shared_brain`：兩員工（emp-a／emp-b）共用 demo 腦各跑 think → Graph 1、Pages 21、Citations 12／1、groq；各產 artifact、memory 獨立。共用腦＋獨立狀態端到端正確。 | Phase 4（Template 與 Instance） | D3（延後） |
+| 2026-07-30 | Phase 3 驗證 | 真實 `real_shared_brain`：兩員工（emp-a／emp-b）共用 demo 腦各跑 think → Graph 1、Pages 21、Citations 12／1、groq；各產 artifact、memory 獨立。共用腦＋獨立狀態端到端正確。 | Phase 4 | D3（延後） |
+| 2026-07-30 | **Phase 4 ✅** | Template 與 Instance（Milestone 4）。加 `EmployeeTemplate` 實體（name/brain/role 可重用定義）＋`Employee.template_id` 溯源；Store template collection（JsonStore＋SqliteStore）；`agent_create_template`／`agent_deploy_instance`（`deploy_instance` helper 抄 brain/role、各自獨立）。`template_deploys_independent_instances`：一 template 部署 3 Instance、共享 brain/role、各自獨立。84 tests 全綠、`cargo build` 0 warning。 | Phase 5（協作） | D3（延後） |
 
-**目前所在：** Phase 3 完成（程式碼＋測試＋真實 gbrain 驗證）。下一步 = Phase 4（Template 與 Instance）。
+**目前所在：** Phase 4 完成（程式碼＋測試）。下一步 = Phase 5（協作）——Handbook 最後一個里程碑。

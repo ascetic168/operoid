@@ -11,7 +11,7 @@ use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::models::{Artifact, Commitment, Employee, Memory, Task, Workspace};
+use super::models::{Artifact, Commitment, Employee, EmployeeTemplate, Memory, Task, Workspace};
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
 pub trait Store {
@@ -22,6 +22,10 @@ pub trait Store {
     fn list_employees(&self, workspace_id: &str) -> Result<Vec<Employee>>;
     fn get_employee(&self, id: &str) -> Result<Option<Employee>>;
     fn put_employee(&self, emp: &Employee) -> Result<()>;
+
+    fn list_templates(&self, workspace_id: &str) -> Result<Vec<EmployeeTemplate>>;
+    fn get_template(&self, id: &str) -> Result<Option<EmployeeTemplate>>;
+    fn put_template(&self, tmpl: &EmployeeTemplate) -> Result<()>;
 
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>>;
     fn put_task(&self, task: &Task) -> Result<()>;
@@ -94,6 +98,25 @@ impl Store for JsonStore {
 
     fn put_employee(&self, emp: &Employee) -> Result<()> {
         upsert_by_id(&self.path("employees.json"), emp, |e| &e.id)
+    }
+
+    fn list_templates(&self, workspace_id: &str) -> Result<Vec<EmployeeTemplate>> {
+        Ok(self
+            .read::<EmployeeTemplate>("templates.json")?
+            .into_iter()
+            .filter(|t| t.workspace_id == workspace_id)
+            .collect())
+    }
+
+    fn get_template(&self, id: &str) -> Result<Option<EmployeeTemplate>> {
+        Ok(self
+            .read::<EmployeeTemplate>("templates.json")?
+            .into_iter()
+            .find(|t| t.id == id))
+    }
+
+    fn put_template(&self, tmpl: &EmployeeTemplate) -> Result<()> {
+        upsert_by_id(&self.path("templates.json"), tmpl, |t| &t.id)
     }
 
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>> {
@@ -302,6 +325,7 @@ mod tests {
                 brain_id: "__default__".into(),
             },
             role: None,
+            template_id: None,
             state: EmployeeState::Created,
             created_at: "t".into(),
         };
@@ -313,6 +337,7 @@ mod tests {
                 brain_id: "__default__".into(),
             },
             role: None,
+            template_id: None,
             state: EmployeeState::Created,
             created_at: "t".into(),
         };

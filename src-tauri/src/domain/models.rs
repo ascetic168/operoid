@@ -69,6 +69,9 @@ pub struct Employee {
     /// 角色定義佔位（完整 Role：mission／authority／KPI／SOP 延後）。
     #[serde(default)]
     pub role: Option<String>,
+    /// 溯源：由哪個 [`EmployeeTemplate`] 部署而來（None＝獨立建立，如 `agent_seed`／`agent_recruit`）。
+    #[serde(default)]
+    pub template_id: Option<String>,
     /// 運行狀態。Phase 0 僅持久化，不驅動行為（Runtime 在 Phase 1）。
     pub state: EmployeeState,
     pub created_at: Timestamp,
@@ -85,6 +88,24 @@ pub enum EmployeeState {
     Sleeping,
     Paused,
     Error,
+}
+
+// ───────────────── EmployeeTemplate（Handbook Ch.04 §7）─────────────────
+
+/// EmployeeTemplate——一種員工的**可重用定義**（Ch.04 §7 Template）。
+///
+/// 部署（deploy）成多個獨立 [`Employee`] Instance：Instance 抄襲 template 的 `brain`／`role`，
+/// 但各自擁有 inbox／commitment／memory／artifact（即各自的 `Employee`）。腦透過 `brain_id`
+/// 仍是 live 共享（Phase 3）；role 為部署快照（Phase 4 不做即時傳播）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EmployeeTemplate {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub brain: BrainRef,
+    #[serde(default)]
+    pub role: Option<String>,
+    pub created_at: Timestamp,
 }
 
 // ───────────────── Artifact（Handbook Ch.06）─────────────────
@@ -271,6 +292,7 @@ mod tests {
                 brain_id: "__default__".into(),
             },
             role: None,
+            template_id: None,
             state: EmployeeState::Created,
             created_at: "t".into(),
         };

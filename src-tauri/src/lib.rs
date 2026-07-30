@@ -99,6 +99,8 @@ pub fn run() {
             note_view::open_note,
             runtime::agent_seed,
             runtime::agent_recruit,
+            runtime::agent_create_template,
+            runtime::agent_deploy_instance,
             runtime::agent_run,
             runtime::agent_create_commitment,
             runtime::agent_satisfy_commitment,
