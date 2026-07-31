@@ -18,7 +18,8 @@ pub mod tools;
 
 pub use models::{
     Artifact, ArtifactStatus, BrainRef, Commitment, CommitmentStatus, Employee, EmployeeState,
-    EmployeeTemplate, Memory, Task, TaskStatus, Timestamp, Workspace, WorkspaceStatus,
+    EmployeeTemplate, Memory, Project, ProjectStatus, Task, TaskStatus, Timestamp, Workspace,
+    WorkspaceStatus,
 };
 pub use sqlite_store::SqliteStore;
 pub use store::{id_from_name, next_id, now_rfc3339, JsonStore, Store};

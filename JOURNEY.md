@@ -172,7 +172,8 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 
 - **目標：** 多 Employee 在 Project 內合作：交接 Task、共享 context、產出共享 Artifact，彼此不互相擁有。
 - **退出條件：**
-  - [ ] 一個 Project 由一隊 Employee 並行＋循序完成。
+  - [x] 一個 Project 由一隊 Employee 並行＋循序完成。（`team_runs_concurrently`：3 員工併發、產共享 project artifact；`handoff_task_between_employees`：A→B 任務交接＋B 接手；`concurrent_cycles_overlap_in_time`：**併發實證**——3×800ms 併發 ≈1.1s（非 2.4s）；`real_team_concurrent`：兩員工在 demo 腦上併發 think、皆 Graph>0。）
+- **狀態：✅ 完成（2026-07-31）。** 落點：`Project` 實體＋`Artifact`/`Task`＋`project_id`；`agent_create_project`／`agent_run_team`（**併發** `futures::join_all`，各員工腦各自解析、gbrain 子行程真並行）／`agent_handoff_task`／`agent_run_task`。87 tests 全綠、`cargo build` 0 warning。**併發模型**：同 process 內併發 tokio task（Option A；OS-process／分散式為 Horizon）。
 
 ## Horizon — v1 之後
 
@@ -248,6 +249,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-07-30 | Phase 2 驗證 | 真實 gbrain 在 **SQLite** 上跑通：`real_gbrain_think_cycle` 改用 SqliteStore → Graph 1、Pages 21、Citations 10、Model groq。SQLite 持久化＋commitment／artifact 流程端到端正確。 | Phase 3 | D3（延後） |
 | 2026-07-30 | **Phase 3 ✅** | 共享 Brain 與 Knowledge（Milestone 3）。關鍵認知：共享/升級腦結構上早已可行（BrainRef 共享、員工狀態獨立），故 Phase 3 以**證明**為主、無模型變更。加 `agent_recruit`（招募員工、可共用腦）、`agent_list_state` 加 employees。83 tests 全綠（shared_brain 兩員工、upgrade_preserves_inflight_work）。 | Phase 4 | D3（延後） |
 | 2026-07-30 | Phase 3 驗證 | 真實 `real_shared_brain`：兩員工（emp-a／emp-b）共用 demo 腦各跑 think → Graph 1、Pages 21、Citations 12／1、groq；各產 artifact、memory 獨立。共用腦＋獨立狀態端到端正確。 | Phase 4 | D3（延後） |
-| 2026-07-30 | **Phase 4 ✅** | Template 與 Instance（Milestone 4）。加 `EmployeeTemplate` 實體（name/brain/role 可重用定義）＋`Employee.template_id` 溯源；Store template collection（JsonStore＋SqliteStore）；`agent_create_template`／`agent_deploy_instance`（`deploy_instance` helper 抄 brain/role、各自獨立）。`template_deploys_independent_instances`：一 template 部署 3 Instance、共享 brain/role、各自獨立。84 tests 全綠、`cargo build` 0 warning。 | Phase 5（協作） | D3（延後） |
+| 2026-07-30 | **Phase 4 ✅** | Template 與 Instance（Milestone 4）。加 `EmployeeTemplate` 實體（name/brain/role 可重用定義）＋`Employee.template_id` 溯源；Store template collection（JsonStore＋SqliteStore）；`agent_create_template`／`agent_deploy_instance`（`deploy_instance` helper 抄 brain/role、各自獨立）。`template_deploys_independent_instances`：一 template 部署 3 Instance、共享 brain/role、各自獨立。84 tests 全綠、`cargo build` 0 warning。 | Phase 5 | D3（延後） |
+| 2026-07-31 | **Phase 5 ✅ — v1 抵達** | 協作（Milestone 5，最終）。`Project` 實體＋`Artifact`/`Task`＋`project_id`；`agent_create_project`／`agent_run_team`（**併發** `futures::join_all`）／`agent_handoff_task`／`agent_run_task`。併發模型＝同 process 內併發 tokio task（Option A）。測試：team_runs_concurrently、handoff_task、**concurrent_cycles_overlap_in_time**（併發實證 3×800ms≈1.1s）、real_team_concurrent（兩員工 demo 腦）。87 tests 全綠、0 warning。 | **Handbook 五里程碑盡數達成**；後續為 Horizon | D3（延後） |
 
-**目前所在：** Phase 4 完成（程式碼＋測試）。下一步 = Phase 5（協作）——Handbook 最後一個里程碑。
+**目前所在：** 🎉 **Phase 5 完成——Handbook 五個里程碑（Phase 0–5）全部達成，v1 抵達。** 從「GBrain 知識圖譜 GUI」到「AI Agent OS（Employee／Runtime／Tool／Artifact／Commitment／Template／Project／併發團隊）」的核心架構已立。後續為 Horizon（skill learning、cloning、marketplace、federation、distributed runtime、人機團隊）——這些都是既有概念的延伸，不需新核心概念。

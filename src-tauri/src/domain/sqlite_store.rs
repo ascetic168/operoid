@@ -15,7 +15,9 @@ use rusqlite::{params, Connection};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::models::{Artifact, Commitment, Employee, EmployeeTemplate, Memory, Task, Workspace};
+use super::models::{
+    Artifact, Commitment, Employee, EmployeeTemplate, Memory, Project, Task, Workspace,
+};
 use super::store::Store;
 
 /// SQLite-backed [`Store`]。
@@ -45,6 +47,8 @@ impl SqliteStore {
     fn init(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS idx_projects_ws ON projects(workspace_id);
              CREATE TABLE IF NOT EXISTS employees (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
              CREATE INDEX IF NOT EXISTS idx_employees_ws ON employees(workspace_id);
              CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
@@ -181,6 +185,24 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn list_projects(&self, workspace_id: &str) -> Result<Vec<Project>> {
+        let conn = self.lock()?;
+        select_all(&conn, "projects", "WHERE workspace_id = ?1", params![workspace_id])
+    }
+    fn get_project(&self, id: &str) -> Result<Option<Project>> {
+        let conn = self.lock()?;
+        select_one(&conn, "projects", "id", id)
+    }
+    fn put_project(&self, p: &Project) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO projects (id, workspace_id, data) VALUES (?1, ?2, ?3)",
+            params![p.id, p.workspace_id, encode(p)?],
+        )
+        .map_err(|e| anyhow!("put_project: {e}"))?;
+        Ok(())
+    }
+
     fn list_employees(&self, workspace_id: &str) -> Result<Vec<Employee>> {
         let conn = self.lock()?;
         select_all(
@@ -225,6 +247,10 @@ impl Store for SqliteStore {
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>> {
         let conn = self.lock()?;
         select_all(&conn, "tasks", "WHERE workspace_id = ?1", &[&workspace_id])
+    }
+    fn get_task(&self, id: &str) -> Result<Option<Task>> {
+        let conn = self.lock()?;
+        select_one(&conn, "tasks", "id", id)
     }
     fn put_task(&self, task: &Task) -> Result<()> {
         let conn = self.lock()?;
@@ -366,6 +392,7 @@ mod tests {
             status: TaskStatus::Completed,
             output_artifact_id: Some("a1".into()),
             commitment_id: Some("c1".into()),
+            project_id: None,
             created_at: "t".into(),
         };
         s.put_task(&task).unwrap();
@@ -381,6 +408,7 @@ mod tests {
             source_task_id: Some("t1".into()),
             source_commitment_id: Some("c1".into()),
             revised_from_id: None,
+            project_id: None,
             version: 1,
             status: ArtifactStatus::Committed,
             created_at: "t".into(),

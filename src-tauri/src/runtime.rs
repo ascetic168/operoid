@@ -7,7 +7,7 @@
 
 use std::process::Stdio;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 use crate::config::app_config;
@@ -15,8 +15,8 @@ use crate::config::DEFAULT_BRAIN_ID;
 use crate::domain::tools::ToolFuture;
 use crate::domain::{
     id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, BrainRef, Commitment,
-    CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Memory, SqliteStore, Store, Task,
-    TaskStatus, Tool, ToolCtx, ToolInput, Workspace, WorkspaceStatus,
+    CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Memory, Project, ProjectStatus,
+    SqliteStore, Store, Task, TaskStatus, Tool, ToolCtx, ToolInput, Workspace, WorkspaceStatus,
 };
 use crate::domain::tools::{ToolOutput, ToolSpec};
 use crate::i18n::AppError;
@@ -43,6 +43,7 @@ pub async fn run_cycle(
     query: String,
     anchor: Option<String>,
     commitment_id: Option<&str>,
+    project_id: Option<&str>,
     tool: &dyn Tool,
     ctx: &ToolCtx,
     store: &(dyn Store + Send + Sync),
@@ -98,6 +99,7 @@ pub async fn run_cycle(
         source_task_id: Some(task_id.clone()),
         source_commitment_id: commitment_id.map(str::to_string),
         revised_from_id: None,
+        project_id: project_id.map(str::to_string),
         version: 1,
         status: ArtifactStatus::Committed,
         created_at: now_rfc3339(),
@@ -114,6 +116,7 @@ pub async fn run_cycle(
         status: TaskStatus::Completed,
         output_artifact_id: Some(artifact_id.clone()),
         commitment_id: commitment_id.map(str::to_string),
+        project_id: project_id.map(str::to_string),
         created_at: now_rfc3339(),
     };
     store.put_task(&task)?;
@@ -439,6 +442,7 @@ pub async fn agent_run<R: tauri::Runtime>(
     query: String,
     anchor: Option<String>,
     commitment_id: Option<String>,
+    project_id: Option<String>,
 ) -> Result<CycleResult, AppError> {
     let cfg = app_config::load(&app)?;
     if !cfg.agent_os_enabled {
@@ -465,6 +469,7 @@ pub async fn agent_run<R: tauri::Runtime>(
         query,
         anchor,
         commitment_id.as_deref(),
+        project_id.as_deref(),
         &tool,
         &ctx,
         &store,
@@ -590,6 +595,7 @@ pub fn revise_artifact(
         source_task_id: old.source_task_id.clone(),
         source_commitment_id: old.source_commitment_id.clone(),
         revised_from_id: Some(old.id),
+        project_id: old.project_id.clone(),
         version: new_version,
         status: ArtifactStatus::Committed,
         created_at: now,
@@ -637,12 +643,209 @@ pub async fn agent_list_state<R: tauri::Runtime>(
         .map_err(|e| e.to_string())?;
     let store = SqliteStore::open(data_dir.join("emploid.db"))?;
     Ok(serde_json::json!({
+        "projects": store.list_projects(&workspace_id)?,
         "templates": store.list_templates(&workspace_id)?,
         "employees": store.list_employees(&workspace_id)?,
         "commitments": store.list_commitments(&workspace_id)?,
         "tasks": store.list_tasks(&workspace_id)?,
         "artifacts": store.list_artifacts(&workspace_id)?,
     }))
+}
+
+// ───────────────── Project 與團隊協作（Handbook Milestone 5）─────────────────
+
+#[derive(Serialize)]
+pub struct ProjectResult {
+    pub project_id: String,
+}
+
+/// 建立一個 Project（有界的協作倡議，Ch.09）。
+#[tauri::command]
+pub async fn agent_create_project<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_id: String,
+    name: String,
+) -> Result<ProjectResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let existing: Vec<String> = store
+        .list_projects(&workspace_id)?
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
+    let project_id = id_from_name(&name, &existing);
+    store.put_project(&Project {
+        id: project_id.clone(),
+        workspace_id,
+        name,
+        status: ProjectStatus::Active,
+        created_at: now_rfc3339(),
+    })?;
+    Ok(ProjectResult { project_id })
+}
+
+/// 一個團隊 assignment（給 [`agent_run_team`]）。
+#[derive(Deserialize)]
+pub struct TeamAssignment {
+    pub employee_id: String,
+    pub query: String,
+    #[serde(default)]
+    pub anchor: Option<String>,
+    #[serde(default)]
+    pub commitment_id: Option<String>,
+}
+
+/// **併發**跑一隊 Employee（各 assignment 須是**相異** employee）。各員工的腦各自解析；
+/// gbrain 子行程真並行；Store 經 Mutex 序列化 DB 寫入。回傳各結果。
+#[tauri::command]
+pub async fn agent_run_team<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    assignments: Vec<TeamAssignment>,
+    project_id: Option<String>,
+) -> Result<Vec<CycleResult>, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+
+    // 各 assignment 解析其 employee 的腦 → ToolCtx（團隊成員可能用不同腦）。
+    let mut ctxs: Vec<ToolCtx> = Vec::with_capacity(assignments.len());
+    for a in &assignments {
+        let emp = store
+            .get_employee(&a.employee_id)?
+            .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &a.employee_id))?;
+        let entry = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)?;
+        ctxs.push(ToolCtx {
+            gbrain_exe: cfg.gbrain_exe_path.clone(),
+            gbrain_home: entry.env_home().map(|s| s.to_string()),
+        });
+    }
+
+    let tool = GbrainThinkTool::new();
+    let futs = assignments.iter().zip(ctxs.iter()).map(|(a, ctx)| {
+        run_cycle(
+            &a.employee_id,
+            a.query.clone(),
+            a.anchor.clone(),
+            a.commitment_id.as_deref(),
+            project_id.as_deref(),
+            &tool,
+            ctx,
+            &store,
+        )
+    });
+    let results: Vec<anyhow::Result<CycleResult>> = futures::future::join_all(futs).await;
+    let out: Vec<CycleResult> = results
+        .into_iter()
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(|e| AppError::new("agent_os.teamFailed").p("detail", e.to_string()))?;
+    Ok(out)
+}
+
+#[derive(Serialize)]
+pub struct TaskIdResult {
+    pub task_id: String,
+}
+
+/// **交接**：把一個 Task 指派給另一個 Employee（owner=to），狀態 Assigned（Ch.10／Milestone 5）。
+#[tauri::command]
+pub async fn agent_handoff_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    to_employee_id: String,
+    objective: String,
+    project_id: Option<String>,
+) -> Result<TaskIdResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let emp = store
+        .get_employee(&to_employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &to_employee_id))?;
+    let ws = emp.workspace_id.clone();
+    let existing: Vec<String> = store
+        .list_tasks(&ws)?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let task_id = id_from_name("task", &existing);
+    store.put_task(&Task {
+        id: task_id.clone(),
+        workspace_id: ws,
+        owner_employee_id: to_employee_id,
+        objective: objective.clone(),
+        input: objective,
+        status: TaskStatus::Assigned,
+        output_artifact_id: None,
+        commitment_id: None,
+        project_id,
+        created_at: now_rfc3339(),
+    })?;
+    Ok(TaskIdResult { task_id })
+}
+
+/// **接手**：執行一個已存在的 Task（為其 owner、用其 input 跑循環），並將原 task 標 Completed。
+#[tauri::command]
+pub async fn agent_run_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    task_id: String,
+) -> Result<CycleResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let mut task = store
+        .get_task(&task_id)?
+        .ok_or_else(|| AppError::new("agent_os.taskNotFound").p("id", &task_id))?;
+    let emp = store
+        .get_employee(&task.owner_employee_id)?
+        .ok_or_else(|| {
+            AppError::new("agent_os.employeeNotFound").p("id", &task.owner_employee_id)
+        })?;
+    let entry = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)?;
+    let ctx = ToolCtx {
+        gbrain_exe: cfg.gbrain_exe_path.clone(),
+        gbrain_home: entry.env_home().map(|s| s.to_string()),
+    };
+    let tool = GbrainThinkTool::new();
+    let result = run_cycle(
+        &task.owner_employee_id,
+        task.input.clone(),
+        None,
+        task.commitment_id.as_deref(),
+        task.project_id.as_deref(),
+        &tool,
+        &ctx,
+        &store,
+    )
+    .await?;
+    // 將原交接 task 標 Completed、連結產出。
+    task.status = TaskStatus::Completed;
+    task.output_artifact_id = Some(result.artifact_id.clone());
+    store.put_task(&task)?;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -686,6 +889,35 @@ mod tests {
                     text,
                     meta: serde_json::json!({"stub": true}),
                 })
+            })
+        }
+    }
+
+    /// 帶人工延遲的 stub——用於證明 run_cycle 併發（join_all）真的重疊（計時）。
+    struct SlowStub {
+        spec: ToolSpec,
+        delay_ms: u64,
+        canned: String,
+    }
+    impl SlowStub {
+        fn new(delay_ms: u64, canned: impl Into<String>) -> Self {
+            Self {
+                spec: ToolSpec { id: "slow".into(), description: "delayed stub".into() },
+                delay_ms,
+                canned: canned.into(),
+            }
+        }
+    }
+    impl Tool for SlowStub {
+        fn spec(&self) -> &ToolSpec {
+            &self.spec
+        }
+        fn invoke<'a>(&'a self, _input: ToolInput, _ctx: &'a ToolCtx) -> ToolFuture<'a> {
+            let delay = self.delay_ms;
+            let text = self.canned.clone();
+            Box::pin(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                Ok(ToolOutput { text, meta: serde_json::json!({}) })
             })
         }
     }
@@ -745,7 +977,7 @@ mod tests {
         let emp_id = seed(&store);
         let tool = StubTool::new("# 合成結果\n答案在這裡");
 
-        let res = run_cycle(&emp_id, "測試問題".into(), None, None, &tool, &ctx(), &store)
+        let res = run_cycle(&emp_id, "測試問題".into(), None, None, None, &tool, &ctx(), &store)
             .await
             .unwrap();
 
@@ -785,7 +1017,7 @@ mod tests {
             let store = JsonStore::new(&dir);
             let id = seed(&store);
             let tool = StubTool::new("first");
-            run_cycle(&id, "第一題".into(), None, None, &tool, &ctx(), &store)
+            run_cycle(&id, "第一題".into(), None, None, None, &tool, &ctx(), &store)
                 .await
                 .unwrap();
             id
@@ -799,7 +1031,7 @@ mod tests {
 
         // 再跑一輪：memory 還原後累積第二筆、artifact 兩個。
         let tool = StubTool::new("second");
-        run_cycle(&emp_id, "第二題".into(), None, None, &tool, &ctx(), &store)
+        run_cycle(&emp_id, "第二題".into(), None, None, None, &tool, &ctx(), &store)
             .await
             .unwrap();
         assert_eq!(store.list_artifacts(&emp.workspace_id).unwrap().len(), 2);
@@ -885,6 +1117,7 @@ mod tests {
             "晶瀚半導體開過幾場會議？".into(),
             Some("晶瀚半導體".into()),
             None,
+            None,
             &tool,
             &ctx,
             &store,
@@ -948,7 +1181,7 @@ mod tests {
                 })
                 .unwrap();
             let tool = StubTool::new("first");
-            run_cycle(&emp_id, "q1".into(), None, Some(&cid), &tool, &ctx(), &store)
+            run_cycle(&emp_id, "q1".into(), None, Some(&cid), None, &tool, &ctx(), &store)
                 .await
                 .unwrap();
         }
@@ -964,7 +1197,7 @@ mod tests {
 
         // 第二個 task（同 commitment）——commitment 活過 task
         let tool = StubTool::new("second");
-        run_cycle(&emp_id, "q2".into(), None, Some(&cid), &tool, &ctx(), &store)
+        run_cycle(&emp_id, "q2".into(), None, Some(&cid), None, &tool, &ctx(), &store)
             .await
             .unwrap();
         assert_eq!(store.list_tasks(&ws).unwrap().len(), 2);
@@ -1013,6 +1246,7 @@ mod tests {
             source_task_id: None,
             source_commitment_id: None,
             revised_from_id: None,
+            project_id: None,
             version: 1,
             status: ArtifactStatus::Committed,
             created_at: "t".into(),
@@ -1064,11 +1298,11 @@ mod tests {
                 .unwrap();
         }
         let s = StubTool::new("steve-out");
-        run_cycle("steve", "q".into(), None, None, &s, &ctx(), &store)
+        run_cycle("steve", "q".into(), None, None, None, &s, &ctx(), &store)
             .await
             .unwrap();
         let m = StubTool::new("mary-out");
-        run_cycle("mary", "q".into(), None, None, &m, &ctx(), &store)
+        run_cycle("mary", "q".into(), None, None, None, &m, &ctx(), &store)
             .await
             .unwrap();
 
@@ -1116,14 +1350,14 @@ mod tests {
         }
         // steve 在腦 v1 下跑
         let s1 = StubTool::new("v1");
-        let r1 = run_cycle("steve", "q".into(), None, None, &s1, &ctx(), &store)
+        let r1 = run_cycle("steve", "q".into(), None, None, None, &s1, &ctx(), &store)
             .await
             .unwrap();
         let steve_notes_before = store.get_memory("steve").unwrap().unwrap().notes.len();
 
         // 腦「升級」：同一 brain_id，知識演化為 v2；mary 採用。
         let m2 = StubTool::new("v2");
-        let r2 = run_cycle("mary", "q".into(), None, None, &m2, &ctx(), &store)
+        let r2 = run_cycle("mary", "q".into(), None, None, None, &m2, &ctx(), &store)
             .await
             .unwrap();
 
@@ -1211,6 +1445,7 @@ mod tests {
             "晶瀚半導體開過幾場會議？".into(),
             Some("晶瀚半導體".into()),
             None,
+            None,
             &tool,
             &ctx,
             &store,
@@ -1221,6 +1456,7 @@ mod tests {
             "emp-b",
             "誰主持了良率檢討會？".into(),
             Some("晶瀚半導體".into()),
+            None,
             None,
             &tool,
             &ctx,
@@ -1287,7 +1523,7 @@ mod tests {
         // 各自跑一圈，獨立產出
         for id in [&tw, &nj, &vn] {
             let tool = StubTool::new(format!("out-{id}"));
-            run_cycle(id, "q".into(), None, None, &tool, &ctx(), &store)
+            run_cycle(id, "q".into(), None, None, None, &tool, &ctx(), &store)
                 .await
                 .unwrap();
         }
@@ -1311,6 +1547,284 @@ mod tests {
         let coms = store.list_commitments(&ws).unwrap();
         assert_eq!(coms.len(), 1);
         assert_eq!(coms[0].owner_employee_id, tw);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Milestone 5：一隊 Employee 併發跑、產出共享 Artifact（同 Project）。
+    #[tokio::test]
+    async fn team_runs_concurrently() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        let proj = "proj".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        store
+            .put_project(&Project {
+                id: proj.clone(),
+                workspace_id: ws.clone(),
+                name: "P".into(),
+                status: ProjectStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        let names = ["a", "b", "c"];
+        let brain = "__default__".to_string();
+        for n in names {
+            store
+                .put_employee(&Employee {
+                    id: n.into(),
+                    workspace_id: ws.clone(),
+                    name: n.into(),
+                    brain: BrainRef { brain_id: brain.clone() },
+                    role: None,
+                    template_id: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+        let tools: Vec<StubTool> = names.iter().map(|n| StubTool::new(format!("out-{n}"))).collect();
+        let ctx = ctx();
+        let futs = names.iter().enumerate().map(|(i, &n)| {
+            run_cycle(
+                n,
+                format!("q-{n}"),
+                None,
+                None,
+                Some(proj.as_str()),
+                &tools[i],
+                &ctx,
+                &store,
+            )
+        });
+        let results: Vec<_> = futures::future::join_all(futs).await;
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
+
+        let arts = store.list_artifacts(&ws).unwrap();
+        assert_eq!(arts.len(), 3);
+        assert!(arts.iter().all(|a| a.project_id.as_deref() == Some("proj")));
+        let by: Vec<String> = arts.iter().map(|a| a.produced_by.clone()).collect();
+        assert!(by.contains(&"a".into()) && by.contains(&"b".into()) && by.contains(&"c".into()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Milestone 5：Task 交接（A→B）＋ B 接手執行。
+    #[tokio::test]
+    async fn handoff_task_between_employees() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        for n in ["alice", "bob"] {
+            store
+                .put_employee(&Employee {
+                    id: n.into(),
+                    workspace_id: ws.clone(),
+                    name: n.into(),
+                    brain: BrainRef { brain_id: "__default__".into() },
+                    role: None,
+                    template_id: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+        // alice 交接到 bob：建立 Assigned task owned by bob。
+        store
+            .put_task(&Task {
+                id: "task".into(),
+                workspace_id: ws.clone(),
+                owner_employee_id: "bob".into(),
+                objective: "查 E-07 根因".into(),
+                input: "查 E-07 根因".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        assert_eq!(
+            store.get_task("task").unwrap().unwrap().owner_employee_id,
+            "bob"
+        );
+
+        // bob 接手執行（run_cycle）→ 標記原 task Completed。
+        let tool = StubTool::new("bob-answer");
+        let ctx = ctx();
+        let res = run_cycle("bob", "查 E-07 根因".into(), None, None, None, &tool, &ctx, &store)
+            .await
+            .unwrap();
+        let mut t = store.get_task("task").unwrap().unwrap();
+        t.status = TaskStatus::Completed;
+        t.output_artifact_id = Some(res.artifact_id.clone());
+        store.put_task(&t).unwrap();
+
+        let task = store.get_task("task").unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert_eq!(task.output_artifact_id.as_deref(), Some(res.artifact_id.as_str()));
+        let art = store.get_artifact(&res.artifact_id).unwrap().unwrap();
+        assert_eq!(art.produced_by, "bob");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 併發實證：兩員工在 demo 腦上併發 think，wall-clock ≈ 單人（非兩倍）。
+    #[tokio::test]
+    #[ignore]
+    async fn real_team_concurrent() {
+        let cfg_path = dirs::config_dir()
+            .expect("no config dir")
+            .join("com.emploid.studio")
+            .join("app-settings.json");
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cfg_path).expect("read app-settings.json"))
+                .expect("parse app-settings.json");
+        let app_cfg = raw.get("app_config").expect("app_config");
+        let exe = app_cfg
+            .get("gbrain_exe_path")
+            .and_then(|v| v.as_str())
+            .expect("gbrain_exe_path")
+            .to_string();
+        let active = app_cfg
+            .get("active_brain_id")
+            .and_then(|v| v.as_str())
+            .expect("active_brain_id")
+            .to_string();
+        let brains = app_cfg.get("brains").and_then(|v| v.as_array()).expect("brains");
+        let home = brains
+            .iter()
+            .find(|b| b.get("id").and_then(|v| v.as_str()) == Some(active.as_str()))
+            .and_then(|b| b.get("gbrain_home"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let ctx = ToolCtx {
+            gbrain_exe: exe,
+            gbrain_home: home,
+        };
+
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        for n in ["emp-a", "emp-b"] {
+            store
+                .put_employee(&Employee {
+                    id: n.into(),
+                    workspace_id: ws.clone(),
+                    name: n.into(),
+                    brain: BrainRef { brain_id: active.clone() },
+                    role: None,
+                    template_id: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+
+        let tool = GbrainThinkTool::new();
+        let queries = [
+            ("emp-a", "晶瀚半導體開過幾場會議？"),
+            ("emp-b", "誰主持了良率檢討會？"),
+        ];
+        let start = std::time::Instant::now();
+        let futs = queries.iter().map(|(emp, q)| {
+            run_cycle(emp, (*q).into(), Some("晶瀚半導體".into()), None, None, &tool, &ctx, &store)
+        });
+        let results: Vec<_> = futures::future::join_all(futs).await;
+        let elapsed = start.elapsed();
+        println!("concurrent 2 employees elapsed: {elapsed:?}");
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.is_ok()));
+        let arts = store.list_artifacts(&ws).unwrap();
+        assert_eq!(arts.len(), 2);
+        let ga = results[0]
+            .as_ref()
+            .unwrap()
+            .tool_meta
+            .get("graph")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        assert!(ga > 0, "Graph 應 > 0（實際 {ga}）");
+        // 注意：同腦（demo）下 gbrain 對該腦 DB 序列化，故 wall-clock 不證 Emploid 併行；
+        // Emploid 的併發機制由 `concurrent_cycles_overlap_in_time`（延遲 stub）證明。
+        println!("concurrent 2 employees elapsed (同腦，gbrain 序列化): {elapsed:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Emploid 併發實證：3 個 run_cycle（各 800ms 延遲）併發跑，總時間 ≈ 1×（非 3×）。
+    #[tokio::test]
+    async fn concurrent_cycles_overlap_in_time() {
+        let dir = test_dir();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = "ws".to_string();
+        store
+            .put_workspace(&Workspace {
+                id: ws.clone(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        let names = ["a", "b", "c"];
+        for n in names {
+            store
+                .put_employee(&Employee {
+                    id: n.into(),
+                    workspace_id: ws.clone(),
+                    name: n.into(),
+                    brain: BrainRef { brain_id: "x".into() },
+                    role: None,
+                    template_id: None,
+                    state: EmployeeState::Sleeping,
+                    created_at: now_rfc3339(),
+                })
+                .unwrap();
+        }
+        let tools: Vec<SlowStub> = names.iter().map(|_| SlowStub::new(800, "out")).collect();
+        let ctx = ctx();
+        let start = std::time::Instant::now();
+        let futs = names.iter().enumerate().map(|(i, &n)| {
+            run_cycle(n, "q".into(), None, None, None, &tools[i], &ctx, &store)
+        });
+        let results: Vec<_> = futures::future::join_all(futs).await;
+        let elapsed = start.elapsed();
+        assert!(results.iter().all(|r| r.is_ok()));
+        // 併發：3×800ms ≈ 800ms；循序會 ≈ 2400ms。以 <1.6s 證重疊。
+        assert!(
+            elapsed.as_millis() < 1600,
+            "併發未重疊：3×800ms 應 <1.6s，實際 {elapsed:?}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

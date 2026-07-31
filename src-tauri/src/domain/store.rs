@@ -11,13 +11,19 @@ use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use super::models::{Artifact, Commitment, Employee, EmployeeTemplate, Memory, Task, Workspace};
+use super::models::{
+    Artifact, Commitment, Employee, EmployeeTemplate, Memory, Project, Task, Workspace,
+};
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
 pub trait Store {
     fn list_workspaces(&self) -> Result<Vec<Workspace>>;
     fn get_workspace(&self, id: &str) -> Result<Option<Workspace>>;
     fn put_workspace(&self, ws: &Workspace) -> Result<()>;
+
+    fn list_projects(&self, workspace_id: &str) -> Result<Vec<Project>>;
+    fn get_project(&self, id: &str) -> Result<Option<Project>>;
+    fn put_project(&self, p: &Project) -> Result<()>;
 
     fn list_employees(&self, workspace_id: &str) -> Result<Vec<Employee>>;
     fn get_employee(&self, id: &str) -> Result<Option<Employee>>;
@@ -28,6 +34,7 @@ pub trait Store {
     fn put_template(&self, tmpl: &EmployeeTemplate) -> Result<()>;
 
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>>;
+    fn get_task(&self, id: &str) -> Result<Option<Task>>;
     fn put_task(&self, task: &Task) -> Result<()>;
 
     fn list_artifacts(&self, workspace_id: &str) -> Result<Vec<Artifact>>;
@@ -81,6 +88,25 @@ impl Store for JsonStore {
         upsert_by_id(&self.path("workspaces.json"), ws, |w| &w.id)
     }
 
+    fn list_projects(&self, workspace_id: &str) -> Result<Vec<Project>> {
+        Ok(self
+            .read::<Project>("projects.json")?
+            .into_iter()
+            .filter(|p| p.workspace_id == workspace_id)
+            .collect())
+    }
+
+    fn get_project(&self, id: &str) -> Result<Option<Project>> {
+        Ok(self
+            .read::<Project>("projects.json")?
+            .into_iter()
+            .find(|p| p.id == id))
+    }
+
+    fn put_project(&self, p: &Project) -> Result<()> {
+        upsert_by_id(&self.path("projects.json"), p, |p| &p.id)
+    }
+
     fn list_employees(&self, workspace_id: &str) -> Result<Vec<Employee>> {
         Ok(self
             .read::<Employee>("employees.json")?
@@ -129,6 +155,13 @@ impl Store for JsonStore {
 
     fn put_task(&self, task: &Task) -> Result<()> {
         upsert_by_id(&self.path("tasks.json"), task, |t| &t.id)
+    }
+
+    fn get_task(&self, id: &str) -> Result<Option<Task>> {
+        Ok(self
+            .read::<Task>("tasks.json")?
+            .into_iter()
+            .find(|t| t.id == id))
     }
 
     fn list_artifacts(&self, workspace_id: &str) -> Result<Vec<Artifact>> {
@@ -369,6 +402,7 @@ mod tests {
             source_task_id: None,
             source_commitment_id: None,
             revised_from_id: None,
+            project_id: None,
             version: 1,
             status: ArtifactStatus::Draft,
             created_at: "t".into(),
@@ -447,6 +481,7 @@ mod tests {
             status: TaskStatus::Completed,
             output_artifact_id: Some("a1".into()),
             commitment_id: None,
+            project_id: None,
             created_at: "t".into(),
         };
         s.put_task(&task).unwrap();

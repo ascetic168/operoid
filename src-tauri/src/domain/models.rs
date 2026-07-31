@@ -41,6 +41,28 @@ pub enum WorkspaceStatus {
     Archived,
 }
 
+// ───────────────── Project（Handbook Ch.09）─────────────────
+
+/// Project——有界的協作倡議。一隊 Employee 在其中並行＋循序合作、產出共享 Artifact，
+/// 彼此不互相擁有（Ch.09）。Phase 5 最小：身份＋生命週期狀態。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Project {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub status: ProjectStatus,
+    pub created_at: Timestamp,
+}
+
+/// Project 生命週期狀態（Ch.09，最小）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectStatus {
+    Active,
+    Completed,
+    Archived,
+}
+
 // ───────────────── Brain 參照（Handbook Ch.05 / D1）─────────────────
 
 /// Employee 對 Brain 的**參照**（非副本）。員工擁有責任，腦擁有知識；二者不塌縮（Principle 1）。
@@ -134,6 +156,9 @@ pub struct Artifact {
     /// 前一版本 id（修訂鏈；原版為 None）。
     #[serde(default)]
     pub revised_from_id: Option<String>,
+    /// 所屬 Project（共享 Artifact 的歸屬；Ch.09）。
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub version: u32,
     pub status: ArtifactStatus,
     pub created_at: Timestamp,
@@ -206,6 +231,9 @@ pub struct Task {
     /// 所屬 Commitment（linkage，Ch.10）；獨立 task 為 None。
     #[serde(default)]
     pub commitment_id: Option<String>,
+    /// 所屬 Project（Ch.09）；獨立 task 為 None。
+    #[serde(default)]
+    pub project_id: Option<String>,
     pub created_at: Timestamp,
 }
 
@@ -314,6 +342,7 @@ mod tests {
             source_task_id: None,
             source_commitment_id: None,
             revised_from_id: None,
+            project_id: None,
             version: 1,
             status: ArtifactStatus::Draft,
             created_at: "t".into(),

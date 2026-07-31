@@ -106,6 +106,10 @@ pub fn run() {
             runtime::agent_satisfy_commitment,
             runtime::agent_revise_artifact,
             runtime::agent_list_state,
+            runtime::agent_create_project,
+            runtime::agent_run_team,
+            runtime::agent_handoff_task,
+            runtime::agent_run_task,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。
