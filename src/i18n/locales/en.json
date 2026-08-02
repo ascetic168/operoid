@@ -10,12 +10,49 @@
     "loading": "Loading…",
     "dash": "—"
   },
+  "templates": {
+    "title": "Employee Templates",
+    "subtitle": "Reusable employee definitions; each maps to one brain.",
+    "empty": "No templates yet. Add one to deploy instances.",
+    "add": "Add Template",
+    "name": "Name",
+    "namePh": "e.g. Procurement Assistant",
+    "brain": "Brain",
+    "pickBrain": "Pick a brain…",
+    "role": "Role (optional)",
+    "rolePh": "e.g. procurement",
+    "rename": "Rename",
+    "delete": "Delete Template",
+    "detail": "Template Detail",
+    "createdAt": "Created",
+    "confirmDelete": "Delete template \"{name}\"?"
+  },
+  "instances": {
+    "title": "Employee Instances",
+    "subtitle": "Deployed employees; right-click a card to manage.",
+    "empty": "No instances yet. Deploy one from a template (e.g. Steve{'@'}TW).",
+    "deploy": "Deploy Instance",
+    "template": "Template",
+    "pickTemplate": "Pick a template…",
+    "instanceName": "Instance name",
+    "instanceNamePh": "e.g. Steve{'@'}TW",
+    "state": "State",
+    "brain": "Brain",
+    "rename": "Rename",
+    "delete": "Delete Instance",
+    "detail": "View Detail",
+    "confirmDelete": "Delete instance \"{name}\"?",
+    "noTemplate": "(standalone)",
+    "rightClickHint": "Right-click a card to manage"
+  },
   "app": {
     "nav": {
       "factories": "Factories",
       "operations": "Operations",
       "brains": "Brains",
-      "config": "Settings"
+      "config": "Settings",
+      "employeeTemplate": "Templates",
+      "employeeInstance": "Instances"
     },
     "prereq": {
       "title": "Missing prerequisites",
@@ -185,6 +222,7 @@
     "maxTokensLabel": "LLM max_tokens",
     "autoSyncLabel": "Auto commit + sync after factory write",
     "noPullLabel": "Add --no-pull to sync (recommended for brains with no remote)",
+    "agentOsLabel": "Enable Agent-OS (employee templates/instances)",
     "targetsLegend": "Factory target subdirectories (whitelist)",
     "languageLabel": "Interface language",
     "languageAuto": "Auto-detect (system language)"

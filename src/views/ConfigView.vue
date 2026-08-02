@@ -91,6 +91,7 @@ const form = reactive<AppConfig>({
   recent_claude_cwds: [],
   claude_terminal: null,
   claude_terminal_template: null,
+  agent_os_enabled: false,
 });
 
 watchEffect(() => {
@@ -285,6 +286,10 @@ async function onLocaleChange(v: string) {
           <label class="flex items-center gap-2">
             <input v-model="form.sync_no_pull" type="checkbox" />
             <span>{{ $t("configView.noPullLabel") }}</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input v-model="form.agent_os_enabled" type="checkbox" />
+            <span>{{ $t("configView.agentOsLabel") }}</span>
           </label>
         </div>
         <fieldset class="grid grid-cols-3 gap-2 sm:col-span-2">

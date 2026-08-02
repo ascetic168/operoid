@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, Boxes, AlertTriangle, ExternalLink, Terminal, X } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
 import { checkPrerequisites, openUrl, tL10n, type DepStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -23,7 +23,9 @@ onMounted(async () => {
 });
 
 const nav = [
-  { to: "/", labelKey: "app.nav.factories", icon: Factory },
+  { to: "/factories", labelKey: "app.nav.factories", icon: Factory },
+  { to: "/templates", labelKey: "app.nav.employeeTemplate", icon: Users },
+  { to: "/instances", labelKey: "app.nav.employeeInstance", icon: UserSquare },
   { to: "/operations", labelKey: "app.nav.operations", icon: Wrench },
   { to: "/brains", labelKey: "app.nav.brains", icon: Boxes },
   { to: "/config", labelKey: "app.nav.config", icon: Settings },

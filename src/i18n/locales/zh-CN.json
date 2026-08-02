@@ -10,12 +10,49 @@
     "loading": "加载中…",
     "dash": "—"
   },
+  "templates": {
+    "title": "员工模板",
+    "subtitle": "定义可重用的员工类型；每个模板对应一个脑。",
+    "empty": "尚无模板。新增一个以部署员工实体。",
+    "add": "新增模板",
+    "name": "名称",
+    "namePh": "例如：采购助理",
+    "brain": "对应脑",
+    "pickBrain": "选择脑…",
+    "role": "角色（选填）",
+    "rolePh": "例如：procurement",
+    "rename": "重命名",
+    "delete": "删除模板",
+    "detail": "模板详情",
+    "createdAt": "创建于",
+    "confirmDelete": "确定删除模板「{name}」？"
+  },
+  "instances": {
+    "title": "员工实体",
+    "subtitle": "部署的员工；在卡片上按右键管理。",
+    "empty": "尚无实体。从模板部署一个（例如 Steve{'@'}TW）。",
+    "deploy": "部署新实体",
+    "template": "来源模板",
+    "pickTemplate": "选择模板…",
+    "instanceName": "实体名称",
+    "instanceNamePh": "例如：Steve{'@'}TW",
+    "state": "状态",
+    "brain": "脑",
+    "rename": "重命名",
+    "delete": "删除实体",
+    "detail": "查看详情",
+    "confirmDelete": "确定删除实体「{name}」？",
+    "noTemplate": "（独立建立）",
+    "rightClickHint": "在卡片上按右键管理"
+  },
   "app": {
     "nav": {
       "factories": "工厂",
       "operations": "操作",
       "brains": "脑",
-      "config": "设置"
+      "config": "设置",
+      "employeeTemplate": "员工模板",
+      "employeeInstance": "员工实体"
     },
     "prereq": {
       "title": "缺少前置程序",
@@ -185,6 +222,7 @@
     "maxTokensLabel": "LLM max_tokens",
     "autoSyncLabel": "工厂写档后自动 commit + sync",
     "noPullLabel": "sync 加 --no-pull（无 remote 的脑建议开）",
+    "agentOsLabel": "启用 Agent-OS（员工模板／实体管理）",
     "targetsLegend": "工厂目标子目录（白名单）",
     "languageLabel": "界面语言",
     "languageAuto": "自动侦测（系统语言）"

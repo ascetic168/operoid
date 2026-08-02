@@ -116,6 +116,7 @@ export interface AppConfig {
   recent_claude_cwds: string[];
   claude_terminal: string | null;
   claude_terminal_template: string | null;
+  agent_os_enabled: boolean;
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>
@@ -402,3 +403,66 @@ export async function brainBindSourcePath(
   ch.onmessage = onLine;
   return invoke<OpResult>("brain_bind_source_path", { onEvent: ch, brainId, path });
 }
+
+// ───────────────── Agent-OS（員工模板／實體管理）─────────────────
+
+/** 預設 workspace（GUI 用；後端 `agent_ensure_workspace` 確保存在）。 */
+export const AGENT_WS = "ws-default";
+
+export interface BrainRef {
+  brain_id: string;
+}
+export type EmployeeState =
+  | "created" | "idle" | "working" | "waiting" | "sleeping" | "paused" | "error";
+
+export interface EmployeeTemplate {
+  id: string;
+  workspace_id: string;
+  name: string;
+  brain: BrainRef;
+  role: string | null;
+  created_at: string;
+}
+
+export interface Employee {
+  id: string;
+  workspace_id: string;
+  name: string;
+  brain: BrainRef;
+  role: string | null;
+  template_id: string | null;
+  state: EmployeeState;
+  created_at: string;
+}
+
+export interface IdResult {
+  /** `{ template_id }` / `{ employee_id }` / `{ workspace_id }` */
+  [key: string]: string;
+}
+
+export const agentEnsureWorkspace = (): Promise<{ workspace_id: string }> =>
+  invoke<{ workspace_id: string }>("agent_ensure_workspace");
+export const agentListTemplates = (workspaceId: string = AGENT_WS): Promise<EmployeeTemplate[]> =>
+  invoke<EmployeeTemplate[]>("agent_list_templates", { workspaceId });
+export const agentListEmployees = (workspaceId: string = AGENT_WS): Promise<Employee[]> =>
+  invoke<Employee[]>("agent_list_employees", { workspaceId });
+export const agentCreateTemplate = (
+  name: string,
+  brainId: string | null,
+  role: string | null,
+  workspaceId: string = AGENT_WS,
+): Promise<{ template_id: string }> =>
+  invoke<{ template_id: string }>("agent_create_template", { workspaceId, name, brainId, role });
+export const agentDeployInstance = (
+  templateId: string,
+  instanceName: string,
+): Promise<{ employee_id: string }> =>
+  invoke<{ employee_id: string }>("agent_deploy_instance", { templateId, instanceName });
+export const agentDeleteTemplate = (templateId: string): Promise<void> =>
+  invoke<void>("agent_delete_template", { templateId });
+export const agentDeleteEmployee = (employeeId: string): Promise<void> =>
+  invoke<void>("agent_delete_employee", { employeeId });
+export const agentRenameTemplate = (templateId: string, name: string): Promise<void> =>
+  invoke<void>("agent_rename_template", { templateId, name });
+export const agentRenameEmployee = (employeeId: string, name: string): Promise<void> =>
+  invoke<void>("agent_rename_employee", { employeeId, name });

@@ -225,6 +225,12 @@ impl Store for SqliteStore {
         .map_err(|e| anyhow!("put_employee: {e}"))?;
         Ok(())
     }
+    fn delete_employee(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM employees WHERE id = ?1", params![id])
+            .map_err(|e| anyhow!("delete_employee: {e}"))?;
+        Ok(())
+    }
 
     fn list_templates(&self, workspace_id: &str) -> Result<Vec<EmployeeTemplate>> {
         let conn = self.lock()?;
@@ -241,6 +247,12 @@ impl Store for SqliteStore {
             params![tmpl.id, tmpl.workspace_id, encode(tmpl)?],
         )
         .map_err(|e| anyhow!("put_template: {e}"))?;
+        Ok(())
+    }
+    fn delete_template(&self, id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM templates WHERE id = ?1", params![id])
+            .map_err(|e| anyhow!("delete_template: {e}"))?;
         Ok(())
     }
 

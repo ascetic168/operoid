@@ -28,10 +28,12 @@ pub trait Store {
     fn list_employees(&self, workspace_id: &str) -> Result<Vec<Employee>>;
     fn get_employee(&self, id: &str) -> Result<Option<Employee>>;
     fn put_employee(&self, emp: &Employee) -> Result<()>;
+    fn delete_employee(&self, id: &str) -> Result<()>;
 
     fn list_templates(&self, workspace_id: &str) -> Result<Vec<EmployeeTemplate>>;
     fn get_template(&self, id: &str) -> Result<Option<EmployeeTemplate>>;
     fn put_template(&self, tmpl: &EmployeeTemplate) -> Result<()>;
+    fn delete_template(&self, id: &str) -> Result<()>;
 
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>>;
     fn get_task(&self, id: &str) -> Result<Option<Task>>;
@@ -126,6 +128,10 @@ impl Store for JsonStore {
         upsert_by_id(&self.path("employees.json"), emp, |e| &e.id)
     }
 
+    fn delete_employee(&self, id: &str) -> Result<()> {
+        delete_by_id::<Employee, _>(&self.path("employees.json"), id, |e| &e.id)
+    }
+
     fn list_templates(&self, workspace_id: &str) -> Result<Vec<EmployeeTemplate>> {
         Ok(self
             .read::<EmployeeTemplate>("templates.json")?
@@ -143,6 +149,10 @@ impl Store for JsonStore {
 
     fn put_template(&self, tmpl: &EmployeeTemplate) -> Result<()> {
         upsert_by_id(&self.path("templates.json"), tmpl, |t| &t.id)
+    }
+
+    fn delete_template(&self, id: &str) -> Result<()> {
+        delete_by_id::<EmployeeTemplate, _>(&self.path("templates.json"), id, |t| &t.id)
     }
 
     fn list_tasks(&self, workspace_id: &str) -> Result<Vec<Task>> {
@@ -250,6 +260,21 @@ where
         items.push(item.clone());
     }
     write_vec(path, &items)
+}
+
+/// 以 id 為準刪除一筆（不存在則 no-op）。
+fn delete_by_id<T, F>(path: &Path, id: &str, id_of: F) -> Result<()>
+where
+    T: Serialize + DeserializeOwned,
+    F: Fn(&T) -> &str,
+{
+    let mut items: Vec<T> = read_vec(path)?;
+    let before = items.len();
+    items.retain(|x| id_of(x) != id);
+    if items.len() != before {
+        write_vec(path, &items)?;
+    }
+    Ok(())
 }
 
 // ───────────────── ID 與時間戳 helpers ─────────────────

@@ -433,6 +433,121 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
     Ok(DeployResult { employee_id })
 }
 
+/// 預設 workspace id（GUI 用）。
+const AGENT_WS: &str = "ws-default";
+
+/// 共用：Agent-OS flag 檢查 ＋ 開 `emploid.db`。
+fn agent_store<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<SqliteStore, AppError> {
+    let cfg = app_config::load(app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    Ok(SqliteStore::open(data_dir.join("emploid.db"))?)
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceResult {
+    pub workspace_id: String,
+}
+
+/// 冪等確保 `ws-default` workspace 存在（不建 employee-1）。回其 id。
+#[tauri::command]
+pub async fn agent_ensure_workspace<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<WorkspaceResult, AppError> {
+    let store = agent_store(&app)?;
+    if store.get_workspace(AGENT_WS)?.is_none() {
+        store.put_workspace(&Workspace {
+            id: AGENT_WS.into(),
+            name: "Default".into(),
+            description: None,
+            status: WorkspaceStatus::Active,
+            created_at: now_rfc3339(),
+        })?;
+    }
+    Ok(WorkspaceResult {
+        workspace_id: AGENT_WS.into(),
+    })
+}
+
+/// 列出某 workspace 的模板（typed）。
+#[tauri::command]
+pub async fn agent_list_templates<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_id: String,
+) -> Result<Vec<EmployeeTemplate>, AppError> {
+    let store = agent_store(&app)?;
+    Ok(store.list_templates(&workspace_id)?)
+}
+
+/// 列出某 workspace 的員工實體（typed）。
+#[tauri::command]
+pub async fn agent_list_employees<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_id: String,
+) -> Result<Vec<Employee>, AppError> {
+    let store = agent_store(&app)?;
+    Ok(store.list_employees(&workspace_id)?)
+}
+
+/// 刪除模板。
+#[tauri::command]
+pub async fn agent_delete_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    template_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    store.delete_template(&template_id)?;
+    Ok(())
+}
+
+/// 刪除員工實體。
+#[tauri::command]
+pub async fn agent_delete_employee<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    store.delete_employee(&employee_id)?;
+    Ok(())
+}
+
+/// 重新命名模板。
+#[tauri::command]
+pub async fn agent_rename_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    template_id: String,
+    name: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    let mut t = store
+        .get_template(&template_id)?
+        .ok_or_else(|| AppError::new("agent_os.templateNotFound").p("id", &template_id))?;
+    t.name = name;
+    store.put_template(&t)?;
+    Ok(())
+}
+
+/// 重新命名員工實體（個別命名，如 Steve@TW）。
+#[tauri::command]
+pub async fn agent_rename_employee<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+    name: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    let mut e = store
+        .get_employee(&employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
+    e.name = name;
+    store.put_employee(&e)?;
+    Ok(())
+}
+
 /// 跑一輪 Employee 循環：載入 employee→解析腦→建 ToolCtx→run_cycle（gbrain think）。
 /// `commitment_id` 可選：綁定則此循環的 task／artifact 連到該長期責任。
 #[tauri::command]

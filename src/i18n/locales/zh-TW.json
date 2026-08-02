@@ -10,12 +10,49 @@
     "loading": "載入中…",
     "dash": "—"
   },
+  "templates": {
+    "title": "員工模板",
+    "subtitle": "定義可重用的員工類型；每個模板對應一個腦。",
+    "empty": "尚無模板。新增一個以部署員工實體。",
+    "add": "新增模板",
+    "name": "名稱",
+    "namePh": "例如：採購助理",
+    "brain": "對應腦",
+    "pickBrain": "選擇腦…",
+    "role": "角色（選填）",
+    "rolePh": "例如：procurement",
+    "rename": "重新命名",
+    "delete": "刪除模板",
+    "detail": "模板詳情",
+    "createdAt": "建立於",
+    "confirmDelete": "確定刪除模板「{name}」？"
+  },
+  "instances": {
+    "title": "員工實體",
+    "subtitle": "部署的員工；在卡片上按右鍵管理。",
+    "empty": "尚無實體。從模板部署一個（例如 Steve{'@'}TW）。",
+    "deploy": "部署新實體",
+    "template": "來源模板",
+    "pickTemplate": "選擇模板…",
+    "instanceName": "實體名稱",
+    "instanceNamePh": "例如：Steve{'@'}TW",
+    "state": "狀態",
+    "brain": "腦",
+    "rename": "重新命名",
+    "delete": "刪除實體",
+    "detail": "查看詳情",
+    "confirmDelete": "確定刪除實體「{name}」？",
+    "noTemplate": "（獨立建立）",
+    "rightClickHint": "在卡片上按右鍵管理"
+  },
   "app": {
     "nav": {
       "factories": "工廠",
       "operations": "操作",
       "brains": "腦",
-      "config": "設定"
+      "config": "設定",
+      "employeeTemplate": "員工模板",
+      "employeeInstance": "員工實體"
     },
     "prereq": {
       "title": "缺少前置程式",
@@ -185,6 +222,7 @@
     "maxTokensLabel": "LLM max_tokens",
     "autoSyncLabel": "工廠寫檔後自動 commit + sync",
     "noPullLabel": "sync 加 --no-pull（無 remote 的腦建議開）",
+    "agentOsLabel": "啟用 Agent-OS（員工模板／實體管理）",
     "targetsLegend": "工廠目標子目錄（白名單）",
     "languageLabel": "介面語言",
     "languageAuto": "自動偵測（系統語言）"
