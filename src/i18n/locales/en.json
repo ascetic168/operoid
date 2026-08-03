@@ -43,7 +43,11 @@
     "detail": "View Detail",
     "confirmDelete": "Delete instance \"{name}\"?",
     "noTemplate": "(standalone)",
-    "rightClickHint": "Right-click a card to manage"
+    "rightClickHint": "Right-click a card to manage",
+    "message": "Message…",
+    "messageTitle": "Message",
+    "messagePh": "Type a message to this employee…",
+    "send": "Send"
   },
   "app": {
     "nav": {
@@ -331,6 +335,12 @@
     "git": { "hint": "Version control; needed to git commit before sync after a factory write." },
     "bun": { "hint": "JS runtime; gbrain is installed and run via bun." },
     "gbrain": { "hint": "GBrain CLI (knowledge-graph engine); install via bun, see the ‘CLI standalone’ section." }
+  },
+  "agent_os": {
+    "disabled": "Agent-OS is disabled. Turn it on in Settings.",
+    "employeeBusy": "{id} is already running; wait for it to finish.",
+    "employeeNotFound": "Employee not found: {id}",
+    "taskNotFound": "Task not found: {id}"
   },
   "error": {
     "unexpected": "An unexpected error occurred: {detail}"

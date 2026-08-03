@@ -43,7 +43,11 @@
     "detail": "查看詳情",
     "confirmDelete": "確定刪除實體「{name}」？",
     "noTemplate": "（獨立建立）",
-    "rightClickHint": "在卡片上按右鍵管理"
+    "rightClickHint": "在卡片上按右鍵管理",
+    "message": "溝通…",
+    "messageTitle": "發送訊息",
+    "messagePh": "輸入要給這位員工的訊息…",
+    "send": "送出"
   },
   "app": {
     "nav": {
@@ -331,6 +335,12 @@
     "git": { "hint": "版本控制；工廠寫入後 sync 前需要 git commit。" },
     "bun": { "hint": "JS 執行環境；gbrain 透過 bun 安裝與執行。" },
     "gbrain": { "hint": "GBrain CLI（知識圖譜引擎）；用 bun 安裝，詳見連結〈CLI standalone〉段落。" }
+  },
+  "agent_os": {
+    "disabled": "Agent-OS 未開啟。請於設定中啟用。",
+    "employeeBusy": "{id} 正在執行中，請等它完成。",
+    "employeeNotFound": "找不到員工：{id}",
+    "taskNotFound": "找不到任務：{id}"
   },
   "error": {
     "unexpected": "發生未預期錯誤：{detail}"

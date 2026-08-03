@@ -42,6 +42,7 @@ function openMenu(e: MouseEvent, emp: Employee) {
 }
 const menuItems = computed<MenuItem[]>(() => [
   { key: "detail", label: t("instances.detail") },
+  { key: "message", label: t("instances.message") },
   { key: "rename", label: t("instances.rename") },
   { key: "delete", label: t("instances.delete"), danger: true },
 ]);
@@ -49,6 +50,7 @@ function onMenuSelect(key: string) {
   const emp = menu.value?.emp;
   if (!emp) return;
   if (key === "detail") detailTarget.value = emp;
+  else if (key === "message") openMessage(emp);
   else if (key === "rename") openRename(emp);
   else if (key === "delete") deleteTarget.value = emp;
 }
@@ -94,6 +96,29 @@ async function submitRename() {
     renameTarget.value = null;
   } catch (e) {
     errorMsg.value = formatError(e);
+  }
+}
+
+// ── 溝通（訊息 → 員工 Inbox，喚醒）──
+const messageTarget = ref<Employee | null>(null);
+const messageText = ref("");
+const messageBusy = ref(false);
+function openMessage(e: Employee) {
+  messageTarget.value = e;
+  messageText.value = "";
+  errorMsg.value = null;
+}
+async function submitMessage() {
+  if (!messageTarget.value || !messageText.value.trim()) return;
+  messageBusy.value = true;
+  errorMsg.value = null;
+  try {
+    await store.sendMessage(messageTarget.value.id, messageText.value.trim());
+    messageTarget.value = null;
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  } finally {
+    messageBusy.value = false;
   }
 }
 
@@ -278,6 +303,43 @@ async function confirmDelete() {
             @click="submitRename"
           >
             {{ t("common.save") }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 溝通 modal -->
+    <div
+      v-if="messageTarget"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      @click.self="messageTarget = null"
+    >
+      <div class="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <h3 class="mb-1 font-semibold">{{ t("instances.messageTitle") }}</h3>
+        <p class="mb-3 text-xs text-muted-foreground">{{ messageTarget.name }}</p>
+        <textarea
+          v-model="messageText"
+          rows="4"
+          :placeholder="t('instances.messagePh')"
+          class="w-full resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+        />
+        <p v-if="errorMsg" class="mt-2 text-xs text-destructive">{{ errorMsg }}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent"
+            @click="messageTarget = null"
+          >
+            {{ t("common.cancel") }}
+          </button>
+          <button
+            type="button"
+            :disabled="messageBusy || !messageText.trim()"
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            @click="submitMessage"
+          >
+            <Loader2 v-if="messageBusy" :size="13" class="animate-spin" />
+            {{ t("instances.send") }}
           </button>
         </div>
       </div>

@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::agent_state::AppState;
+use crate::agent_state::{AppState, WakeSignal};
 use crate::config::app_config;
 use crate::config::gbrain_config;
 use crate::config::DEFAULT_BRAIN_ID;
@@ -1428,6 +1428,56 @@ pub async fn agent_run_task<R: tauri::Runtime>(
     task.output_artifact_id = Some(result.artifact_id.clone());
     store.put_task(&task)?;
     Ok(result)
+}
+
+// ───────────────── 溝通（Message-driven Trigger，Phase 6c）─────────────────
+
+#[derive(Serialize)]
+pub struct SendMessageResult {
+    pub task_id: String,
+}
+
+/// 溝通：人類的一則訊息 → 目標員工 Inbox 裡一個 `Assigned` Task，並喚醒該員工。
+///
+/// 訊息即 Message-driven Trigger（Handbook Ch.12 §2／Ch.04 Inbox）——其內容成為 Inbox 裡的一個
+/// Task；排程器 `scan_inbox` 會以 [`run_inbox`] 消化（訊息無 commitment 也會被處理）。
+/// 本指令不執行員工、不搶 busy-lock——只投遞工作＋發喚醒信號。
+#[tauri::command]
+pub async fn agent_send_message<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    employee_id: String,
+    text: String,
+    commitment_id: Option<String>,
+) -> Result<SendMessageResult, AppError> {
+    let store = agent_store(&app)?;
+    let emp = store
+        .get_employee(&employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
+    let existing: Vec<String> = store
+        .list_tasks(&emp.workspace_id)?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let task_id = next_id("msg", &existing);
+    store.put_task(&Task {
+        id: task_id.clone(),
+        workspace_id: emp.workspace_id.clone(),
+        owner_employee_id: employee_id.clone(),
+        objective: "Human message".into(),
+        input: text,
+        status: TaskStatus::Assigned,
+        output_artifact_id: None,
+        commitment_id,
+        project_id: None,
+        created_at: now_rfc3339(),
+    })?;
+    // 推喚醒信號（best-effort；即便 channel 滿，下次 30s tick 也會掃到這個 Assigned task）。
+    state.wake(WakeSignal {
+        employee_id,
+        reason: "message".into(),
+    });
+    Ok(SendMessageResult { task_id })
 }
 
 #[cfg(test)]

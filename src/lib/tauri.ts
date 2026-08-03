@@ -466,3 +466,9 @@ export const agentRenameTemplate = (templateId: string, name: string): Promise<v
   invoke<void>("agent_rename_template", { templateId, name });
 export const agentRenameEmployee = (employeeId: string, name: string): Promise<void> =>
   invoke<void>("agent_rename_employee", { employeeId, name });
+export const agentSendMessage = (
+  employeeId: string,
+  text: string,
+  commitmentId: string | null = null,
+): Promise<{ task_id: string }> =>
+  invoke<{ task_id: string }>("agent_send_message", { employeeId, text, commitmentId });

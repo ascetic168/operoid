@@ -11,6 +11,7 @@ import {
   agentDeleteEmployee,
   agentRenameTemplate,
   agentRenameEmployee,
+  agentSendMessage,
   type EmployeeTemplate,
   type Employee,
 } from "@/lib/tauri";
@@ -71,6 +72,11 @@ export const useAgentStore = defineStore("agent", () => {
     await loadEmployees();
   }
 
+  /** 溝通：訊息 → 員工 Inbox（Assigned task）＋喚醒。員工狀態由排程器非同步驅動（即時觀察屬 6d）。 */
+  async function sendMessage(employeeId: string, text: string, commitmentId: string | null = null) {
+    await agentSendMessage(employeeId, text, commitmentId);
+  }
+
   /** 模板 id → 模板（供實體頁顯示來源模板名）。 */
   function templateById(id: string | null): EmployeeTemplate | undefined {
     if (!id) return undefined;
@@ -92,6 +98,7 @@ export const useAgentStore = defineStore("agent", () => {
     deployInstance,
     renameEmployee,
     deleteEmployee,
+    sendMessage,
     templateById,
   };
 });

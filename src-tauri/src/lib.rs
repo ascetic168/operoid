@@ -119,6 +119,7 @@ pub fn run() {
             runtime::agent_run_team,
             runtime::agent_handoff_task,
             runtime::agent_run_task,
+            runtime::agent_send_message,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。
