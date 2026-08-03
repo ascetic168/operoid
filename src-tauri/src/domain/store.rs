@@ -12,7 +12,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::models::{
-    Artifact, Commitment, Employee, EmployeeTemplate, Memory, Project, Task, Workspace,
+    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Memory, Project, Task,
+    TaskStatus, Workspace,
 };
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
@@ -49,6 +50,32 @@ pub trait Store {
 
     fn get_memory(&self, employee_id: &str) -> Result<Option<Memory>>;
     fn put_memory(&self, memory: &Memory) -> Result<()>;
+
+    // ── Phase 6：以 owner／producer 為維度的查詢（排程器與自主循環用）──
+
+    /// 列出**所有** workspace 的員工（排程器啟動掃描用）。
+    fn list_all_employees(&self) -> Result<Vec<Employee>>;
+
+    /// 列出某員工具特定狀態的 tasks（status 存於 data blob，故這裡以 owner 為索引取出後在記憶體過濾）。
+    fn list_tasks_by_owner(
+        &self,
+        owner_employee_id: &str,
+        statuses: &[TaskStatus],
+    ) -> Result<Vec<Task>>;
+
+    /// 列出某員工的「待辦」tasks——Inbox 裡尚未完成者（Created／Assigned／InProgress）。
+    fn list_assigned_tasks_by_owner(&self, owner_employee_id: &str) -> Result<Vec<Task>> {
+        self.list_tasks_by_owner(
+            owner_employee_id,
+            &[TaskStatus::Created, TaskStatus::Assigned, TaskStatus::InProgress],
+        )
+    }
+
+    /// 列出某員工名下 `Active` 的 commitments（承諾驅動喚醒用）。
+    fn list_active_commitments_by_owner(&self, owner_employee_id: &str) -> Result<Vec<Commitment>>;
+
+    /// 列出某員工產出的所有 artifacts（自主循環的進度／評估上下文用）。
+    fn list_artifacts_by_producer(&self, produced_by: &str) -> Result<Vec<Artifact>>;
 }
 
 /// 檔案式 JSON store。所有實體存於 `<base>/domain/{workspaces,employees,
@@ -222,6 +249,44 @@ impl Store for JsonStore {
     fn put_memory(&self, memory: &Memory) -> Result<()> {
         // Memory 以 employee_id 為鍵（每 Employee 一份）。
         upsert_by_id(&self.path("memories.json"), memory, |m| &m.employee_id)
+    }
+
+    // ── Phase 6：owner／producer 維度查詢（JsonStore 全集合讀後 in-memory 過濾）──
+
+    fn list_all_employees(&self) -> Result<Vec<Employee>> {
+        self.read("employees.json")
+    }
+
+    fn list_tasks_by_owner(
+        &self,
+        owner_employee_id: &str,
+        statuses: &[TaskStatus],
+    ) -> Result<Vec<Task>> {
+        Ok(self
+            .read::<Task>("tasks.json")?
+            .into_iter()
+            .filter(|t| {
+                t.owner_employee_id == owner_employee_id && statuses.contains(&t.status)
+            })
+            .collect())
+    }
+
+    fn list_active_commitments_by_owner(&self, owner_employee_id: &str) -> Result<Vec<Commitment>> {
+        Ok(self
+            .read::<Commitment>("commitments.json")?
+            .into_iter()
+            .filter(|c| {
+                c.owner_employee_id == owner_employee_id && c.status == CommitmentStatus::Active
+            })
+            .collect())
+    }
+
+    fn list_artifacts_by_producer(&self, produced_by: &str) -> Result<Vec<Artifact>> {
+        Ok(self
+            .read::<Artifact>("artifacts.json")?
+            .into_iter()
+            .filter(|a| a.produced_by == produced_by)
+            .collect())
     }
 }
 

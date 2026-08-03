@@ -25,6 +25,7 @@ Trigger 從不執行工作。它只發出訊號。
 - **辨識目標** —— 哪個（哪些）Employee 該被喚醒。
 - **承載上下文** —— Employee 用以理解自己為何被喚醒所需的資訊。
 - **通知 Runtime** —— 交班，而非執行。
+- **投遞工作（承載為工作時）** —— 當 Trigger 的承載本身是一則待辦，它在通知 Runtime 的同時，把該承載交付為目標 Employee 的 Inbox 裡的一個 Task。最常見的例子：人類的一則訊息（Message-driven Trigger）成為 Inbox 裡的一個 Task，並喚醒該 Employee。
 
 ---
 

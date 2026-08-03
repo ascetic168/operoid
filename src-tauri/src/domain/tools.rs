@@ -55,3 +55,30 @@ pub trait Tool: Send + Sync {
     fn spec(&self) -> &ToolSpec;
     fn invoke<'a>(&'a self, input: ToolInput, ctx: &'a ToolCtx) -> ToolFuture<'a>;
 }
+
+// ───────────────── Reasoner（推理器，Phase 6b）─────────────────
+
+/// `Reasoner::reason` 的回傳 future（boxed、Send）。
+pub type ReasonerFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Value>> + Send + 'a>>;
+
+/// 推理器（Handbook Ch.13 §4 修訂）：以 Employee 的 Brain 做通用**推理**——規劃下一步、評估完成條件。
+///
+/// 與 [`Tool`]（知識檢索，gbrain think）有別：Reasoner 做推理而非檢索（Principle 1：知識≠工作者），
+/// 回傳**結構化 JSON**（schema 由呼叫端於 prompt 中約定）以利 Runtime 穩健解析。Runtime 只編排循環
+/// 形狀、依 Brain 的判斷決定何時睡眠——內容判斷仍是 Employee 的（Principle 10）。
+pub trait Reasoner: Send + Sync {
+    fn reason<'a>(&'a self, system: &'a str, user: &'a str) -> ReasonerFuture<'a>;
+}
+
+/// 從 LLM 的文字回應中萃取首個 JSON 物件（容許 ```json…``` 包裹與前後散文）。
+pub fn parse_json_value(raw: &str) -> anyhow::Result<Value> {
+    let trimmed = raw.trim();
+    let start = trimmed
+        .find('{')
+        .ok_or_else(|| anyhow::anyhow!("reasoner 回應中找不到 JSON 物件"))?;
+    let end = trimmed
+        .rfind('}')
+        .ok_or_else(|| anyhow::anyhow!("reasoner 回應中找不到 JSON 物件結尾"))?;
+    serde_json::from_str(&trimmed[start..=end])
+        .map_err(|e| anyhow::anyhow!("reasoner JSON 解析失敗：{e}"))
+}

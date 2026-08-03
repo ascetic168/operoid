@@ -16,7 +16,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::models::{
-    Artifact, Commitment, Employee, EmployeeTemplate, Memory, Project, Task, Workspace,
+    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Memory, Project, Task,
+    TaskStatus, Workspace,
 };
 use super::store::Store;
 
@@ -46,19 +47,25 @@ impl SqliteStore {
 
     fn init(conn: &Connection) -> Result<()> {
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS idx_projects_ws ON projects(workspace_id);
-             CREATE TABLE IF NOT EXISTS employees (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS idx_employees_ws ON employees(workspace_id);
-             CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS idx_templates_ws ON templates(workspace_id);
-             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_employee_id TEXT, commitment_id TEXT, data TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id);
-             CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, produced_by TEXT, data TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS idx_artifacts_ws ON artifacts(workspace_id);
-             CREATE TABLE IF NOT EXISTS commitments (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_employee_id TEXT, data TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS idx_commitments_ws ON commitments(workspace_id);
+            "PRAGMA journal_mode=WAL;          \
+             PRAGMA busy_timeout=5000;         \
+             CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, data TEXT NOT NULL); \
+             CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_projects_ws ON projects(workspace_id); \
+             CREATE TABLE IF NOT EXISTS employees (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_employees_ws ON employees(workspace_id); \
+             CREATE TABLE IF NOT EXISTS templates (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_templates_ws ON templates(workspace_id); \
+             CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_employee_id TEXT, commitment_id TEXT, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_tasks_ws ON tasks(workspace_id); \
+             CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_employee_id); \
+             CREATE INDEX IF NOT EXISTS idx_tasks_commitment ON tasks(commitment_id); \
+             CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, produced_by TEXT, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_artifacts_ws ON artifacts(workspace_id); \
+             CREATE INDEX IF NOT EXISTS idx_artifacts_producer ON artifacts(produced_by); \
+             CREATE TABLE IF NOT EXISTS commitments (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_employee_id TEXT, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_commitments_ws ON commitments(workspace_id); \
+             CREATE INDEX IF NOT EXISTS idx_commitments_owner ON commitments(owner_employee_id); \
              CREATE TABLE IF NOT EXISTS memories (employee_id TEXT PRIMARY KEY, data TEXT NOT NULL);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
@@ -341,6 +348,55 @@ impl Store for SqliteStore {
         .map_err(|e| anyhow!("put_memory: {e}"))?;
         Ok(())
     }
+
+    // ── Phase 6：owner／producer 維度查詢（owner 欄已建 index；status 在 data blob，取出後 in-memory 過濾）──
+
+    fn list_all_employees(&self) -> Result<Vec<Employee>> {
+        let conn = self.lock()?;
+        select_all(&conn, "employees", "", params![])
+    }
+
+    fn list_tasks_by_owner(
+        &self,
+        owner_employee_id: &str,
+        statuses: &[TaskStatus],
+    ) -> Result<Vec<Task>> {
+        let conn = self.lock()?;
+        let tasks: Vec<Task> = select_all(
+            &conn,
+            "tasks",
+            "WHERE owner_employee_id = ?1",
+            &[&owner_employee_id],
+        )?;
+        Ok(tasks
+            .into_iter()
+            .filter(|t| statuses.contains(&t.status))
+            .collect())
+    }
+
+    fn list_active_commitments_by_owner(&self, owner_employee_id: &str) -> Result<Vec<Commitment>> {
+        let conn = self.lock()?;
+        let coms: Vec<Commitment> = select_all(
+            &conn,
+            "commitments",
+            "WHERE owner_employee_id = ?1",
+            &[&owner_employee_id],
+        )?;
+        Ok(coms
+            .into_iter()
+            .filter(|c| c.status == CommitmentStatus::Active)
+            .collect())
+    }
+
+    fn list_artifacts_by_producer(&self, produced_by: &str) -> Result<Vec<Artifact>> {
+        let conn = self.lock()?;
+        select_all(
+            &conn,
+            "artifacts",
+            "WHERE produced_by = ?1",
+            &[&produced_by],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -478,5 +534,35 @@ mod tests {
         s.put_workspace(&ws).unwrap(); // 同 id → 取代
         assert_eq!(s.list_workspaces().unwrap().len(), 1);
         assert_eq!(s.get_workspace("ws").unwrap().unwrap().status, WorkspaceStatus::Suspended);
+    }
+
+    /// Phase 6：WAL + busy_timeout 的實證——兩條獨立 connection（兩個 thread）並發寫入，
+    /// 第二者靠 busy_timeout 等待而非 `database is locked`，兩筆都成功落地。
+    #[test]
+    fn wal_concurrent_writers_with_busy_timeout() {
+        let db = test_db();
+        {
+            let s = SqliteStore::open(&db).unwrap();
+            s.put_workspace(&sample_workspace("ws")).unwrap();
+        }
+        let db1 = db.clone();
+        let h1 = std::thread::spawn(move || {
+            let s = SqliteStore::open(&db1).unwrap();
+            s.put_employee(&sample_employee("e1", "ws")).unwrap();
+        });
+        let db2 = db.clone();
+        let h2 = std::thread::spawn(move || {
+            let s = SqliteStore::open(&db2).unwrap();
+            s.put_employee(&sample_employee("e2", "ws")).unwrap();
+        });
+        h1.join().unwrap();
+        h2.join().unwrap();
+
+        let s = SqliteStore::open(&db).unwrap();
+        assert_eq!(s.list_employees("ws").unwrap().len(), 2);
+        std::fs::remove_file(&db).ok();
+        // 清掉 WAL/SHM 副檔（若有）。
+        let _ = std::fs::remove_file(format!("{}-wal", db.to_string_lossy()));
+        let _ = std::fs::remove_file(format!("{}-shm", db.to_string_lossy()));
     }
 }

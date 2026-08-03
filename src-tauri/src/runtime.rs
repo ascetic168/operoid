@@ -6,11 +6,14 @@
 //! Tool 邊界由 [`crate::domain::tools::Tool`] trait 結構保證（只有 `invoke`，見 Principle 5）。
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+use crate::agent_state::AppState;
 use crate::config::app_config;
+use crate::config::gbrain_config;
 use crate::config::DEFAULT_BRAIN_ID;
 use crate::domain::tools::ToolFuture;
 use crate::domain::{
@@ -18,8 +21,9 @@ use crate::domain::{
     CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Memory, Project, ProjectStatus,
     SqliteStore, Store, Task, TaskStatus, Tool, ToolCtx, ToolInput, Workspace, WorkspaceStatus,
 };
-use crate::domain::tools::{ToolOutput, ToolSpec};
+use crate::domain::tools::{parse_json_value, Reasoner, ReasonerFuture, ToolOutput, ToolSpec};
 use crate::i18n::AppError;
+use crate::llm;
 
 // ───────────────── 循環結果 ─────────────────
 
@@ -57,12 +61,7 @@ pub async fn run_cycle(
     store.put_employee(&emp)?;
 
     // 2. Restore Context：還原工作記憶（無則空）。Principle 8——每次重建，不假設駐留。
-    let mut memory = store.get_memory(employee_id)?.unwrap_or(Memory {
-        employee_id: employee_id.to_string(),
-        notes: Vec::new(),
-        last_artifact_id: None,
-        updated_at: now_rfc3339(),
-    });
+    let mut memory = restore_memory(store, employee_id)?;
 
     // 3. Execute：單發——以 query 呼叫 Tool。要不要呼叫屬 Runtime，要想什麼由（Phase 1 暫固定的）query 決定。
     let output = tool
@@ -82,29 +81,16 @@ pub async fn run_cycle(
         .map(|t| t.id)
         .collect();
     let task_id = next_id("task", &existing_task_ids);
-
-    let existing_artifact_ids: Vec<String> = store
-        .list_artifacts(&workspace_id)?
-        .into_iter()
-        .map(|a| a.id)
-        .collect();
-    let artifact_id = id_from_name(&format!("think-{}", query), &existing_artifact_ids);
-    let artifact = Artifact {
-        id: artifact_id.clone(),
-        workspace_id: workspace_id.clone(),
-        title: format!("think: {query}"),
-        artifact_type: "think".into(),
-        content: output.text.clone(),
-        produced_by: employee_id.to_string(),
-        source_task_id: Some(task_id.clone()),
-        source_commitment_id: commitment_id.map(str::to_string),
-        revised_from_id: None,
-        project_id: project_id.map(str::to_string),
-        version: 1,
-        status: ArtifactStatus::Committed,
-        created_at: now_rfc3339(),
-    };
-    store.put_artifact(&artifact)?;
+    let artifact_id = commit_artifact(
+        store,
+        &workspace_id,
+        employee_id,
+        &query,
+        &output.text,
+        Some(&task_id),
+        commitment_id,
+        project_id,
+    )?;
 
     // 本週期的最小工作單位 Task：Created→Completed（產出已提交），連到所屬 commitment。
     let task = Task {
@@ -146,6 +132,415 @@ pub async fn run_cycle(
         artifact_content: output.text,
         tool_meta: output.meta,
     })
+}
+
+// ───────────────── Phase 6 共用 helpers ─────────────────
+
+/// 還原員工工作記憶（無則空）。Principle 8——每次喚醒都重建，不假設駐留。
+fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory> {
+    Ok(store.get_memory(employee_id)?.unwrap_or_else(|| Memory {
+        employee_id: employee_id.to_string(),
+        notes: Vec::new(),
+        last_artifact_id: None,
+        updated_at: now_rfc3339(),
+    }))
+}
+
+/// 把 Tool 輸出固化為 first-class Committed Artifact（完整 provenance），回傳 artifact_id。
+/// 供 `run_cycle`（單發）與 `run_inbox`／`run_autonomous`（持續）共用——commit 是「暫時→真實」的邊界。
+fn commit_artifact(
+    store: &dyn Store,
+    workspace_id: &str,
+    producer: &str,
+    query_for_title: &str,
+    content: &str,
+    source_task_id: Option<&str>,
+    source_commitment_id: Option<&str>,
+    project_id: Option<&str>,
+) -> anyhow::Result<String> {
+    let existing: Vec<String> = store
+        .list_artifacts(workspace_id)?
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    let artifact_id = id_from_name(&format!("think-{}", query_for_title), &existing);
+    let artifact = Artifact {
+        id: artifact_id.clone(),
+        workspace_id: workspace_id.to_string(),
+        title: format!("think: {}", query_for_title),
+        artifact_type: "think".into(),
+        content: content.to_string(),
+        produced_by: producer.to_string(),
+        source_task_id: source_task_id.map(str::to_string),
+        source_commitment_id: source_commitment_id.map(str::to_string),
+        revised_from_id: None,
+        project_id: project_id.map(str::to_string),
+        version: 1,
+        status: ArtifactStatus::Committed,
+        created_at: now_rfc3339(),
+    };
+    store.put_artifact(&artifact)?;
+    Ok(artifact_id)
+}
+
+/// 收件匣驅動喚醒（Phase 6）：員工醒來、依序吃完所有 Inbox（Assigned）tasks、再睡。
+///
+/// 與 `run_cycle` 的差別：不接收外部 query——query 來自員工自己的 inbox task；
+/// 不在每個 task 之間切 Sleeping（整段維持 Working，避免破壞 busy-lock 與監看的真實性）；
+/// 不另建 task——inbox task 本身就是工作單位（標 InProgress→Completed 並連結產出）。
+pub async fn run_inbox(
+    employee_id: &str,
+    tool: &dyn Tool,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+) -> anyhow::Result<()> {
+    // Wake：整段維持 Working。
+    let mut emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| anyhow::anyhow!("employee not found: {employee_id}"))?;
+    let workspace_id = emp.workspace_id.clone();
+    emp.state = EmployeeState::Working;
+    store.put_employee(&emp)?;
+    let mut memory = restore_memory(store, employee_id)?;
+
+    loop {
+        // 取一個 Inbox task（Assigned/Created/InProgress）；無則結束。
+        let Some(mut task) = store
+            .list_assigned_tasks_by_owner(employee_id)?
+            .into_iter()
+            .next()
+        else {
+            break;
+        };
+        // 標 InProgress（讓監看可見「正在做這件」）。
+        task.status = TaskStatus::InProgress;
+        store.put_task(&task)?;
+
+        let output = tool
+            .invoke(
+                ToolInput {
+                    query: task.input.clone(),
+                    anchor: None,
+                },
+                ctx,
+            )
+            .await?;
+        let artifact_id = commit_artifact(
+            store,
+            &workspace_id,
+            employee_id,
+            &task.input,
+            &output.text,
+            Some(&task.id),
+            task.commitment_id.as_deref(),
+            task.project_id.as_deref(),
+        )?;
+        // 原任務完成、連結產出。
+        task.status = TaskStatus::Completed;
+        task.output_artifact_id = Some(artifact_id.clone());
+        store.put_task(&task)?;
+        if let Some(cid) = task.commitment_id.as_deref() {
+            if let Some(mut com) = store.get_commitment(cid)? {
+                com.updated_at = now_rfc3339();
+                store.put_commitment(&com)?;
+            }
+        }
+        memory
+            .notes
+            .push(format!("inbox \"{}\" → artifact {}", task.objective, artifact_id));
+        memory.last_artifact_id = Some(artifact_id);
+    }
+
+    // Sleep：Inbox 吃光才睡。
+    memory.updated_at = now_rfc3339();
+    store.put_memory(&memory)?;
+    emp.state = EmployeeState::Sleeping;
+    store.put_employee(&emp)?;
+    Ok(())
+}
+
+// ───────────────── 承諾驅動自主循環（Phase 6b）─────────────────
+
+/// 自主循環的執行預算——避免一個 commitment 無限燃燒 LLM。
+pub struct CycleBudget {
+    pub max_cycles: u32,
+    pub max_duration: Duration,
+}
+
+impl CycleBudget {
+    /// 一次喚醒 session 的預設預算（10 輪、5 分鐘）。
+    pub fn default_session() -> Self {
+        Self {
+            max_cycles: 10,
+            max_duration: Duration::from_secs(300),
+        }
+    }
+}
+
+/// 一次自主 session 的結果。
+#[derive(Debug, Serialize)]
+pub enum AutonomousOutcome {
+    /// 完成條件已滿足 → commitment `Satisfied`。
+    Satisfied {
+        artifact_ids: Vec<String>,
+        cycles: u32,
+    },
+    /// 卡住——規劃重複／預算用盡。0 產出 → commitment `Suspended`；有產出 → 維持 `Active`（下次喚醒續跑）。
+    Stalled {
+        reason: String,
+        cycles: u32,
+    },
+    /// 硬錯誤（tool／reasoner 例外）→ 員工 `Error`。
+    Errored {
+        detail: String,
+    },
+}
+
+/// notes 環狀緩衝上限（避免無限增長；P8 的「遺忘是錯誤」適用於未提交工作，非無限暫存）。
+const NOTE_CAP: usize = 50;
+
+const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。該行動會被當作知識檢索的查詢。只回 JSON 物件，不附加其他文字。";
+
+const EVAL_SYSTEM: &str = "你是一名完成條件評估者。只根據完成條件與已產出的成果，判斷承諾是否已滿足。只回 JSON 物件，不附加其他文字。";
+
+/// 承諾驅動喚醒（Phase 6b）：員工憑一個 Active commitment 自主運行——每輪先**清一個 Inbox task**
+/// （若有），否則 **Plan→Act→Evaluate**，直到 Satisfied 或卡住。
+///
+/// Runtime 只編排循環形狀與 Tool 副作用；規劃／行動結論／評估判斷皆由 Brain（`reasoner`／`knowledge`）
+/// 做出（Principle 10，Handbook Ch.13 §4 修訂）。員工在整段 session 維持 `Working`，結束才睡。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_autonomous(
+    employee_id: &str,
+    commitment_id: &str,
+    budget: &CycleBudget,
+    knowledge: &dyn Tool,
+    reasoner: &dyn Reasoner,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+) -> anyhow::Result<AutonomousOutcome> {
+    // Wake：整段維持 Working。
+    let mut emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| anyhow::anyhow!("employee not found: {employee_id}"))?;
+    let workspace_id = emp.workspace_id.clone();
+    emp.state = EmployeeState::Working;
+    store.put_employee(&emp)?;
+    let mut memory = restore_memory(store, employee_id)?;
+    let mut commitment = store
+        .get_commitment(commitment_id)?
+        .ok_or_else(|| anyhow::anyhow!("commitment not found: {commitment_id}"))?;
+
+    let deadline = std::time::Instant::now() + budget.max_duration;
+    let mut artifact_ids: Vec<String> = Vec::new();
+    let mut produced_any = false;
+    let mut cycles = 0u32;
+    let mut last_query: Option<String> = None;
+    let outcome: AutonomousOutcome;
+
+    loop {
+        cycles += 1;
+        if cycles > budget.max_cycles {
+            outcome = AutonomousOutcome::Stalled {
+                reason: "達 cycle 上限".into(),
+                cycles: cycles - 1,
+            };
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            outcome = AutonomousOutcome::Stalled {
+                reason: "達時間上限".into(),
+                cycles: cycles - 1,
+            };
+            break;
+        }
+
+        // PLAN：reasoner 決定下一步（或判斷已 done）。近期 notes 提供進度脈絡，避免天真重來。
+        let recent: Vec<String> = memory.notes.iter().rev().take(5).cloned().collect();
+        let plan_user = format!(
+            "承諾：{title}\n完成條件：{cond}\n近期已做：\n{recent}\n\
+             請決定下一個要調查／執行的具體問題（一句）。只回 JSON：\
+             {{\"next_query\": \"...\", \"rationale\": \"...\"}}；若你判斷承諾已完成，回 {{\"done\": true}}。",
+            title = commitment.title,
+            cond = commitment.completion_condition,
+            recent = if recent.is_empty() { "(尚無)".into() } else { recent.join("\n") },
+        );
+        let plan = match reasoner.reason(PLAN_SYSTEM, &plan_user).await {
+            Ok(v) => v,
+            Err(e) => {
+                outcome = AutonomousOutcome::Errored {
+                    detail: format!("plan: {e}"),
+                };
+                break;
+            }
+        };
+        // 規劃器主張已完成 → 進 EVAL 確認（仍由 Brain 判斷，非 Runtime 決定）。
+        if plan.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+            match evaluate_done(reasoner, &commitment, &artifact_ids).await {
+                Ok(true) => {
+                    outcome = AutonomousOutcome::Satisfied {
+                        artifact_ids,
+                        cycles: cycles - 1,
+                    };
+                    break;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    outcome = AutonomousOutcome::Errored {
+                        detail: format!("eval: {e}"),
+                    };
+                    break;
+                }
+            }
+        }
+        let Some(next_query) = plan
+            .get("next_query")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        else {
+            outcome = AutonomousOutcome::Stalled {
+                reason: "規劃器未給出 next_query".into(),
+                cycles: cycles - 1,
+            };
+            break;
+        };
+        // 重複偵測：與上一輪相同 → 視為無進展。
+        if last_query.as_deref() == Some(next_query.as_str()) {
+            outcome = AutonomousOutcome::Stalled {
+                reason: "規劃重複，無進展".into(),
+                cycles: cycles - 1,
+            };
+            break;
+        }
+        last_query = Some(next_query.clone());
+
+        // ACT：知識工具檢索。
+        let output = match knowledge
+            .invoke(
+                ToolInput {
+                    query: next_query.clone(),
+                    anchor: None,
+                },
+                ctx,
+            )
+            .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                outcome = AutonomousOutcome::Errored {
+                    detail: format!("act: {e}"),
+                };
+                break;
+            }
+        };
+        let artifact_id = commit_artifact(
+            store,
+            &workspace_id,
+            employee_id,
+            &next_query,
+            &output.text,
+            None,
+            Some(commitment_id),
+            None,
+        )?;
+        artifact_ids.push(artifact_id.clone());
+        produced_any = true;
+        memory
+            .notes
+            .push(format!("承諾「{}」：查「{}」→ artifact {}", commitment.title, next_query, artifact_id));
+        cap_notes(&mut memory);
+        memory.last_artifact_id = Some(artifact_id);
+        memory.updated_at = now_rfc3339();
+        store.put_memory(&memory)?;
+        commitment.updated_at = now_rfc3339();
+        store.put_commitment(&commitment)?;
+
+        // EVALUATE：reasoner 判斷完成條件。
+        match evaluate_done(reasoner, &commitment, &artifact_ids).await {
+            Ok(true) => {
+                outcome = AutonomousOutcome::Satisfied {
+                    artifact_ids,
+                    cycles: cycles - 1,
+                };
+                break;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                outcome = AutonomousOutcome::Errored {
+                    detail: format!("eval: {e}"),
+                };
+                break;
+            }
+        }
+    }
+
+    // 依結果更新 commitment／員工，然後睡。
+    let errored = matches!(outcome, AutonomousOutcome::Errored { .. });
+    match &outcome {
+        AutonomousOutcome::Satisfied { .. } => {
+            commitment.status = CommitmentStatus::Satisfied;
+            store.put_commitment(&commitment)?;
+        }
+        AutonomousOutcome::Stalled { reason, .. } => {
+            // 0 產出 → Suspended（避免每次喚醒狂跑）；有產出 → 維持 Active（下次喚醒續跑）。
+            if !produced_any {
+                commitment.status = CommitmentStatus::Suspended;
+                memory
+                    .notes
+                    .push(format!("承諾「{}」卡住（{reason}）→ Suspended", commitment.title));
+            } else {
+                memory
+                    .notes
+                    .push(format!("承諾「{}」本輪未完成但已有進展，下次喚醒再續", commitment.title));
+            }
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            store.put_commitment(&commitment)?;
+        }
+        AutonomousOutcome::Errored { detail } => {
+            memory
+                .notes
+                .push(format!("承諾「{}」錯誤：{detail}", commitment.title));
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+        }
+    }
+    emp.state = if errored {
+        EmployeeState::Error
+    } else {
+        EmployeeState::Sleeping
+    };
+    store.put_employee(&emp)?;
+    Ok(outcome)
+}
+
+/// 諮詢 Brain 判斷 completion_condition 是否已滿足（Handbook Ch.13 §4 修訂：完成評估＝生命週期控制）。
+async fn evaluate_done(
+    reasoner: &dyn Reasoner,
+    commitment: &Commitment,
+    artifact_ids: &[String],
+) -> anyhow::Result<bool> {
+    let eval_user = format!(
+        "完成條件：{cond}\n本次產出的 artifacts：{arts}\n\
+         判斷完成條件是否已滿足。只回 JSON：{{\"done\": true 或 false, \"rationale\": \"...\"}}。",
+        cond = commitment.completion_condition,
+        arts = if artifact_ids.is_empty() {
+            "(尚無)".into()
+        } else {
+            artifact_ids.iter().take(8).cloned().collect::<Vec<_>>().join(", ")
+        },
+    );
+    let v = reasoner.reason(EVAL_SYSTEM, &eval_user).await?;
+    Ok(v.get("done").and_then(|x| x.as_bool()).unwrap_or(false))
+}
+
+/// notes 環狀緩衝：保留最後 NOTE_CAP 則。
+fn cap_notes(memory: &mut Memory) {
+    if memory.notes.len() > NOTE_CAP {
+        let drain = memory.notes.len() - NOTE_CAP;
+        memory.notes.drain(..drain);
+    }
 }
 
 // ───────────────── 第一個 Tool：gbrain think ─────────────────
@@ -436,17 +831,106 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
 /// 預設 workspace id（GUI 用）。
 const AGENT_WS: &str = "ws-default";
 
-/// 共用：Agent-OS flag 檢查 ＋ 開 `emploid.db`。
-fn agent_store<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<SqliteStore, AppError> {
+/// Agent-OS DB 路徑：**Local AppData**（避免 Roaming 被 OneDrive／網域同步導致 WAL 損壞——
+/// WAL 的 `-wal`／`-shm` 必須是共置本地檔案）。首次啟動若舊位置（Roaming app_data_dir）有
+/// `emploid.db`，一次性遷移複製過來。
+pub(crate) fn agent_db_path<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<std::path::PathBuf, AppError> {
+    let local_dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::create_dir_all(&local_dir);
+    let new_path = local_dir.join("emploid.db");
+    if !new_path.exists() {
+        // 一次性遷移：舊 Roaming 位置有 DB → 複製到 Local。
+        if let Ok(old_dir) = app.path().app_data_dir() {
+            let old_path = old_dir.join("emploid.db");
+            if old_path.exists() {
+                let _ = std::fs::copy(&old_path, &new_path);
+            }
+        }
+    }
+    Ok(new_path)
+}
+
+/// 共用：Agent-OS flag 檢查 ＋ 開 `emploid.db`（Local AppData）。
+pub(crate) fn agent_store<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<SqliteStore, AppError> {
     let cfg = app_config::load(app)?;
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    Ok(SqliteStore::open(data_dir.join("emploid.db"))?)
+    Ok(SqliteStore::open(agent_db_path(app)?)?)
+}
+
+/// 為某員工解析其腦並建構（GbrainThinkTool, ToolCtx）。`agent_run` 與排程器共用。
+pub(crate) fn build_tool_ctx(
+    cfg: &app_config::AppConfig,
+    store: &SqliteStore,
+    employee_id: &str,
+) -> Result<(GbrainThinkTool, ToolCtx), AppError> {
+    let emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    let entry = crate::brains::brain_entry(cfg, &emp.brain.brain_id)?;
+    Ok((
+        GbrainThinkTool::new(),
+        ToolCtx {
+            gbrain_exe: cfg.gbrain_exe_path.clone(),
+            gbrain_home: entry.env_home().map(|s| s.to_string()),
+        },
+    ))
+}
+
+// ───────────────── Reasoner（推理器，Phase 6b）─────────────────
+
+/// 以 LLM（Employee Brain 的推理層）實作的 [`Reasoner`]：包 [`llm::complete`]，回結構化 JSON。
+/// 與 [`GbrainThinkTool`]（知識檢索）成對——推理 vs 檢索（Principle 1：知識≠工作者）。
+pub struct LlmReasoner {
+    endpoint: gbrain_config::LlmEndpoint,
+    cfg: app_config::AppConfig,
+}
+
+impl LlmReasoner {
+    pub fn new(endpoint: gbrain_config::LlmEndpoint, cfg: app_config::AppConfig) -> Self {
+        Self { endpoint, cfg }
+    }
+}
+
+impl Reasoner for LlmReasoner {
+    fn reason<'a>(&'a self, system: &'a str, user: &'a str) -> ReasonerFuture<'a> {
+        Box::pin(async move {
+            let raw = llm::complete(&self.endpoint, &self.cfg, system, user).await?;
+            parse_json_value(&raw)
+        })
+    }
+}
+
+/// 為某員工解析其腦的 LLM endpoint，建構 [`LlmReasoner`]（與 [`build_tool_ctx`] 用同一個腦）。
+/// 缺 API key（且非 ollama）→ `llm.noApiKey`。
+pub(crate) fn build_reasoner(
+    cfg: &app_config::AppConfig,
+    store: &SqliteStore,
+    employee_id: &str,
+) -> Result<LlmReasoner, AppError> {
+    let emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    let entry = crate::brains::brain_entry(cfg, &emp.brain.brain_id)?;
+    let loaded = gbrain_config::load_for(entry.env_home())?;
+    let endpoint = gbrain_config::resolve_endpoint(&loaded.config)?;
+    if !endpoint.has_api_key && endpoint.provider != "ollama" {
+        return Err(AppError::new("llm.noApiKey")
+            .p("provider", &endpoint.provider)
+            .p(
+                "envKey",
+                gbrain_config::env_key(&endpoint.provider).unwrap_or("?"),
+            ));
+    }
+    Ok(LlmReasoner::new(endpoint, cfg.clone()))
 }
 
 #[derive(Serialize)]
@@ -553,6 +1037,7 @@ pub async fn agent_rename_employee<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn agent_run<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
     employee_id: String,
     query: String,
     anchor: Option<String>,
@@ -563,22 +1048,13 @@ pub async fn agent_run<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    // busy-lock：同一員工被排程器／其他指令佔用中則拒絕，防競態。
+    let _guard = state
+        .try_acquire(&employee_id)
+        .ok_or_else(|| AppError::new("agent_os.employeeBusy").p("id", &employee_id))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
-    let emp = store
-        .get_employee(&employee_id)?
-        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
-    let entry = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)?;
-    let ctx = ToolCtx {
-        gbrain_exe: cfg.gbrain_exe_path.clone(),
-        gbrain_home: entry.env_home().map(|s| s.to_string()),
-    };
-
-    let tool = GbrainThinkTool::new();
+    let (tool, ctx) = build_tool_ctx(&cfg, &store, &employee_id)?;
     let result = run_cycle(
         &employee_id,
         query,
@@ -920,31 +1396,22 @@ pub async fn agent_handoff_task<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn agent_run_task<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
     task_id: String,
 ) -> Result<CycleResult, AppError> {
     let cfg = app_config::load(&app)?;
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
     let mut task = store
         .get_task(&task_id)?
         .ok_or_else(|| AppError::new("agent_os.taskNotFound").p("id", &task_id))?;
-    let emp = store
-        .get_employee(&task.owner_employee_id)?
-        .ok_or_else(|| {
-            AppError::new("agent_os.employeeNotFound").p("id", &task.owner_employee_id)
-        })?;
-    let entry = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)?;
-    let ctx = ToolCtx {
-        gbrain_exe: cfg.gbrain_exe_path.clone(),
-        gbrain_home: entry.env_home().map(|s| s.to_string()),
-    };
-    let tool = GbrainThinkTool::new();
+    // busy-lock：以 task owner 為準。
+    let _guard = state
+        .try_acquire(&task.owner_employee_id)
+        .ok_or_else(|| AppError::new("agent_os.employeeBusy").p("id", &task.owner_employee_id))?;
+    let (tool, ctx) = build_tool_ctx(&cfg, &store, &task.owner_employee_id)?;
     let result = run_cycle(
         &task.owner_employee_id,
         task.input.clone(),
@@ -1037,6 +1504,33 @@ mod tests {
         }
     }
 
+    /// 推理器 stub：依序回傳預錄 JSON 字串（耗盡則回 `{"done": true}`）。測 run_autonomous 用。
+    struct StubReasoner {
+        responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+    }
+    impl StubReasoner {
+        fn new(responses: Vec<&str>) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(
+                    responses.into_iter().map(str::to_string).collect(),
+                ),
+            }
+        }
+    }
+    impl Reasoner for StubReasoner {
+        fn reason<'a>(&'a self, _system: &'a str, _user: &'a str) -> ReasonerFuture<'a> {
+            let resp = {
+                let mut g = self.responses.lock().unwrap();
+                g.pop_front().unwrap_or_else(|| "{\"done\": true}".into())
+            };
+            Box::pin(async move {
+                let v: serde_json::Value =
+                    serde_json::from_str(&resp).unwrap_or_else(|_| serde_json::json!({"done": true}));
+                Ok(v)
+            })
+        }
+    }
+
     fn test_dir() -> PathBuf {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -1122,6 +1616,146 @@ mod tests {
         assert_eq!(mem.notes.len(), 1);
         assert_eq!(mem.last_artifact_id.as_deref(), Some(res.artifact_id.as_str()));
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn run_inbox_drains_assigned_tasks() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        // 放兩個 Assigned task 進員工的 Inbox（不同 input）。
+        for (i, input) in ["第一件", "第二件"].iter().enumerate() {
+            store
+                .put_task(&Task {
+                    id: format!("t{i}"),
+                    workspace_id: "ws".into(),
+                    owner_employee_id: emp_id.clone(),
+                    objective: input.to_string(),
+                    input: input.to_string(),
+                    status: TaskStatus::Assigned,
+                    output_artifact_id: None,
+                    commitment_id: None,
+                    project_id: None,
+                    created_at: "t".into(),
+                })
+                .unwrap();
+        }
+        let tool = StubTool::new("答案");
+        run_inbox(&emp_id, &tool, &ctx(), &store).await.unwrap();
+
+        // 兩件都被處理（Tool 兩次）、標 Completed、各連一個 Committed artifact。
+        assert_eq!(tool.call_count(), 2);
+        let tasks = store.list_tasks("ws").unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().all(|t| t.status == TaskStatus::Completed));
+        assert_eq!(store.list_artifacts("ws").unwrap().len(), 2);
+
+        // 員工 Sleeping、memory 累積兩筆。
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping);
+        assert_eq!(store.get_memory(&emp_id).unwrap().unwrap().notes.len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn run_inbox_empty_inbox_just_sleeps() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        let tool = StubTool::new("x");
+        run_inbox(&emp_id, &tool, &ctx(), &store).await.unwrap();
+        // 無待辦 → 不執行 Tool、不產 artifact，直接睡。
+        assert_eq!(tool.call_count(), 0);
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping);
+        assert!(store.list_artifacts("ws").unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 承諾驅動：規劃→行動→評估（done）→ commitment Satisfied、產 artifact、員工睡回。
+    #[tokio::test]
+    async fn run_autonomous_satisfies_commitment() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查答案".into(),
+                completion_condition: "找到答案".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        let knowledge = StubTool::new("答案是 42");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"next_query": "答案是什麼？", "rationale": "先查"}"#,
+            r#"{"done": true, "rationale": "已找到"}"#,
+        ]);
+        let budget = CycleBudget {
+            max_cycles: 5,
+            max_duration: Duration::from_secs(10),
+        };
+        let outcome = run_autonomous(&emp_id, "c1", &budget, &knowledge, &reasoner, &ctx(), &store)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, AutonomousOutcome::Satisfied { .. }));
+        assert_eq!(
+            store.get_commitment("c1").unwrap().unwrap().status,
+            CommitmentStatus::Satisfied
+        );
+        assert_eq!(store.list_artifacts("ws").unwrap().len(), 1);
+        assert_eq!(
+            store.get_employee(&emp_id).unwrap().unwrap().state,
+            EmployeeState::Sleeping
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 卡住且 0 產出（規劃器不給 next_query）→ Stalled、commitment Suspended（避免下次狂跑）。
+    #[tokio::test]
+    async fn run_autonomous_suspends_on_zero_progress() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c-stuck".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "不可能的任務".into(),
+                completion_condition: "做不到".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        let knowledge = StubTool::new("(不該被呼叫)");
+        // 規劃器回的 JSON 沒有 next_query 也沒有 done → Stalled「未給出 next_query」。
+        let reasoner = StubReasoner::new(vec![r#"{"rationale": "我不知道下一步"}"#]);
+        let budget = CycleBudget {
+            max_cycles: 5,
+            max_duration: Duration::from_secs(10),
+        };
+        let outcome =
+            run_autonomous(&emp_id, "c-stuck", &budget, &knowledge, &reasoner, &ctx(), &store)
+                .await
+                .unwrap();
+        assert!(matches!(outcome, AutonomousOutcome::Stalled { .. }));
+        assert_eq!(knowledge.call_count(), 0); // 未行動
+        assert_eq!(
+            store.get_commitment("c-stuck").unwrap().unwrap().status,
+            CommitmentStatus::Suspended
+        );
+        assert!(store.list_artifacts("ws").unwrap().is_empty());
+        assert_eq!(
+            store.get_employee(&emp_id).unwrap().unwrap().state,
+            EmployeeState::Sleeping
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1249,6 +1883,101 @@ mod tests {
             .unwrap_or(0);
         assert!(graph > 0, "Graph 應 > 0（實際 {graph}）；可能 think 掉到 opus 或未連邊");
         assert!(!res.artifact_content.trim().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Phase 6 真實驗證：員工帶著 Assigned inbox task → `run_inbox` 喚醒並以真實 gbrain think
+    /// 處理、產 artifact、標 task Completed、睡回（等同排程器啟動掃描喚醒，但免開 app／排程器）。
+    /// 跑法：`cargo test --manifest-path src-tauri/Cargo.toml runtime::tests::real_inbox_wake -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_inbox_wake() {
+        let cfg_path = dirs::config_dir()
+            .expect("no config dir")
+            .join("com.emploid.studio")
+            .join("app-settings.json");
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&cfg_path).expect("read app-settings.json"),
+        )
+        .expect("parse app-settings.json");
+        let app_cfg = raw.get("app_config").expect("app_config");
+        let exe = app_cfg
+            .get("gbrain_exe_path")
+            .and_then(|v| v.as_str())
+            .expect("gbrain_exe_path")
+            .to_string();
+        let active = app_cfg
+            .get("active_brain_id")
+            .and_then(|v| v.as_str())
+            .expect("active_brain_id")
+            .to_string();
+        let home = app_cfg
+            .get("brains")
+            .and_then(|v| v.as_array())
+            .expect("brains")
+            .iter()
+            .find(|b| b.get("id").and_then(|v| v.as_str()) == Some(active.as_str()))
+            .and_then(|b| b.get("gbrain_home"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string); // None = 預設腦
+
+        let dir = test_dir();
+        let store = SqliteStore::open(dir.join("test.db")).unwrap();
+        store
+            .put_workspace(&Workspace {
+                id: "ws".into(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        let emp_id = "emp".to_string();
+        store
+            .put_employee(&Employee {
+                id: emp_id.clone(),
+                workspace_id: "ws".into(),
+                name: "E".into(),
+                brain: BrainRef { brain_id: active },
+                role: None,
+                template_id: None,
+                state: EmployeeState::Sleeping,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        // 一個 Assigned inbox task（訊息或交接投遞）。
+        store
+            .put_task(&Task {
+                id: "t-inbox".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "查會議".into(),
+                input: "晶瀚半導體開過幾場會議？".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+
+        let tool = GbrainThinkTool::new();
+        let ctx = ToolCtx {
+            gbrain_exe: exe,
+            gbrain_home: home,
+        };
+        run_inbox(&emp_id, &tool, &ctx, &store)
+            .await
+            .expect("run_inbox");
+
+        // task → Completed 連 artifact；員工睡回。
+        let task = store.get_task("t-inbox").unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+        let artifact_id = task.output_artifact_id.clone().expect("output artifact");
+        let art = store.get_artifact(&artifact_id).unwrap().unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping);
+        println!("== inbox artifact ==\n{}", art.content);
         std::fs::remove_dir_all(&dir).ok();
     }
 

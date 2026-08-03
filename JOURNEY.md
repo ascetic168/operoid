@@ -175,6 +175,39 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
   - [x] 一個 Project 由一隊 Employee 並行＋循序完成。（`team_runs_concurrently`：3 員工併發、產共享 project artifact；`handoff_task_between_employees`：A→B 任務交接＋B 接手；`concurrent_cycles_overlap_in_time`：**併發實證**——3×800ms 併發 ≈1.1s（非 2.4s）；`real_team_concurrent`：兩員工在 demo 腦上併發 think、皆 Graph>0。）
 - **狀態：✅ 完成（2026-07-31）。** 落點：`Project` 實體＋`Artifact`/`Task`＋`project_id`；`agent_create_project`／`agent_run_team`（**併發** `futures::join_all`，各員工腦各自解析、gbrain 子行程真並行）／`agent_handoff_task`／`agent_run_task`。87 tests 全綠、`cargo build` 0 warning。**併發模型**：同 process 內併發 tokio task（Option A；OS-process／分散式為 Horizon）。
 
+## Phase 6 — 員工生命週期（Trigger 驅動的自主運行）
+
+> v1（Phase 0–5）完成了**資料模型＋單發人工循環**，但員工「不會自己跑」。Phase 6 兌現 Handbook
+> 里程碑 1 的**完整循環**（因 Trigger 喚醒→還原→**讀 Inbox**→調用 Tool→提交 Artifact→睡眠）與 Runtime
+> 排程器——把員工從「CRUD 列」變成「會醒來、持續工作到完成才睡」的工作者。**紅線**：Trigger 驅動
+> 非常駐（守原則 7／8）。範圍決策：**承諾驅動（完整願景）**。計畫見 `.claude/plans/soft-tickling-swan.md`。
+
+### 6a — Runtime 地基（排程器 + busy-lock + 收件匣喚醒）
+
+- **目標**：帶 Assigned task 的 Sleeping 員工，啟動時／收到喚醒信號時自己醒來處理、做完睡回；與前端 `agent_run` 競態安全。
+- **退出條件：**
+  - [x] Sleeping＋待辦 task → 自動喚醒處理完睡回（`run_inbox_drains_assigned_tasks`、`real_inbox_wake` ignored）。
+  - [x] 同一員工被排程器與指令並發 → busy-lock 擋下（`try_acquire_serializes_same_employee`）。
+  - [x] WAL 多連線並發寫入不鎖死（`wal_concurrent_writers_with_busy_timeout`）。`cargo test` 91 全綠、6 ignored。
+- **狀態：✅ 完成（2026-08-03）。** 落點：Store 加 5 個 list-by-owner 方法＋WAL/index；`agent_state.rs`（AppState/busy-lock/WakeSignal）；`scheduler.rs`（常駐排程器：mpsc＋30s tick＋啟動掃描）；`runtime.rs` 抽 `restore_memory`／`commit_artifact` 共用 helper＋新增 `run_inbox`／`build_tool_ctx`／`agent_db_path`；DB 搬 Local AppData（避 OneDrive／網域同步毀 WAL）＋一次性遷移；`agent_run`／`agent_run_task` 接 busy-lock。
+
+### 6b — ReasoningTool + 承諾驅動（agent loop）
+
+- **目標**：員工憑一個 Active commitment 自主運行（規劃→行動→評估→直到 Satisfied 或卡住 Suspended）。
+- **退出條件：**
+  - [x] Handbook 先改後碼：Ch.13 §4 加「自主執行與完成評估（修訂）」、Ch.12 §2 加「投遞工作」、Ch.04 Inbox 補訊息投遞（**中英六檔鏡像**）。
+  - [x] `Reasoner` trait＋`LlmReasoner`（包既有 `llm::complete`，結構化 JSON）＋`build_reasoner`（解析腦的 endpoint，缺 key → `llm.noApiKey`）。
+  - [x] `run_autonomous`：plan→act→evaluate 循環；`done`→`Satisfied`；0 產出卡住→`Suspended`；硬錯→`Error`。`completion_condition` 終於被評估。
+  - [x] 排程器：啟動一次承諾掃描（不在每次 tick 重跑，免燒 LLM）＋每次 tick／信號的 Inbox 掃描。`cargo test` 93 全綠。
+- **狀態：✅ 完成（2026-08-03）。** 落點：Handbook 六檔；`domain/tools.rs` 加 `Reasoner`／`parse_json_value`；`runtime.rs` 加 `LlmReasoner`／`build_reasoner`／`run_autonomous`／`CycleBudget`／`AutonomousOutcome`；`scheduler.rs` 拆 `scan_inbox`（tick）／`scan_commitments`（啟動）。**v1 簡化**：未新增 Memory/Commitment 欄位（用既有 `Suspended` 狀態＋`memory.notes` 進度脈絡）；承諾僅啟動喚醒（每次 tick 重跑列為未來，搭配 backpressure）。
+- **待補**：真實 gbrain+llm 的 `run_autonomous` ignored 測試（手動驗證）。
+
+### 6c — 溝通（Message-driven Trigger）；6d — 監看 + 生命週期事件
+
+（見計畫檔；UI 子階段。）
+
+---
+
 ## Horizon — v1 之後
 
 Skill learning、cloning/parallelism、marketplace、federation、distributed runtime、人機團隊——詳見 `handbook/20-Roadmap.md §7`。現階段**不展開**；重點是：這些都不需要新核心概念，是對既有概念的延伸。這正是好架構的檢驗。
@@ -252,7 +285,9 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-07-30 | **Phase 4 ✅** | Template 與 Instance（Milestone 4）。加 `EmployeeTemplate` 實體（name/brain/role 可重用定義）＋`Employee.template_id` 溯源；Store template collection（JsonStore＋SqliteStore）；`agent_create_template`／`agent_deploy_instance`（`deploy_instance` helper 抄 brain/role、各自獨立）。`template_deploys_independent_instances`：一 template 部署 3 Instance、共享 brain/role、各自獨立。84 tests 全綠、`cargo build` 0 warning。 | Phase 5 | D3（延後） |
 | 2026-07-31 | **Phase 5 ✅ — v1 抵達** | 協作（Milestone 5，最終）。`Project` 實體＋`Artifact`/`Task`＋`project_id`；`agent_create_project`／`agent_run_team`（**併發** `futures::join_all`）／`agent_handoff_task`／`agent_run_task`。併發模型＝同 process 內併發 tokio task（Option A）。測試：team_runs_concurrently、handoff_task、**concurrent_cycles_overlap_in_time**（併發實證 3×800ms≈1.1s）、real_team_concurrent（兩員工 demo 腦）。87 tests 全綠、0 warning。 | **Handbook 五里程碑盡數達成**；後續為 Horizon | D3（延後） |
 | 2026-08-01 | **D3 GUI 首版** ✅ | Agent-OS 首份可見 UI（D3 實作）。後端補能：`Store` 加 delete_template/delete_employee；新指令 ensure_workspace／list_templates／list_employees／delete_*／rename_*。前端：`tauri.ts` agent_* wrappers＋`AppConfig.agent_os_enabled`；`stores/agent.ts`；`components/ContextMenu.vue`（右鍵選單）；`EmployeeTemplateView`（master/detail＋腦 picker＋CRUD）、`EmployeeInstanceView`（**視窗風格卡片網格＋右鍵管理＋部署**）。側欄加「員工模板／員工實體」；**啟動預設頁改為員工實體**；ConfigView 加 Agent-OS 開關；i18n 三語。`cargo test` 87 全綠、`npm run build`（vue-tsc＋vite）0 error。 | 視覺驗證（npm run tauri dev）＋ Horizon | — |
+| 2026-08-03 | **Phase 6a ✅** | Runtime 地基——員工生命週期首部曲。`domain/store.rs`＋`sqlite_store.rs` 加 5 個 list-by-owner 方法＋WAL/busy_timeout＋新 index；新模組 `agent_state.rs`（AppState／每員工 busy-lock RAII guard／WakeSignal mpsc）、`scheduler.rs`（常駐排程器：`async_runtime::spawn`＋select! 於 mpsc 喚醒與 30s tick＋啟動掃描，只喚醒 Sleeping＋有待辦 task 者）；`runtime.rs` 抽 `restore_memory`／`commit_artifact` 共用 helper、新增 `run_inbox`（收件匣驅動喚醒）、`build_tool_ctx`、`agent_db_path`（**DB 搬 Local AppData** 避 OneDrive 毀 WAL＋一次性遷移）；`agent_run`／`agent_run_task` 接 busy-lock。`cargo test` **91 全綠**（新增 inbox-drain／empty-inbox／WAL 並發／busy-lock 序列化）、6 ignored（含新 `real_inbox_wake`）。 | 6b（ReasoningTool＋承諾驅動，含 Handbook P10／訊息-Inbox） | 預存 `csv_people.rs` 一條 unused-assignment 警告（非本 Phase 引入） |
+| 2026-08-03 | **Phase 6b ✅** | 承諾驅動——員工憑 Active commitment 自主運行。**先手冊後碼**：Handbook Ch.13 §4 加「自主執行與完成評估（修訂）」（Runtime 可主理多步推理循環＋諮詢 Brain 評估完成，因「何時睡」屬生命週期）、Ch.12 §2 加「投遞工作」、Ch.04 Inbox 補訊息投遞——**中英六檔鏡像**。`domain/tools.rs` 加 `Reasoner` trait＋`parse_json_value`；`runtime.rs` 加 `LlmReasoner`（包既有 `llm::complete`，結構化 JSON）、`build_reasoner`（缺 API key → `llm.noApiKey`）、`run_autonomous`（plan→act→evaluate；done→`Satisfied`、0 產出卡住→`Suspended`、硬錯→`Error`；`CycleBudget` 限流）、`AutonomousOutcome`；`scheduler.rs` 拆 `scan_inbox`（tick）／`scan_commitments`（**啟動一次**，免每次 tick 燒 LLM）。`cargo test` **93 全綠**（新增 satisfies／suspends-on-no-progress）。 | 6c 溝通（Message-driven Trigger＋前端，讓 6a/6b 在 UI 可見） | 承諾僅啟動喚醒（每次 tick 重跑列未來）；真實 gbrain+llm 的 `run_autonomous` ignored 測試待補 |
 
-**目前所在：** 🎉 **Phase 5 完成——Handbook 五個里程碑（Phase 0–5）全部達成，v1 抵達。** 從「GBrain 知識圖譜 GUI」到「AI Agent OS（Employee／Runtime／Tool／Artifact／Commitment／Template／Project／併發團隊）」的核心架構已立。後續為 Horizon（skill learning、cloning、marketplace、federation、distributed runtime、人機團隊）——這些都是既有概念的延伸，不需新核心概念。
+**目前所在：** 🚧 **Phase 6（員工生命週期）——6a 地基＋6b 承諾驅動完成。** 後端生命週期引擎已立：排程器依 Trigger 喚醒（收件匣每次 tick、承諾啟動一次），`run_inbox` 吃待辦、`run_autonomous` 憑 commitment 規劃→行動→評估到完成／卡住才睡（守原則 7／10；Handbook P10 已修訂）。剩下 **6c 溝通**（Message-driven Trigger＋前端，讓引擎在 UI 可見）與 **6d 監看**（事件＋觀察面板）——皆為前端子階段。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。

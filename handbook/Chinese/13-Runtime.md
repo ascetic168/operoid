@@ -55,6 +55,8 @@ Runtime **不**擁有：
 
 這是系統中最重要的邊界。Runtime 一旦開始影響 Employee *該想什麼*，兩件事會同時崩壞：Runtime 變得無法測試，而 Employee 變得無法問責。
 
+**自主執行與完成評估（修訂）。** 為了讓一個 Employee 能向著一個 Commitment 持續工作、直到完成，Runtime 可以主理一個多步的**推理循環**（例如：規劃下一步 → 行動 → 評估進度），並在判斷一個 Commitment 的完成條件是否滿足時**諮詢** Employee 的 Brain——因為「工作是否該結束、Employee 是否該進入睡眠」屬於生命週期控制，是 Runtime 的職責。但那條邊界不變：每一次規劃的內容、每一次行動的結論、每一次評估的判斷，**皆由 Employee 的 Brain 做出**；Runtime 只編排循環的形狀、執行 Tool 呼叫的副作用，並依 Brain 的判斷決定何時睡眠。Runtime 絕不為 Employee 預先決定該得出什麼結論。
+
 ---
 
 ## 5. 生命週期 —— 執行循環

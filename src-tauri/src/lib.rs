@@ -3,6 +3,7 @@
 //! Domain modules: config (Phase 1), converters (Phase 2), gbrain_cli (Phase 3),
 //! llm + factories (Phase 4).
 
+mod agent_state;
 mod brains;
 mod classifier;
 mod claude_code;
@@ -17,6 +18,7 @@ mod note_server;
 mod note_view;
 mod prereq;
 mod runtime;
+mod scheduler;
 
 use serde::Serialize;
 use tauri::Manager;
@@ -127,6 +129,8 @@ pub fn run() {
             // 渲染為按需（僅瀏覽器請求時），不寫磁碟檔案。
             let port = note_server::start(app.handle().clone());
             app.manage(note_server::NoteServer { port });
+            // Phase 6：啟動 Runtime 排程器（常駐 task，依 Trigger 喚醒員工）。
+            scheduler::start(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())

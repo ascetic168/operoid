@@ -65,7 +65,7 @@ Employee
 
 **6. State（狀態）** —— Employee 此刻的執行狀態：Idle（待命）、Working（執行中）、Waiting（等待中）、Sleeping（睡眠）、Paused（暫停）或 Error（錯誤）。
 
-**7. Inbox（收件匣）** —— Employee 的工作佇列。每次 Employee 被喚醒，就處理它的 Inbox。這是所有進入工作的前門。
+**7. Inbox（收件匣）** —— Employee 的工作佇列。每次 Employee 被喚醒，就處理它的 Inbox。這是所有進入工作的前門。工作經由 Trigger 投遞——例如人類的一則訊息（Message-driven Trigger）會成為 Inbox 裡的一個 Task，並喚醒該 Employee。
 
 **8. Commitments（長期職責）** —— Employee 的長期責任：追蹤這張訂單到交貨、監控這件客訴、讓這次稽核隨時備妥。Commitment 可能持續數週甚至數月，並產生許多 Task。
 

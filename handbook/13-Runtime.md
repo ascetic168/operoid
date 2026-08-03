@@ -55,6 +55,8 @@ The Runtime does **not** own:
 
 This is the most important boundary in the system. The instant the Runtime begins influencing *what* an Employee should think, two things break at once: the Runtime becomes untestable, and the Employee becomes unaccountable.
 
+**Autonomous execution and completion assessment (amendment).** To let an Employee work toward a Commitment until it is done, the Runtime may host a multi-step **reasoning loop** (for example: plan the next step → act → assess progress), and may *consult* the Employee's Brain to judge whether a Commitment's completion condition is satisfied — because "whether the work is over and the Employee should sleep" is lifecycle control, which is the Runtime's job. But the boundary holds: the content of every plan, the conclusion of every action, and the verdict of every assessment **are all produced by the Employee's Brain**; the Runtime only shapes the loop, performs the side effects of Tool calls, and decides when to sleep based on the Brain's verdict. The Runtime never predetermines what an Employee should conclude.
+
 ---
 
 ## 5. Lifecycle — The Execution Cycle

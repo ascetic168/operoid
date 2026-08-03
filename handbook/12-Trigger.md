@@ -25,6 +25,7 @@ A Trigger is accountable for:
 - **Identifying the target** — which Employee (or Employees) should wake.
 - **Carrying context** — the information the Employee needs to understand why it was woken.
 - **Signaling the Runtime** — handing off, not executing.
+- **Delivering work (when the payload is work)** — when a Trigger's payload is itself a to-do, it delivers that payload as a Task in the target Employee's Inbox at the same time it signals the Runtime. The common case: a human message (a Message-driven Trigger) becomes a Task in the Inbox and wakes the Employee.
 
 ---
 
