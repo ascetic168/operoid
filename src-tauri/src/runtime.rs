@@ -18,8 +18,9 @@ use crate::config::DEFAULT_BRAIN_ID;
 use crate::domain::tools::ToolFuture;
 use crate::domain::{
     id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, BrainRef, Commitment,
-    CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Memory, Project, ProjectStatus,
-    SqliteStore, Store, Task, TaskStatus, Tool, ToolCtx, ToolInput, Workspace, WorkspaceStatus,
+    CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Event, Memory, Project,
+    ProjectStatus, SqliteStore, Store, Task, TaskStatus, Tool, ToolCtx, ToolInput, Workspace,
+    WorkspaceStatus,
 };
 use crate::domain::tools::{parse_json_value, Reasoner, ReasonerFuture, ToolOutput, ToolSpec};
 use crate::i18n::AppError;
@@ -146,6 +147,32 @@ fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory
     }))
 }
 
+/// 記錄一則生命週期 Event（Handbook Ch.14，Phase 6d 輕量）。best-effort：記錄失敗不中斷循環。
+fn record_event(
+    store: &dyn Store,
+    workspace_id: &str,
+    employee_id: &str,
+    kind: &str,
+    detail: impl Into<String>,
+) {
+    let detail = detail.into();
+    let existing: Vec<String> = store
+        .list_events_by_employee(employee_id, 1000)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    let id = next_id(&format!("evt-{kind}"), &existing);
+    let _ = store.put_event(&Event {
+        id,
+        workspace_id: workspace_id.to_string(),
+        employee_id: employee_id.to_string(),
+        kind: kind.to_string(),
+        detail,
+        created_at: now_rfc3339(),
+    });
+}
+
 /// 把 Tool 輸出固化為 first-class Committed Artifact（完整 provenance），回傳 artifact_id。
 /// 供 `run_cycle`（單發）與 `run_inbox`／`run_autonomous`（持續）共用——commit 是「暫時→真實」的邊界。
 fn commit_artifact(
@@ -180,6 +207,13 @@ fn commit_artifact(
         created_at: now_rfc3339(),
     };
     store.put_artifact(&artifact)?;
+    record_event(
+        store,
+        workspace_id,
+        producer,
+        "artifact",
+        format!("committed: {artifact_id}"),
+    );
     Ok(artifact_id)
 }
 
@@ -202,6 +236,7 @@ pub async fn run_inbox(
     emp.state = EmployeeState::Working;
     store.put_employee(&emp)?;
     let mut memory = restore_memory(store, employee_id)?;
+    record_event(store, &workspace_id, employee_id, "wake", "inbox");
 
     loop {
         // 取一個 Inbox task（Assigned/Created/InProgress）；無則結束。
@@ -326,6 +361,13 @@ pub async fn run_autonomous(
     emp.state = EmployeeState::Working;
     store.put_employee(&emp)?;
     let mut memory = restore_memory(store, employee_id)?;
+    record_event(
+        store,
+        &workspace_id,
+        employee_id,
+        "wake",
+        format!("commitment: {commitment_id}"),
+    );
     let mut commitment = store
         .get_commitment(commitment_id)?
         .ok_or_else(|| anyhow::anyhow!("commitment not found: {commitment_id}"))?;
@@ -506,6 +548,14 @@ pub async fn run_autonomous(
             store.put_memory(&memory)?;
         }
     }
+    // 記錄結果事件（生命週期歷程）。
+    let (ekind, edetail) = match &outcome {
+        AutonomousOutcome::Satisfied { .. } => ("satisfied", commitment.title.clone()),
+        AutonomousOutcome::Stalled { reason, .. } => ("stalled", reason.clone()),
+        AutonomousOutcome::Errored { detail } => ("errored", detail.clone()),
+    };
+    record_event(store, &workspace_id, employee_id, ekind, edetail);
+
     emp.state = if errored {
         EmployeeState::Error
     } else {
@@ -640,11 +690,7 @@ pub async fn agent_seed<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     let ws_id = "ws-default".to_string();
     if store.get_workspace(&ws_id)?.is_none() {
@@ -698,11 +744,7 @@ pub async fn agent_recruit<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     let brain_id = brain_id.unwrap_or_else(|| {
         cfg.active_brain_id
@@ -775,11 +817,7 @@ pub async fn agent_create_template<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     let brain_id = brain_id.unwrap_or_else(|| {
         cfg.active_brain_id
@@ -819,11 +857,7 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
     let employee_id = deploy_instance(&store, &template_id, &instance_name)?;
     Ok(DeployResult { employee_id })
 }
@@ -1088,11 +1122,7 @@ pub async fn agent_create_commitment<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     let emp = store
         .get_employee(&employee_id)?
@@ -1131,11 +1161,7 @@ pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     let mut com = store
         .get_commitment(&commitment_id)?
@@ -1206,11 +1232,7 @@ pub async fn agent_revise_artifact<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
     let (artifact_id, version) = revise_artifact(&store, &artifact_id, &employee_id, new_content)?;
     Ok(ReviseResult {
         artifact_id,
@@ -1228,11 +1250,7 @@ pub async fn agent_list_state<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
     Ok(serde_json::json!({
         "projects": store.list_projects(&workspace_id)?,
         "templates": store.list_templates(&workspace_id)?,
@@ -1261,11 +1279,7 @@ pub async fn agent_create_project<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
     let existing: Vec<String> = store
         .list_projects(&workspace_id)?
         .into_iter()
@@ -1305,11 +1319,7 @@ pub async fn agent_run_team<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     // 各 assignment 解析其 employee 的腦 → ToolCtx（團隊成員可能用不同腦）。
     let mut ctxs: Vec<ToolCtx> = Vec::with_capacity(assignments.len());
@@ -1362,11 +1372,7 @@ pub async fn agent_handoff_task<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?;
-    let store = SqliteStore::open(data_dir.join("emploid.db"))?;
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
     let emp = store
         .get_employee(&to_employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &to_employee_id))?;
@@ -1478,6 +1484,38 @@ pub async fn agent_send_message<R: tauri::Runtime>(
         reason: "message".into(),
     });
     Ok(SendMessageResult { task_id })
+}
+
+// ───────────────── 監看（Phase 6d）─────────────────
+
+/// 監看：取回某員工的即時觀察快照——給監看 modal 每 ~1.5s 輪詢。
+/// 含 state、Active commitments、待辦 tasks、近期 artifacts、memory、近期生命週期 events。
+#[tauri::command]
+pub async fn agent_watch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+) -> Result<serde_json::Value, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
+    let emp = store
+        .get_employee(&employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
+    Ok(serde_json::json!({
+        "employee": emp,
+        "commitments": store.list_active_commitments_by_owner(&employee_id)?,
+        "tasks": store.list_assigned_tasks_by_owner(&employee_id)?,
+        "artifacts": store
+            .list_artifacts_by_producer(&employee_id)?
+            .into_iter()
+            .rev()
+            .take(10)
+            .collect::<Vec<_>>(),
+        "memory": store.get_memory(&employee_id)?,
+        "events": store.list_events_by_employee(&employee_id, 20)?,
+    }))
 }
 
 #[cfg(test)]

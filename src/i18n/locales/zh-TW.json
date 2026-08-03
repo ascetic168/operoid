@@ -47,7 +47,13 @@
     "message": "溝通…",
     "messageTitle": "發送訊息",
     "messagePh": "輸入要給這位員工的訊息…",
-    "send": "送出"
+    "send": "送出",
+    "watch": "監看…",
+    "watchCommitments": "進行中的承諾",
+    "watchTasks": "目前工作",
+    "watchArtifacts": "近期產出",
+    "watchEvents": "生命週期事件",
+    "watchNone": "（無）"
   },
   "app": {
     "nav": {

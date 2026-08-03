@@ -47,7 +47,13 @@
     "message": "沟通…",
     "messageTitle": "发送消息",
     "messagePh": "输入要给这位员工的消息…",
-    "send": "发送"
+    "send": "发送",
+    "watch": "监看…",
+    "watchCommitments": "进行中的承诺",
+    "watchTasks": "目前工作",
+    "watchArtifacts": "近期产出",
+    "watchEvents": "生命周期事件",
+    "watchNone": "（无）"
   },
   "app": {
     "nav": {

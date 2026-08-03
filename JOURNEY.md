@@ -212,7 +212,14 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 
 ### 6d — 監看 + 生命週期事件
 
-（待做：生命週期事件 append-log；包 `agent_list_state`；監看 modal 每秒輪詢顯示狀態／當前 task／近期 artifact／事件。）
+- **目標**：右鍵員工 → 監看 → 看見目前正在進行的工作與歷程（即時）。
+- **退出條件：**
+  - [x] 生命週期事件（Ch.14 啟發，append-only）：`Event` model＋`events` 表＋`put_event`／`list_events_by_employee`（最新在前）；`record_event` 在 `commit_artifact`／`run_inbox`／`run_autonomous`（wake／satisfied／stalled／errored）記錄。
+  - [x] `agent_watch(employee_id)` 指令（取代 over-fetch 的 `agent_list_state`）：回傳 state＋commitments＋tasks＋近期 artifacts＋memory＋近期 events。
+  - [x] 監看 modal：每 1.5s 輪詢，顯示狀態色／承諾／當前 task／近期產出＋捲動事件 log（仿 OperationsView console）；關閉即停。i18n 三語。
+  - [x] **順帶修 6a 的 bug**：`agent_list_state`／`agent_revise_artifact` 等 **11 個指令**仍讀舊 Roaming DB（6a 已遷 Local）→ 過時資料；全改 `agent_db_path`。
+  - [x] `cargo test` 94 全綠、`cargo check`／`npm run build` 0 error。
+- **狀態：✅ 完成（2026-08-03）。** 落點：`domain/{models,store,sqlite_store,mod}.rs`（Event）；`runtime.rs`（record_event＋記錄點＋agent_watch＋11 處 DB-path 修正）；`tauri.ts`／`EmployeeInstanceView.vue`／i18n。**Phase 6 至此全數完成**。
 
 ---
 
@@ -296,7 +303,8 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-08-03 | **Phase 6a ✅** | Runtime 地基——員工生命週期首部曲。`domain/store.rs`＋`sqlite_store.rs` 加 5 個 list-by-owner 方法＋WAL/busy_timeout＋新 index；新模組 `agent_state.rs`（AppState／每員工 busy-lock RAII guard／WakeSignal mpsc）、`scheduler.rs`（常駐排程器：`async_runtime::spawn`＋select! 於 mpsc 喚醒與 30s tick＋啟動掃描，只喚醒 Sleeping＋有待辦 task 者）；`runtime.rs` 抽 `restore_memory`／`commit_artifact` 共用 helper、新增 `run_inbox`（收件匣驅動喚醒）、`build_tool_ctx`、`agent_db_path`（**DB 搬 Local AppData** 避 OneDrive 毀 WAL＋一次性遷移）；`agent_run`／`agent_run_task` 接 busy-lock。`cargo test` **91 全綠**（新增 inbox-drain／empty-inbox／WAL 並發／busy-lock 序列化）、6 ignored（含新 `real_inbox_wake`）。 | 6b（ReasoningTool＋承諾驅動，含 Handbook P10／訊息-Inbox） | 預存 `csv_people.rs` 一條 unused-assignment 警告（非本 Phase 引入） |
 | 2026-08-03 | **Phase 6b ✅** | 承諾驅動——員工憑 Active commitment 自主運行。**先手冊後碼**：Handbook Ch.13 §4 加「自主執行與完成評估（修訂）」（Runtime 可主理多步推理循環＋諮詢 Brain 評估完成，因「何時睡」屬生命週期）、Ch.12 §2 加「投遞工作」、Ch.04 Inbox 補訊息投遞——**中英六檔鏡像**。`domain/tools.rs` 加 `Reasoner` trait＋`parse_json_value`；`runtime.rs` 加 `LlmReasoner`（包既有 `llm::complete`，結構化 JSON）、`build_reasoner`（缺 API key → `llm.noApiKey`）、`run_autonomous`（plan→act→evaluate；done→`Satisfied`、0 產出卡住→`Suspended`、硬錯→`Error`；`CycleBudget` 限流）、`AutonomousOutcome`；`scheduler.rs` 拆 `scan_inbox`（tick）／`scan_commitments`（**啟動一次**，免每次 tick 燒 LLM）。`cargo test` **93 全綠**（新增 satisfies／suspends-on-no-progress）。 | 6c 溝通（Message-driven Trigger＋前端，讓 6a/6b 在 UI 可見） | 承諾僅啟動喚醒（每次 tick 重跑列未來）；真實 gbrain+llm 的 `run_autonomous` ignored 測試待補 |
 | 2026-08-03 | **Phase 6c ✅** | 溝通——Message-driven Trigger 的 UI 觸發源。`agent_send_message(employee_id, text, commitment_id?)`：訊息→Inbox 一個 `Assigned` Task＋push `WakeSignal`（不搶 busy-lock／不執行員工；6a `scan_inbox`／`run_inbox` 消化，訊息無 commitment 也處理）；`lib.rs` 註冊。前端：`tauri.ts` wrapper、`stores/agent.ts` `sendMessage` action、`EmployeeInstanceView` 右鍵「溝通…」＋訊息 modal（textarea）；i18n 三語 `instances.message*`＋補齊 `agent_os.*` 錯誤鍵（employeeBusy 等）。`npm run build`（vue-tsc＋vite）0 error、`cargo check` 0 error。 | 6d 監看（事件 log＋觀察面板，讓訊息後的喚醒可即時看見） | 訊息送出後狀態變化需手動刷新（6d 加輪詢） |
+| 2026-08-03 | **Phase 6d ✅ — Phase 6 完成** | 監看＋生命週期事件。`Event` model（Ch.14 啟發，append-only）＋`events` 表＋`put_event`／`list_events_by_employee`（最新在前）；`record_event` 在 `commit_artifact`／`run_inbox`／`run_autonomous`（wake／satisfied／stalled／errored）記錄。`agent_watch(employee_id)`（state＋commitments＋tasks＋近期 artifacts＋memory＋events）。前端監看 modal：1.5s 輪詢、捲動事件 log（仿 OperationsView console）。i18n 三語。**順帶修 6a bug**：`agent_list_state`／`agent_revise_artifact` 等 **11 個指令**仍讀舊 Roaming DB → 全改 `agent_db_path`。`cargo test` 94 全綠、`npm run build` 0 error。 | **Phase 6 全部完成**（6a–6d） | 真實 gbrain+llm 的 `run_autonomous` ignored 測試待補；csv_people 預存警告 |
 
-**目前所在：** 🚧 **Phase 6（員工生命週期）——6a 地基＋6b 承諾驅動＋6c 溝通完成。** 後端引擎＋訊息觸發源已立：排程器依 Trigger 喚醒（收件匣每次 tick、承諾啟動一次），`run_inbox` 吃待辦、`run_autonomous` 憑 commitment 規劃→行動→評估到完成／卡住才睡；右鍵「溝通」投遞訊息進 Inbox 並喚醒。最後一塊 **6d 監看**（生命週期事件 log＋觀察面板，讓訊息後的喚醒即時可見）。
+**目前所在：** 🎉 **Phase 6（員工生命週期）完成——6a 地基＋6b 承諾驅動＋6c 溝通＋6d 監看全數落地。** 員工現在會自己醒來：排程器依 Trigger 喚醒（收件匣每次 tick、承諾啟動一次），`run_inbox` 吃待辦、`run_autonomous` 憑 commitment 規劃→行動→評估到完成／卡住才睡；右鍵「溝通」投遞訊息進 Inbox 並喚醒；右鍵「監看」即時看見狀態＋工作＋事件歷程。Handbook P10 已修訂（承諾驅動合規）。後續為 Horizon（完整 agent loop／事件串流／分散式 Runtime 等，皆為既有概念延伸）。待你 `npm run tauri dev` 視覺驗證整條：建員工＋commitment／發訊息／監看。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。

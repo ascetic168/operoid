@@ -472,3 +472,13 @@ export const agentSendMessage = (
   commitmentId: string | null = null,
 ): Promise<{ task_id: string }> =>
   invoke<{ task_id: string }>("agent_send_message", { employeeId, text, commitmentId });
+export interface WatchSnapshot {
+  employee: Employee;
+  commitments: unknown[];
+  tasks: unknown[];
+  artifacts: unknown[];
+  memory: { notes: string[]; last_artifact_id: string | null } | null;
+  events: { id: string; kind: string; detail: string; created_at: string }[];
+}
+export const agentWatch = (employeeId: string): Promise<WatchSnapshot> =>
+  invoke<WatchSnapshot>("agent_watch", { employeeId });

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, Loader2, X, UserSquare } from "lucide-vue-next";
 import { useAgentStore } from "@/stores/agent";
 import { useBrainsStore } from "@/stores/brains";
-import { formatError, type Employee } from "@/lib/tauri";
+import { agentWatch, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
 import ContextMenu, { type MenuItem } from "@/components/ContextMenu.vue";
 
 const { t } = useI18n();
@@ -43,6 +43,7 @@ function openMenu(e: MouseEvent, emp: Employee) {
 const menuItems = computed<MenuItem[]>(() => [
   { key: "detail", label: t("instances.detail") },
   { key: "message", label: t("instances.message") },
+  { key: "watch", label: t("instances.watch") },
   { key: "rename", label: t("instances.rename") },
   { key: "delete", label: t("instances.delete"), danger: true },
 ]);
@@ -51,6 +52,7 @@ function onMenuSelect(key: string) {
   if (!emp) return;
   if (key === "detail") detailTarget.value = emp;
   else if (key === "message") openMessage(emp);
+  else if (key === "watch") openWatch(emp);
   else if (key === "rename") openRename(emp);
   else if (key === "delete") deleteTarget.value = emp;
 }
@@ -121,6 +123,41 @@ async function submitMessage() {
     messageBusy.value = false;
   }
 }
+
+// ── 監看（即時觀察：狀態／工作／產出／事件歷程，每 ~1.5s 輪詢）──
+const watchTarget = ref<Employee | null>(null);
+const watchData = ref<WatchSnapshot | null>(null);
+const eventsEl = ref<HTMLElement | null>(null);
+let watchTimer: ReturnType<typeof setInterval> | null = null;
+
+async function pollWatch() {
+  if (!watchTarget.value) return;
+  try {
+    watchData.value = await agentWatch(watchTarget.value.id);
+    await nextTick();
+    if (eventsEl.value) eventsEl.value.scrollTop = eventsEl.value.scrollHeight;
+  } catch {
+    // 唯讀觀察：靜默（如短暂鎖定／錯誤），下個 tick 再試。
+  }
+}
+function openWatch(e: Employee) {
+  watchTarget.value = e;
+  watchData.value = null;
+  pollWatch();
+  if (watchTimer) clearInterval(watchTimer);
+  watchTimer = setInterval(pollWatch, 1500);
+}
+function closeWatch() {
+  watchTarget.value = null;
+  watchData.value = null;
+  if (watchTimer) {
+    clearInterval(watchTimer);
+    watchTimer = null;
+  }
+}
+onUnmounted(() => {
+  if (watchTimer) clearInterval(watchTimer);
+});
 
 // ── 詳情 ──
 const detailTarget = ref<Employee | null>(null);
@@ -341,6 +378,73 @@ async function confirmDelete() {
             <Loader2 v-if="messageBusy" :size="13" class="animate-spin" />
             {{ t("instances.send") }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 監看 modal（輪詢即時觀察）-->
+    <div
+      v-if="watchTarget"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      @click.self="closeWatch"
+    >
+      <div class="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-border bg-card shadow-2xl">
+        <div class="flex items-center justify-between border-b border-border px-5 py-3">
+          <h3 class="flex items-center gap-2 font-semibold">
+            <span class="h-2 w-2 rounded-full" :class="watchData ? stateColor(watchData.employee.state) : 'bg-zinc-400'" />
+            {{ watchTarget.name }}
+            <span class="text-xs font-normal text-muted-foreground">{{ watchData ? watchData.employee.state : "…" }}</span>
+          </h3>
+          <button type="button" class="text-muted-foreground hover:text-foreground" @click="closeWatch">
+            <X :size="16" />
+          </button>
+        </div>
+        <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4 text-sm">
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchCommitments") }}</div>
+            <div v-if="watchData && watchData.commitments.length" class="flex flex-col gap-0.5">
+              <div v-for="c in watchData.commitments" :key="(c as any).id" class="truncate">
+                • {{ (c as any).title }} <span class="text-xs text-muted-foreground">[{{ (c as any).status }}]</span>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
+          </div>
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchTasks") }}</div>
+            <div v-if="watchData && watchData.tasks.length" class="flex flex-col gap-0.5">
+              <div v-for="tk in watchData.tasks" :key="(tk as any).id" class="truncate">
+                ▸ {{ (tk as any).objective }} <span class="text-xs text-muted-foreground">[{{ (tk as any).status }}]</span>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
+          </div>
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchArtifacts") }}</div>
+            <div v-if="watchData && watchData.artifacts.length" class="flex flex-col gap-0.5">
+              <div v-for="a in watchData.artifacts" :key="(a as any).id" class="truncate text-xs">
+                ◇ {{ (a as any).title }}
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
+          </div>
+          <div class="flex min-h-[90px] flex-1 flex-col rounded-md border border-border bg-background">
+            <div class="border-b border-border px-2 py-1 text-xs text-muted-foreground">{{ t("instances.watchEvents") }}</div>
+            <div ref="eventsEl" class="min-h-0 flex-1 overflow-y-auto p-2 font-mono text-[11px] leading-relaxed">
+              <div v-if="watchData && watchData.events.length === 0" class="text-muted-foreground">{{ t("instances.watchNone") }}</div>
+              <div v-for="ev in watchData?.events ?? []" :key="ev.id">
+                <span class="text-muted-foreground">{{ ev.created_at.slice(11, 19) }}</span>
+                <span
+                  class="ml-1 font-medium"
+                  :class="{
+                    'text-emerald-500': ev.kind === 'satisfied' || ev.kind === 'wake' || ev.kind === 'artifact',
+                    'text-amber-500': ev.kind === 'stalled',
+                    'text-destructive': ev.kind === 'errored',
+                  }"
+                >{{ ev.kind }}</span>
+                <span class="ml-1 text-muted-foreground">{{ ev.detail }}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

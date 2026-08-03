@@ -16,8 +16,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::models::{
-    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Memory, Project, Task,
-    TaskStatus, Workspace,
+    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Project,
+    Task, TaskStatus, Workspace,
 };
 use super::store::Store;
 
@@ -66,7 +66,9 @@ impl SqliteStore {
              CREATE TABLE IF NOT EXISTS commitments (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, owner_employee_id TEXT, data TEXT NOT NULL); \
              CREATE INDEX IF NOT EXISTS idx_commitments_ws ON commitments(workspace_id); \
              CREATE INDEX IF NOT EXISTS idx_commitments_owner ON commitments(owner_employee_id); \
-             CREATE TABLE IF NOT EXISTS memories (employee_id TEXT PRIMARY KEY, data TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS memories (employee_id TEXT PRIMARY KEY, data TEXT NOT NULL); \
+             CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -397,6 +399,31 @@ impl Store for SqliteStore {
             &[&produced_by],
         )
     }
+
+    // ── Phase 6d：生命週期事件（append-only；最新在前 via rowid DESC）──
+
+    fn put_event(&self, event: &Event) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO events (id, workspace_id, employee_id, data) VALUES (?1, ?2, ?3, ?4)",
+            params![event.id, event.workspace_id, event.employee_id, encode(event)?],
+        )
+        .map_err(|e| anyhow!("put_event: {e}"))?;
+        Ok(())
+    }
+    fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>> {
+        let conn = self.lock()?;
+        let sql = "SELECT data FROM events WHERE employee_id = ?1 ORDER BY rowid DESC LIMIT ?2";
+        let mut stmt = conn.prepare(sql).map_err(|e| anyhow!("prepare: {e}"))?;
+        let rows = stmt
+            .query_map(params![employee_id, limit as i64], |row| row.get::<_, String>(0))
+            .map_err(|e| anyhow!("query: {e}"))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(decode(&r.map_err(|e| anyhow!("row: {e}"))?)?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -564,5 +591,28 @@ mod tests {
         // 清掉 WAL/SHM 副檔（若有）。
         let _ = std::fs::remove_file(format!("{}-wal", db.to_string_lossy()));
         let _ = std::fs::remove_file(format!("{}-shm", db.to_string_lossy()));
+    }
+
+    /// Phase 6d：events append-only、最新在前（rowid DESC）、不跨員工洩漏。
+    #[test]
+    fn events_append_only_and_newest_first() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        s.put_workspace(&sample_workspace("ws")).unwrap();
+        for i in 0..3 {
+            s.put_event(&Event {
+                id: format!("e{i}"),
+                workspace_id: "ws".into(),
+                employee_id: "e1".into(),
+                kind: "wake".into(),
+                detail: format!("run {i}"),
+                created_at: format!("t{i}"),
+            })
+            .unwrap();
+        }
+        let evs = s.list_events_by_employee("e1", 10).unwrap();
+        assert_eq!(evs.len(), 3);
+        assert_eq!(evs[0].id, "e2"); // 最新在前
+        assert_eq!(evs[2].id, "e0");
+        assert!(s.list_events_by_employee("other", 10).unwrap().is_empty());
     }
 }

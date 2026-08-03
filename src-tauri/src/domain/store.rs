@@ -12,8 +12,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::models::{
-    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Memory, Project, Task,
-    TaskStatus, Workspace,
+    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Project,
+    Task, TaskStatus, Workspace,
 };
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
@@ -76,6 +76,13 @@ pub trait Store {
 
     /// 列出某員工產出的所有 artifacts（自主循環的進度／評估上下文用）。
     fn list_artifacts_by_producer(&self, produced_by: &str) -> Result<Vec<Artifact>>;
+
+    // ── Phase 6d：生命週期事件（append-only）──
+
+    /// 記錄一則不可變 Event（Ch.14）。
+    fn put_event(&self, event: &Event) -> Result<()>;
+    /// 列出某員工近期事件（最新在前，最多 `limit` 則）。
+    fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>>;
 }
 
 /// 檔案式 JSON store。所有實體存於 `<base>/domain/{workspaces,employees,
@@ -287,6 +294,22 @@ impl Store for JsonStore {
             .into_iter()
             .filter(|a| a.produced_by == produced_by)
             .collect())
+    }
+
+    // ── Phase 6d：生命週期事件（JsonStore：全集合讀後 in-memory 過濾）──
+
+    fn put_event(&self, event: &Event) -> Result<()> {
+        upsert_by_id(&self.path("events.json"), event, |e| &e.id)
+    }
+    fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>> {
+        let mut events: Vec<Event> = self
+            .read::<Event>("events.json")?
+            .into_iter()
+            .filter(|e| e.employee_id == employee_id)
+            .collect();
+        events.reverse(); // Vec 末尾為最新 → 反轉成最新在前
+        events.truncate(limit);
+        Ok(events)
     }
 }
 

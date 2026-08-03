@@ -47,7 +47,13 @@
     "message": "Message…",
     "messageTitle": "Message",
     "messagePh": "Type a message to this employee…",
-    "send": "Send"
+    "send": "Send",
+    "watch": "Watch…",
+    "watchCommitments": "Active commitments",
+    "watchTasks": "Current tasks",
+    "watchArtifacts": "Recent artifacts",
+    "watchEvents": "Lifecycle events",
+    "watchNone": "(none)"
   },
   "app": {
     "nav": {

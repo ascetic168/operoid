@@ -120,6 +120,7 @@ pub fn run() {
             runtime::agent_handoff_task,
             runtime::agent_run_task,
             runtime::agent_send_message,
+            runtime::agent_watch,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。

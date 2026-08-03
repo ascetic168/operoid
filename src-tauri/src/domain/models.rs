@@ -266,6 +266,22 @@ pub struct Memory {
     pub updated_at: Timestamp,
 }
 
+// ───────────────── Event（Handbook Ch.14，Phase 6d 輕量）─────────────────
+
+/// Event——某件事已發生的**不可變紀錄**（Ch.14）。Phase 6d 輕量落地：append-only（只 INSERT），
+/// 記生命週期大事（`wake`／`sleep`／`stalled`／`satisfied`／`errored`），供監看顯示歷程。
+/// 完整 Ch.14（event sourcing／串流／被 Trigger 消費／保留政策）列未來。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Event {
+    pub id: String,
+    pub workspace_id: String,
+    pub employee_id: String,
+    /// 事件類別（自由字串，常見見上）。
+    pub kind: String,
+    pub detail: String,
+    pub created_at: Timestamp,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
