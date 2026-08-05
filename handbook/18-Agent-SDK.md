@@ -1,4 +1,4 @@
-# Chapter 17 — Agent SDK
+# Chapter 18 — Agent SDK
 
 Version: 0.1
 Status: Draft
@@ -75,7 +75,7 @@ Tool
 
 The Agent SDK follows three rules:
 
-1. **The interface is minimal.** Run, Pause, Resume, Cancel, OpenProject, CommitArtifact, PublishEvent, Execute. If an operation is not on this list, the Employee should not be able to do it directly.
+1. **The interface is minimal.** Run, Pause, Resume, Cancel, OpenProject, CommitArtifact, PublishEvent, Execute. If an operation is not on this list, the Employee should not be able to do it directly. Human↔employee conversational interaction (Message, Ch.16) is not on this list — an Employee's Out Message is produced by the **Runtime on its behalf** (within a conversational turn), not by a direct Employee SDK operation, so the interface stays closed.
 2. **The interface is stable.** These names should outlive every implementation. Adding an operation requires architectural review.
 3. **The interface respects the boundaries.** No operation lets an Employee reconfigure the Workspace, rewrite shared Knowledge, schedule itself, or control another Employee. Those powers do not belong to an Employee.
 

@@ -11,6 +11,7 @@ import {
   agentDeleteEmployee,
   agentRenameTemplate,
   agentRenameEmployee,
+  agentCreateCommitment,
   agentSendMessage,
   type EmployeeTemplate,
   type Employee,
@@ -77,6 +78,11 @@ export const useAgentStore = defineStore("agent", () => {
     await agentSendMessage(employeeId, text, commitmentId);
   }
 
+  /** 交辦：建立承諾（後端建立後立即喚醒員工自主跑）；不阻塞，進度看監看。 */
+  async function createCommitment(employeeId: string, title: string, completionCondition: string) {
+    await agentCreateCommitment(employeeId, title, completionCondition);
+  }
+
   /** 模板 id → 模板（供實體頁顯示來源模板名）。 */
   function templateById(id: string | null): EmployeeTemplate | undefined {
     if (!id) return undefined;
@@ -99,6 +105,7 @@ export const useAgentStore = defineStore("agent", () => {
     renameEmployee,
     deleteEmployee,
     sendMessage,
+    createCommitment,
     templateById,
   };
 });

@@ -65,7 +65,7 @@ Employee
 
 **6. State** — the runtime state of the Employee right now: Idle, Working, Waiting, Sleeping, Paused, or Error.
 
-**7. Inbox** — the Employee's work queue. Each time the Employee wakes, it processes its Inbox. This is the front door for all incoming work. Work is delivered by a Trigger — for example, a human message (a Message-driven Trigger) becomes a Task in the Inbox and wakes the Employee.
+**7. Inbox** — the Employee's work queue. Each time the Employee wakes, it processes its Inbox. This is the front door for all incoming work. Work is delivered by a Trigger — for example, a human message (a Message-driven Trigger) becomes a Task in the Inbox and wakes the Employee. The interaction itself is also retained as a Message (Ch.16), a reviewable record of the exchange.
 
 **8. Commitments** — the Employee's long-term responsibilities: track this order to delivery, monitor this complaint, keep this audit ready. Commitments may persist for weeks or months and generate many Tasks.
 

@@ -16,8 +16,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::models::{
-    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Project,
-    Task, TaskStatus, Workspace,
+    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Message,
+    Project, Task, TaskStatus, Workspace,
 };
 use super::store::Store;
 
@@ -68,7 +68,9 @@ impl SqliteStore {
              CREATE INDEX IF NOT EXISTS idx_commitments_owner ON commitments(owner_employee_id); \
              CREATE TABLE IF NOT EXISTS memories (employee_id TEXT PRIMARY KEY, data TEXT NOT NULL); \
              CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, data TEXT NOT NULL); \
-             CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id);",
+             CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id); \
+             CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_messages_employee ON messages(employee_id);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -414,6 +416,31 @@ impl Store for SqliteStore {
     fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>> {
         let conn = self.lock()?;
         let sql = "SELECT data FROM events WHERE employee_id = ?1 ORDER BY rowid DESC LIMIT ?2";
+        let mut stmt = conn.prepare(sql).map_err(|e| anyhow!("prepare: {e}"))?;
+        let rows = stmt
+            .query_map(params![employee_id, limit as i64], |row| row.get::<_, String>(0))
+            .map_err(|e| anyhow!("query: {e}"))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(decode(&r.map_err(|e| anyhow!("row: {e}"))?)?);
+        }
+        Ok(out)
+    }
+
+    // ── Phase 7b：對話訊息（最新在前 via rowid DESC）──
+
+    fn put_message(&self, message: &Message) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO messages (id, workspace_id, employee_id, data) VALUES (?1, ?2, ?3, ?4)",
+            params![message.id, message.workspace_id, message.employee_id, encode(message)?],
+        )
+        .map_err(|e| anyhow!("put_message: {e}"))?;
+        Ok(())
+    }
+    fn list_messages_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Message>> {
+        let conn = self.lock()?;
+        let sql = "SELECT data FROM messages WHERE employee_id = ?1 ORDER BY rowid DESC LIMIT ?2";
         let mut stmt = conn.prepare(sql).map_err(|e| anyhow!("prepare: {e}"))?;
         let rows = stmt
             .query_map(params![employee_id, limit as i64], |row| row.get::<_, String>(0))

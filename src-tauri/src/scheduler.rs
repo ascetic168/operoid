@@ -21,7 +21,9 @@ use tauri::{async_runtime, AppHandle, Manager, Runtime};
 use crate::agent_state::{AppState, WakeSignal};
 use crate::config::app_config;
 use crate::domain::{EmployeeState, SqliteStore, Store};
-use crate::runtime::{agent_db_path, build_reasoner, build_tool_ctx, run_autonomous, run_inbox, CycleBudget};
+use crate::runtime::{
+    agent_db_path, build_reasoner, build_tool_ctx, run_commitments_for_employee, run_inbox,
+};
 
 /// 啟動排程器：建 channel＋共享狀態、`app.manage(AppState)`、spawn 常駐 loop。
 ///
@@ -46,11 +48,37 @@ async fn scheduler_loop<R: Runtime>(
                     started = true;
                     let _ = scan_commitments(&app).await; // 啟動：承諾驅動喚醒
                 }
+                let _ = reset_errored(&app).await; // 復原：Error 死巷→重試
                 let _ = scan_inbox(&app).await;
             }
             Some(_sig) = wake_rx.recv() => { let _ = scan_inbox(&app).await; }
         }
     }
+}
+
+/// 復原：把「有待辦工作卻卡在 Error」的員工重設為 Sleeping。
+/// Error 無重試路徑（排程器只喚醒 Sleeping），會永久卡住；Phase 7b 起 run_autonomous 不再設 Error，
+/// 此函主要清理歷史／異常卡住的員工，讓它們在下次掃描被喚醒重試。
+async fn reset_errored<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
+    let cfg = app_config::load(app)?;
+    if !cfg.agent_os_enabled {
+        return Ok(());
+    }
+    let store = SqliteStore::open(agent_db_path(app)?)?;
+    for mut e in store
+        .list_all_employees()?
+        .into_iter()
+        .filter(|e| e.state == EmployeeState::Error)
+    {
+        let has_work = !store.list_assigned_tasks_by_owner(&e.id)?.is_empty()
+            || !store.list_active_commitments_by_owner(&e.id)?.is_empty();
+        if has_work {
+            e.state = EmployeeState::Sleeping;
+            store.put_employee(&e)?;
+            eprintln!("[scheduler] {} 卡在 Error 且有待辦→重設 Sleeping（重試）", e.id);
+        }
+    }
+    Ok(())
 }
 
 /// Inbox 掃描：喚醒 Sleeping＋有待辦 task 的員工，併發跑 `run_inbox`（共吃一個 `&store`）。
@@ -79,7 +107,19 @@ async fn scan_inbox<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
         Some(async move {
             let _guard = guard; // 釋放於此 future 完成（含錯誤路徑）
             if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id) {
-                if let Err(e) = run_inbox(&id, &tool, &ctx, store).await {
+                // Reasoner 為可選：有則訊息走對話回合，無則退回 gbrain 單發（守 6c 行為）。
+                let reasoner = match build_reasoner(cfg, store, &id) {
+                    Ok(r) => Some(r),
+                    Err(e) => {
+                        eprintln!("[scheduler] build_reasoner({id}) 失敗（退化為 gbrain-only）: {e}");
+                        None
+                    }
+                };
+                let rref: Option<&dyn crate::domain::Reasoner> = match &reasoner {
+                    Some(r) => Some(r),
+                    None => None,
+                };
+                if let Err(e) = run_inbox(&id, &tool, rref, &ctx, store).await {
                     eprintln!("[scheduler] run_inbox({id}) failed: {e}");
                 }
             }
@@ -89,8 +129,8 @@ async fn scan_inbox<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 承諾掃描（啟動一次）：喚醒 Sleeping＋有 Active commitment 的員工。先清 Inbox，再對每個
-/// Active commitment 跑 `run_autonomous`（plan→act→evaluate，直到 Satisfied／Suspended／有進展則睡）。
+/// 承諾掃描（啟動一次）：喚醒 Sleeping＋有 Active commitment 的員工，交給
+/// [`run_commitments_for_employee`]（清 Inbox → 對每個 Active commitment 跑 run_autonomous）。
 async fn scan_commitments<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
     let cfg = app_config::load(app)?;
     if !cfg.agent_os_enabled {
@@ -105,43 +145,15 @@ async fn scan_commitments<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> 
             candidates.push(e.id);
         }
     }
+    drop(store); // 各 helper 開自己的 connection
     if candidates.is_empty() {
         return Ok(());
     }
-    let state = app.state::<AppState>();
-    let cfg = &cfg;
-    let store = &store;
-    let futs = candidates.into_iter().filter_map(|id| {
-        let guard = state.try_acquire(&id)?;
-        Some(async move {
-            let _guard = guard;
-            let Ok((knowledge, ctx)) = build_tool_ctx(cfg, store, &id) else {
-                eprintln!("[scheduler] build_tool_ctx({id}) failed");
-                return;
-            };
-            let Ok(reasoner) = build_reasoner(cfg, store, &id) else {
-                eprintln!("[scheduler] build_reasoner({id}) failed（缺 LLM API key？）");
-                return;
-            };
-            // 先清 Inbox（訊息／交接），再對每個 Active commitment 自主運行。
-            let _ = run_inbox(&id, &knowledge, &ctx, store).await;
-            let commitments = store.list_active_commitments_by_owner(&id).unwrap_or_default();
-            let budget = CycleBudget::default_session();
-            for com in commitments {
-                match run_autonomous(&id, &com.id, &budget, &knowledge, &reasoner, &ctx, store).await {
-                    Ok(crate::runtime::AutonomousOutcome::Satisfied { cycles, .. }) => {
-                        eprintln!("[scheduler] {id} 承諾 {} Satisfied（{cycles} 輪）", com.id);
-                    }
-                    Ok(crate::runtime::AutonomousOutcome::Stalled { reason, .. }) => {
-                        eprintln!("[scheduler] {id} 承諾 {} 卡住：{reason}", com.id);
-                    }
-                    Ok(crate::runtime::AutonomousOutcome::Errored { detail }) => {
-                        eprintln!("[scheduler] {id} 承諾 {} 錯誤：{detail}", com.id);
-                    }
-                    Err(e) => eprintln!("[scheduler] run_autonomous({id},{}) 失敗：{e}", com.id),
-                }
-            }
-        })
+    let futs = candidates.into_iter().map(|id| {
+        let app = app.clone();
+        async move {
+            let _ = run_commitments_for_employee(&app, &id).await;
+        }
     });
     future::join_all(futs).await;
     Ok(())

@@ -1,4 +1,4 @@
-# 第二十章 — Roadmap 路線圖
+# 第二十一章 — Roadmap 路線圖
 
 版本：0.1
 狀態：草稿
@@ -87,7 +87,7 @@ Employee Template 應該能以 Instance 之姿部署到整個組織，共享 Bra
 - **分散式 Runtime** —— 跨多個節點的執行，狀態依然在每次喚醒時被持久地恢復。
 - **人類—代理團隊** —— 人類與 Employee 在 Project 之內成為真正的同儕，雙方都有清楚的職權與問責。
 
-這些沒有一個需要新的核心概念。每一個都是 Employee、Brain、Workspace、Artifact、Tool、Commitment 與 Runtime 的擴展。**這正是一套健全架構的考驗：未來裝得進概念裡，而不是撐破它們。**
+這些大多不需新的核心概念——每一個都是 Employee、Brain、Workspace、Artifact、Tool、Commitment 與 Runtime 的擴展。唯一的例外是**人類—代理團隊**：人機之間雙向、可回顧的對話互動，需要一個專門的互動層概念，即 Message（Ch.16，v0.2 新增）。它不取代工作產出（仍是 Artifact／Commitment），只是承載往返本身。**這正是一套健全架構的考驗：未來裝得進概念裡，而不是撐破它們。**
 
 ---
 

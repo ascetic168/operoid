@@ -1,6 +1,6 @@
 # Emploid 架構手冊
 
-**版本：** 0.1
+**版本：** 0.2
 **狀態：** 草稿
 
 > Emploid 不是一個 AI 聊天應用程式。
@@ -46,7 +46,7 @@ Emploid 是一套 **AI Agent 作業系統**。
 
 **Part II — 核心概念**：定義每一個一級物件 —— 它是什麼、擁有什麼、不擁有什麼、如何誕生與結束、以及如何演進。
 
-**Part III — 執行期**：定義工作實際如何流動 —— 任務、長期職責、觸發器、執行引擎、事件與記憶。
+**Part III — 執行期**：定義工作實際如何流動 —— 任務、長期職責、觸發器、執行引擎、事件、記憶與訊息。
 
 **Part IV — 平台**：定義資料模型、代理與工具介面、安全，以及路線圖。
 
@@ -90,14 +90,15 @@ Emploid 是一套 **AI Agent 作業系統**。
 - [13 — Runtime 執行引擎](13-Runtime.md)
 - [14 — Event 事件](14-Event.md)
 - [15 — Memory 工作記憶](15-Memory.md)
+- [16 — Message 訊息](16-Message.md)
 
 ### Part IV — 平台
 
-- [16 — Workspace Model 工作空間模型](16-Workspace-Model.md)
-- [17 — Agent SDK 代理介面](17-Agent-SDK.md)
-- [18 — Tool SDK 工具介面](18-Tool-SDK.md)
-- [19 — Security 安全](19-Security.md)
-- [20 — Roadmap 路線圖](20-Roadmap.md)
+- [17 — Workspace Model 工作空間模型](17-Workspace-Model.md)
+- [18 — Agent SDK 代理介面](18-Agent-SDK.md)
+- [19 — Tool SDK 工具介面](19-Tool-SDK.md)
+- [20 — Security 安全](20-Security.md)
+- [21 — Roadmap 路線圖](21-Roadmap.md)
 
 ---
 
@@ -123,6 +124,7 @@ Workspace
 ├── Artifact  (outputs of work; first-class citizens)
 ├── Tool      (external capability; never decides)
 ├── Project   (a bounded initiative)
+├── Message   (human↔employee interaction; ephemeral, not durable work)
 │
 └── Runtime   (wakes, restores, executes, commits, sleeps)
         ├── Task        (one executable objective)
@@ -148,6 +150,7 @@ Workspace
 | Runtime | 引擎。管理生命週期，從不管理思考。 |
 | Event | 紀錄。已發生事實的不可變紀錄。 |
 | Memory | 暫存區。Employee 的工作上下文，每次喚醒時重新恢復。 |
+| Message | 互動。人類與員工一趟對話往返的紀錄，有方向；互動層，非工作產出。 |
 
 ---
 

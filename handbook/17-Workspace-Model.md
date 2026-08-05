@@ -1,4 +1,4 @@
-# Chapter 16 — Workspace Model
+# Chapter 17 — Workspace Model
 
 Version: 0.1
 Status: Draft

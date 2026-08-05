@@ -1,6 +1,6 @@
 # Emploid Architecture Handbook
 
-**Version:** 0.1
+**Version:** 0.2
 **Status:** Draft
 
 > Emploid is not an AI chat application.
@@ -46,7 +46,7 @@ The handbook is organized in four parts.
 
 **Part II — Core Concepts** defines each first-class object: what it is, what it owns, what it does not own, how it lives, and how it may evolve.
 
-**Part III — Runtime** defines how work actually flows: tasks, commitments, triggers, the runtime engine, events, and memory.
+**Part III — Runtime** defines how work actually flows: tasks, commitments, triggers, the runtime engine, events, memory, and messages.
 
 **Part IV — Platform** defines the data model, the agent and tool interfaces, security, and the roadmap.
 
@@ -88,14 +88,15 @@ Read Part I first. Then read Part II in order, because later concepts build on e
 - [13 — Runtime](13-Runtime.md)
 - [14 — Event](14-Event.md)
 - [15 — Memory](15-Memory.md)
+- [16 — Message](16-Message.md)
 
 ### Part IV — Platform
 
-- [16 — Workspace Model](16-Workspace-Model.md)
-- [17 — Agent SDK](17-Agent-SDK.md)
-- [18 — Tool SDK](18-Tool-SDK.md)
-- [19 — Security](19-Security.md)
-- [20 — Roadmap](20-Roadmap.md)
+- [17 — Workspace Model](17-Workspace-Model.md)
+- [18 — Agent SDK](18-Agent-SDK.md)
+- [19 — Tool SDK](19-Tool-SDK.md)
+- [20 — Security](20-Security.md)
+- [21 — Roadmap](21-Roadmap.md)
 
 ---
 
@@ -121,6 +122,7 @@ Workspace
 ├── Artifact  (outputs of work; first-class citizens)
 ├── Tool      (external capability; never decides)
 ├── Project   (a bounded initiative)
+├── Message   (human↔employee interaction; ephemeral, not durable work)
 │
 └── Runtime   (wakes, restores, executes, commits, sleeps)
         ├── Task        (one executable objective)
@@ -146,6 +148,7 @@ Workspace
 | Runtime | The engine. Manages lifecycle, never reasoning. |
 | Event | The record. Immutable fact of what happened. |
 | Memory | The scratchpad. An Employee's working context, restored each wake. |
+| Message | The interaction. A record of one human↔employee turn, with direction; an interaction layer, not a work output. |
 
 ---
 

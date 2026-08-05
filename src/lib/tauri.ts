@@ -474,11 +474,32 @@ export const agentSendMessage = (
   invoke<{ task_id: string }>("agent_send_message", { employeeId, text, commitmentId });
 export interface WatchSnapshot {
   employee: Employee;
+  llm_model: string | null;
   commitments: unknown[];
   tasks: unknown[];
   artifacts: unknown[];
   memory: { notes: string[]; last_artifact_id: string | null } | null;
   events: { id: string; kind: string; detail: string; created_at: string }[];
+  messages: {
+    id: string;
+    direction: "in" | "out";
+    text: string;
+    commitment_id: string | null;
+    artifact_id: string | null;
+    created_at: string;
+  }[];
 }
 export const agentWatch = (employeeId: string): Promise<WatchSnapshot> =>
   invoke<WatchSnapshot>("agent_watch", { employeeId });
+export const agentCreateCommitment = (
+  employeeId: string,
+  title: string,
+  completionCondition: string,
+): Promise<{ commitment_id: string }> =>
+  invoke<{ commitment_id: string }>("agent_create_commitment", {
+    employeeId,
+    title,
+    completionCondition,
+  });
+export const agentSatisfyCommitment = (commitmentId: string): Promise<void> =>
+  invoke<void>("agent_satisfy_commitment", { commitmentId });

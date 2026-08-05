@@ -67,20 +67,39 @@ pub async fn complete(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
-    let mut req = client.post(&url).json(&body);
-    if let Some(key) = env_key_for(endpoint) {
-        req = req.header("Authorization", format!("Bearer {key}"));
-    }
-    let resp = req.send().await.context("LLM 請求失敗")?;
-    if !resp.status().is_success() {
+    let key = env_key_for(endpoint);
+    // 429（速率限制）與暫時性網路錯誤：等待後重試——TPM 隨時間回補。
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..3u32 {
+        let mut req = client.post(&url).json(&body);
+        if let Some(k) = &key {
+            req = req.header("Authorization", format!("Bearer {k}"));
+        }
+        let resp = match req.send().await.context("LLM 請求失敗") {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+        };
         let status = resp.status();
+        if status.is_success() {
+            let chat: ChatResponse = resp.json().await.context("LLM 回應非預期 JSON")?;
+            return chat
+                .choices
+                .into_iter()
+                .next()
+                .and_then(|c| c.message.content)
+                .ok_or_else(|| anyhow!("LLM 回應沒有 content"));
+        }
+        if status.as_u16() == 429 && attempt < 2 {
+            eprintln!("[llm] 429 rate limit，20s 後重試（attempt {}）", attempt + 1);
+            tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+            continue;
+        }
         let text = resp.text().await.unwrap_or_default();
         return Err(anyhow!("LLM 回應非 2xx（{status}）：{text}"));
     }
-    let chat: ChatResponse = resp.json().await.context("LLM 回應非預期 JSON")?;
-    chat.choices
-        .into_iter()
-        .next()
-        .and_then(|c| c.message.content)
-        .ok_or_else(|| anyhow!("LLM 回應沒有 content"))
+    Err(last_err.unwrap_or_else(|| anyhow!("LLM 重試耗盡")))
 }

@@ -45,6 +45,7 @@
     "noTemplate": "(standalone)",
     "rightClickHint": "Right-click a card to manage",
     "message": "Message…",
+    "chat": "Chat…",
     "messageTitle": "Message",
     "messagePh": "Type a message to this employee…",
     "send": "Send",
@@ -53,7 +54,14 @@
     "watchTasks": "Current tasks",
     "watchArtifacts": "Recent artifacts",
     "watchEvents": "Lifecycle events",
-    "watchNone": "(none)"
+    "watchNone": "(none)",
+    "delegate": "Delegate…",
+    "delegateTitle": "Commitment title",
+    "delegateTitlePh": "e.g. Track the etching-yield incident to closure",
+    "delegateCondition": "Completion condition",
+    "delegateConditionPh": "e.g. A report with an action timeline and financial impact is produced",
+    "delegateHint": "On create, the employee wakes and works toward this until done.",
+    "delegateCreate": "Delegate"
   },
   "app": {
     "nav": {
@@ -159,6 +167,11 @@
       "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\nDefinition: .\n\nKey points:\n- \n",
       "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
     }
+  },
+  "chat": {
+    "empty": "No messages yet. Send one to start the conversation.",
+    "inputPh": "Message…",
+    "send": "Send"
   },
   "operations": {
     "title": "Operations — GBrain CLI",

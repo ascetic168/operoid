@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { Plus, Loader2, X, UserSquare } from "lucide-vue-next";
 import { useAgentStore } from "@/stores/agent";
 import { useBrainsStore } from "@/stores/brains";
@@ -8,6 +9,7 @@ import { agentWatch, formatError, type Employee, type WatchSnapshot } from "@/li
 import ContextMenu, { type MenuItem } from "@/components/ContextMenu.vue";
 
 const { t } = useI18n();
+const router = useRouter();
 const store = useAgentStore();
 const brains = useBrainsStore();
 
@@ -41,8 +43,9 @@ function openMenu(e: MouseEvent, emp: Employee) {
   menu.value = { x: e.clientX, y: e.clientY, emp };
 }
 const menuItems = computed<MenuItem[]>(() => [
+  { key: "chat", label: t("instances.chat") },
   { key: "detail", label: t("instances.detail") },
-  { key: "message", label: t("instances.message") },
+  { key: "delegate", label: t("instances.delegate") },
   { key: "watch", label: t("instances.watch") },
   { key: "rename", label: t("instances.rename") },
   { key: "delete", label: t("instances.delete"), danger: true },
@@ -50,8 +53,9 @@ const menuItems = computed<MenuItem[]>(() => [
 function onMenuSelect(key: string) {
   const emp = menu.value?.emp;
   if (!emp) return;
-  if (key === "detail") detailTarget.value = emp;
-  else if (key === "message") openMessage(emp);
+  if (key === "chat") router.push({ name: "employee-chat", params: { id: emp.id } });
+  else if (key === "detail") detailTarget.value = emp;
+  else if (key === "delegate") openDelegate(emp);
   else if (key === "watch") openWatch(emp);
   else if (key === "rename") openRename(emp);
   else if (key === "delete") deleteTarget.value = emp;
@@ -105,11 +109,6 @@ async function submitRename() {
 const messageTarget = ref<Employee | null>(null);
 const messageText = ref("");
 const messageBusy = ref(false);
-function openMessage(e: Employee) {
-  messageTarget.value = e;
-  messageText.value = "";
-  errorMsg.value = null;
-}
 async function submitMessage() {
   if (!messageTarget.value || !messageText.value.trim()) return;
   messageBusy.value = true;
@@ -158,6 +157,35 @@ function closeWatch() {
 onUnmounted(() => {
   if (watchTimer) clearInterval(watchTimer);
 });
+
+// ── 交辦（建立承諾，後端立即喚醒員工自主跑）──
+const delegateTarget = ref<Employee | null>(null);
+const delegateTitle = ref("");
+const delegateCondition = ref("");
+const delegateBusy = ref(false);
+function openDelegate(e: Employee) {
+  delegateTarget.value = e;
+  delegateTitle.value = "";
+  delegateCondition.value = "";
+  errorMsg.value = null;
+}
+async function submitDelegate() {
+  if (!delegateTarget.value || !delegateTitle.value.trim() || !delegateCondition.value.trim()) return;
+  delegateBusy.value = true;
+  errorMsg.value = null;
+  try {
+    await store.createCommitment(
+      delegateTarget.value.id,
+      delegateTitle.value.trim(),
+      delegateCondition.value.trim(),
+    );
+    delegateTarget.value = null;
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  } finally {
+    delegateBusy.value = false;
+  }
+}
 
 // ── 詳情 ──
 const detailTarget = ref<Employee | null>(null);
@@ -420,9 +448,13 @@ async function confirmDelete() {
           </div>
           <div>
             <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchArtifacts") }}</div>
-            <div v-if="watchData && watchData.artifacts.length" class="flex flex-col gap-0.5">
-              <div v-for="a in watchData.artifacts" :key="(a as any).id" class="truncate text-xs">
-                ◇ {{ (a as any).title }}
+            <div v-if="watchData && watchData.artifacts.length" class="flex flex-col gap-2">
+              <div v-for="(a, idx) in watchData.artifacts" :key="(a as any).id">
+                <div class="truncate text-xs font-medium">◇ {{ (a as any).title }}</div>
+                <div
+                  v-if="idx === 0 && (a as any).content"
+                  class="mt-1 max-h-44 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 text-[11px] leading-relaxed text-foreground"
+                >{{ (a as any).content }}</div>
               </div>
             </div>
             <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
@@ -445,6 +477,58 @@ async function confirmDelete() {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 交辦 modal（建立承諾，立即喚醒）-->
+    <div
+      v-if="delegateTarget"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      @click.self="delegateTarget = null"
+    >
+      <div class="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <h3 class="mb-1 font-semibold">{{ t("instances.delegate") }}</h3>
+        <p class="mb-3 text-xs text-muted-foreground">{{ delegateTarget.name }}</p>
+        <div class="flex flex-col gap-3">
+          <label class="flex flex-col gap-1 text-xs">
+            {{ t("instances.delegateTitle") }}
+            <input
+              v-model="delegateTitle"
+              type="text"
+              :placeholder="t('instances.delegateTitlePh')"
+              class="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+            />
+          </label>
+          <label class="flex flex-col gap-1 text-xs">
+            {{ t("instances.delegateCondition") }}
+            <textarea
+              v-model="delegateCondition"
+              rows="3"
+              :placeholder="t('instances.delegateConditionPh')"
+              class="resize-none rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+            />
+          </label>
+          <p class="text-xs text-muted-foreground">{{ t("instances.delegateHint") }}</p>
+          <p v-if="errorMsg" class="text-xs text-destructive">{{ errorMsg }}</p>
+        </div>
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent"
+            @click="delegateTarget = null"
+          >
+            {{ t("common.cancel") }}
+          </button>
+          <button
+            type="button"
+            :disabled="delegateBusy || !delegateTitle.trim() || !delegateCondition.trim()"
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            @click="submitDelegate"
+          >
+            <Loader2 v-if="delegateBusy" :size="13" class="animate-spin" />
+            {{ t("instances.delegateCreate") }}
+          </button>
         </div>
       </div>
     </div>

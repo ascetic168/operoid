@@ -1,4 +1,4 @@
-# Chapter 20 — Roadmap
+# Chapter 21 — Roadmap
 
 Version: 0.1
 Status: Draft
@@ -87,7 +87,7 @@ Looking further out, the architecture is designed to accommodate:
 - **Distributed Runtime** — execution across many nodes, with state still durably restored on every wake.
 - **Human-agent teams** — humans and Employees as true peers inside Projects, with clear authority and accountability on both sides.
 
-None of these require new core concepts. Each is an extension of Employee, Brain, Workspace, Artifact, Tool, Commitment, and Runtime. **That is the test of a sound architecture: the future fits inside the concepts, instead of breaking them.**
+Most of these require no new core concepts — each is an extension of Employee, Brain, Workspace, Artifact, Tool, Commitment, and Runtime. The one exception is **human-agent teams**: bidirectional, reviewable conversational interaction between human and agent needs a dedicated interaction-layer concept, namely Message (Ch.16, added in v0.2). It does not replace work outputs (still Artifact / Commitment); it carries the exchange itself. **That is the test of a sound architecture: the future fits inside the concepts, instead of breaking them.**
 
 ---
 

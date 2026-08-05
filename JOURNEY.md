@@ -223,6 +223,36 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 
 ---
 
+## Phase 7 — 人機協作（聊天＋交辦＋提案承諾）
+
+> Phase 6 讓員工會自己醒來工作，但人機介面仍單發（溝通＝一次 Q&A、承諾無 UI 入口、員工不會發問／提案）。Phase 7 升級為**雙向多次對話**＋**交辦承諾**＋**員工提案承諾待人類核可**。範圍決策：**新增 Message 一級概念**（接受 Handbook 修訂）＋**分階段 7a→7b→7c**。計畫見 `.claude/plans/soft-tickling-swan.md`（Phase 7 段）。
+
+### 7a — 交辦承諾 ＋ 立即喚醒（無需改手冊）
+
+- **目標**：右鍵交辦 → 員工立即自主跑該承諾，不必重啟 app。
+- **退出條件：**
+  - [x] `agent_create_commitment` 建立後**背景立即喚醒**（busy-lock 把關、非阻塞）。
+  - [x] 前端：右鍵「交辦…」modal（標題＋完成條件）、wrapper、store action、i18n 三語。
+  - [x] `cargo test` 94 全綠、`npm run build` 0 error。
+- **狀態：✅ 完成（2026-08-03）。** 落點：`runtime.rs` 抽 `run_commitments_for_employee` helper（鎖＋tool/ctx/reasoner＋清 Inbox＋每個 Active commitment 跑 run_autonomous），`agent_create_commitment` 與 `scheduler::scan_commitments` 共用（排程器掃描簡化為候選＋委派）；前端 `tauri.ts`／`stores/agent.ts`／`EmployeeInstanceView.vue`（交辦 modal）／i18n。
+
+### 7b — Message 概念 ＋ 聊天 ＋ 對話迴圈 ＋ 員工發問（含 Handbook 修訂）
+
+- **目標**：雙向多次聊天介面；員工 Reasoner 驅動回覆（可反問）；新增 Message 一級概念。
+- **退出條件：**
+  - [x] **先手冊後碼**：Handbook 新增 **Ch.16 Message**（中英）＋**Part IV 重編 16→17–21**（10 檔改名＋header＋Security→Tool-SDK 交叉引用）＋README（v0.2、TOC、概念表、概念圖）＋Ch.04 Inbox／Ch.18 Agent-SDK 封閉清單／Ch.21 Roadmap §7 交叉引用。明文調和反聊天立場（Message 是互動層，durable 仍是 Artifact／Commitment）。
+  - [x] `Message` model＋`MessageDirection{In,Out}`＋Store（put_message／list_messages_by_employee，trait+Json+Sqlite＋`messages` 表）。
+  - [x] `agent_send_message` 同時寫 `Message{In}`；`run_conversational_turn`（知識檢索→Reasoner 回覆答案／反問→`Message{Out}`＋artifact）；`run_inbox` 注入 `Option<&Reasoner>`，訊息 task 走對話回合（無 reasoner 退回 gbrain 單發，守 6c）；`scan_inbox` best-effort 建 reasoner；`agent_watch` 加 `messages`。
+  - [x] 前端 `EmployeeChatView`（`/instances/:id/chat`，氣泡列表 In 左／Out 右、輪詢 1.5s、auto-scroll、Enter 送出）；右鍵「對話…」入口；i18n 三語。
+  - [x] `cargo test` 95 全綠（新增 conversational reply 測試）＋`npm run build` 0 error。
+- **狀態：✅ 完成（2026-08-04）。** 落點：`handbook/*`（Message 章＋重編＋多處，中英）；`domain/{models,store,sqlite_store,mod,tools(?)} .rs`；`runtime.rs`（Message＋run_conversational_turn＋run_inbox Option reasoner＋agent_send_message In＋agent_watch messages）；`scheduler.rs`（scan_inbox reasoner）；`EmployeeChatView.vue`(新)／`router.ts`／`tauri.ts`／`EmployeeInstanceView.vue`／i18n。
+
+### 7c — 員工提案承諾 ＋ 人類核可（含 Ch.11 修訂）
+
+（待做：Ch.11 加 `Proposed`＋Ch.19 §5 通用化；`agent_propose/approve/reject_commitment`；核可 UI。）
+
+---
+
 ## Horizon — v1 之後
 
 Skill learning、cloning/parallelism、marketplace、federation、distributed runtime、人機團隊——詳見 `handbook/20-Roadmap.md §7`。現階段**不展開**；重點是：這些都不需要新核心概念，是對既有概念的延伸。這正是好架構的檢驗。
@@ -304,7 +334,9 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-08-03 | **Phase 6b ✅** | 承諾驅動——員工憑 Active commitment 自主運行。**先手冊後碼**：Handbook Ch.13 §4 加「自主執行與完成評估（修訂）」（Runtime 可主理多步推理循環＋諮詢 Brain 評估完成，因「何時睡」屬生命週期）、Ch.12 §2 加「投遞工作」、Ch.04 Inbox 補訊息投遞——**中英六檔鏡像**。`domain/tools.rs` 加 `Reasoner` trait＋`parse_json_value`；`runtime.rs` 加 `LlmReasoner`（包既有 `llm::complete`，結構化 JSON）、`build_reasoner`（缺 API key → `llm.noApiKey`）、`run_autonomous`（plan→act→evaluate；done→`Satisfied`、0 產出卡住→`Suspended`、硬錯→`Error`；`CycleBudget` 限流）、`AutonomousOutcome`；`scheduler.rs` 拆 `scan_inbox`（tick）／`scan_commitments`（**啟動一次**，免每次 tick 燒 LLM）。`cargo test` **93 全綠**（新增 satisfies／suspends-on-no-progress）。 | 6c 溝通（Message-driven Trigger＋前端，讓 6a/6b 在 UI 可見） | 承諾僅啟動喚醒（每次 tick 重跑列未來）；真實 gbrain+llm 的 `run_autonomous` ignored 測試待補 |
 | 2026-08-03 | **Phase 6c ✅** | 溝通——Message-driven Trigger 的 UI 觸發源。`agent_send_message(employee_id, text, commitment_id?)`：訊息→Inbox 一個 `Assigned` Task＋push `WakeSignal`（不搶 busy-lock／不執行員工；6a `scan_inbox`／`run_inbox` 消化，訊息無 commitment 也處理）；`lib.rs` 註冊。前端：`tauri.ts` wrapper、`stores/agent.ts` `sendMessage` action、`EmployeeInstanceView` 右鍵「溝通…」＋訊息 modal（textarea）；i18n 三語 `instances.message*`＋補齊 `agent_os.*` 錯誤鍵（employeeBusy 等）。`npm run build`（vue-tsc＋vite）0 error、`cargo check` 0 error。 | 6d 監看（事件 log＋觀察面板，讓訊息後的喚醒可即時看見） | 訊息送出後狀態變化需手動刷新（6d 加輪詢） |
 | 2026-08-03 | **Phase 6d ✅ — Phase 6 完成** | 監看＋生命週期事件。`Event` model（Ch.14 啟發，append-only）＋`events` 表＋`put_event`／`list_events_by_employee`（最新在前）；`record_event` 在 `commit_artifact`／`run_inbox`／`run_autonomous`（wake／satisfied／stalled／errored）記錄。`agent_watch(employee_id)`（state＋commitments＋tasks＋近期 artifacts＋memory＋events）。前端監看 modal：1.5s 輪詢、捲動事件 log（仿 OperationsView console）。i18n 三語。**順帶修 6a bug**：`agent_list_state`／`agent_revise_artifact` 等 **11 個指令**仍讀舊 Roaming DB → 全改 `agent_db_path`。`cargo test` 94 全綠、`npm run build` 0 error。 | **Phase 6 全部完成**（6a–6d） | 真實 gbrain+llm 的 `run_autonomous` ignored 測試待補；csv_people 預存警告 |
+| 2026-08-04 | **Phase 7a ✅** | 交辦承諾＋立即喚醒。抽 `run_commitments_for_employee` helper（busy-lock→tool/ctx/reasoner→清 Inbox→每個 Active commitment 跑 run_autonomous），`agent_create_commitment` 與 `scheduler::scan_commitments` **共用**（掃描簡化為候選＋委派）；`agent_create_commitment` 建立後**背景非阻塞喚醒**（`async_runtime::spawn`，不必重啟 app）。前端：右鍵「交辦…」modal（標題＋完成條件）、`agentCreateCommitment`/`agentSatisfyCommitment` wrapper、`createCommitment` action、i18n 三語 `instances.delegate*`。`cargo test` 94 全綠、`npm run build` 0 error。 | 7b Message 概念（Handbook 修訂）＋聊天＋對話迴圈 | — |
+| 2026-08-04 | **Phase 7b ✅** | Message 概念＋聊天＋對話迴圈。**先手冊後碼**：Handbook 新增 **Ch.16 Message**（中英）＋**Part IV 重編 16→17–21**（10 檔改名＋header＋Security→Tool-SDK 交叉引用）＋README v0.2（TOC／概念表／概念圖）＋Ch.04／Ch.18（封閉清單：Out message 由 Runtime 代發）／Ch.21 §7 交叉引用；明文調和反聊天立場。後端：`Message`／`MessageDirection`＋Store（`messages` 表）＋`run_conversational_turn`（知識檢索→Reasoner 回覆答案／反問→`Message{Out}`）＋`run_inbox` 注入 `Option<&Reasoner>`（訊息走對話回合，無 reasoner 退回 gbrain）＋`agent_send_message` 寫 `Message{In}`＋`agent_watch` 加 messages。前端：`EmployeeChatView`（`/instances/:id/chat`，氣泡 In 左／Out 右、1.5s 輪詢、auto-scroll）＋右鍵「對話…」＋i18n 三語。`cargo test` **95 全綠**、`npm run build` 0 error。 | 7c 員工提案承諾＋人類核可（Ch.11 修訂） | — |
 
-**目前所在：** 🎉 **Phase 6（員工生命週期）完成——6a 地基＋6b 承諾驅動＋6c 溝通＋6d 監看全數落地。** 員工現在會自己醒來：排程器依 Trigger 喚醒（收件匣每次 tick、承諾啟動一次），`run_inbox` 吃待辦、`run_autonomous` 憑 commitment 規劃→行動→評估到完成／卡住才睡；右鍵「溝通」投遞訊息進 Inbox 並喚醒；右鍵「監看」即時看見狀態＋工作＋事件歷程。Handbook P10 已修訂（承諾驅動合規）。後續為 Horizon（完整 agent loop／事件串流／分散式 Runtime 等，皆為既有概念延伸）。待你 `npm run tauri dev` 視覺驗證整條：建員工＋commitment／發訊息／監看。
+**目前所在：** 🚧 **Phase 7（人機協作）——7a 交辦＋7b 聊天完成。** 人機介面升級為雙向多次：右鍵「對話」進聊天頁（氣泡往返、1.5s 輪詢）、右鍵「交辦」建承諾並立即喚醒；員工以 Reasoner 回覆（可反問）。Handbook 新增 Message 一級概念（Ch.16，Part IV 重編）並調和反聊天立場。最後一塊 **7c**（員工提案承諾＋人類核可，Ch.11 修訂）。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。

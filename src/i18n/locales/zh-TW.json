@@ -45,6 +45,7 @@
     "noTemplate": "（獨立建立）",
     "rightClickHint": "在卡片上按右鍵管理",
     "message": "溝通…",
+    "chat": "對話…",
     "messageTitle": "發送訊息",
     "messagePh": "輸入要給這位員工的訊息…",
     "send": "送出",
@@ -53,7 +54,14 @@
     "watchTasks": "目前工作",
     "watchArtifacts": "近期產出",
     "watchEvents": "生命週期事件",
-    "watchNone": "（無）"
+    "watchNone": "（無）",
+    "delegate": "交辦…",
+    "delegateTitle": "承諾標題",
+    "delegateTitlePh": "例如：追蹤蝕刻良率事件到結案",
+    "delegateCondition": "完成條件",
+    "delegateConditionPh": "例如：產出含行動時間表與財務影響的報告",
+    "delegateHint": "建立後員工會立即醒來，朝此目標工作到完成。",
+    "delegateCreate": "交辦"
   },
   "app": {
     "nav": {
@@ -159,6 +167,11 @@
       "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定義：。\n\n要點：\n- \n",
       "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
     }
+  },
+  "chat": {
+    "empty": "尚無訊息。發一則開始對話。",
+    "inputPh": "輸入訊息…",
+    "send": "送出"
   },
   "operations": {
     "title": "操作 — GBrain CLI",

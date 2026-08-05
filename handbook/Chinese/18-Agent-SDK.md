@@ -1,4 +1,4 @@
-# 第十七章 — Agent SDK 代理介面
+# 第十八章 — Agent SDK 代理介面
 
 版本：0.1
 狀態：草稿
@@ -75,7 +75,7 @@ Tool
 
 Agent SDK 遵循三條規則：
 
-1. **介面是最小的。** Run、Pause、Resume、Cancel、OpenProject、CommitArtifact、PublishEvent、Execute。如果某個作業不在這份清單上，Employee 就不該能直接做它。
+1. **介面是最小的。** Run、Pause、Resume、Cancel、OpenProject、CommitArtifact、PublishEvent、Execute。如果某個作業不在這份清單上，Employee 就不該能直接做它。人類↔員工的對話互動（Message，Ch.16）不在這份清單上——員工對人類的 Out Message 是由 **Runtime 代為產出**（在對話回合中），而非員工直接呼叫的 SDK 作業，故介面仍保持封閉。
 2. **介面是穩定的。** 這些名字應該比任何實作都活得久。新增作業需要架構審查。
 3. **介面遵守邊界。** 沒有任何作業讓 Employee 能重新設定 Workspace、改寫共享知識、自我排程、或控制另一個 Employee。那些權力不屬於 Employee。
 

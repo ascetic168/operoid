@@ -282,6 +282,34 @@ pub struct Event {
     pub created_at: Timestamp,
 }
 
+// ───────────────── Message（Handbook Ch.16，Phase 7b）─────────────────
+
+/// Message 方向：In＝人類→員工、Out＝員工→人類。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageDirection {
+    In,
+    Out,
+}
+
+/// Message——人類與 Employee 一趟對話往返的紀錄（Ch.16）。**互動層，非工作產出**——
+/// 耐久結果仍是 Artifact／Commitment；Message 承載往返本身，供對話頁回顧。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Message {
+    pub id: String,
+    pub workspace_id: String,
+    pub employee_id: String,
+    pub direction: MessageDirection,
+    pub text: String,
+    /// 此趟往返所屬的 Commitment（可選）。
+    #[serde(default)]
+    pub commitment_id: Option<String>,
+    /// 員工回覆附帶的實質產出 Artifact（可選；Out 才有）。
+    #[serde(default)]
+    pub artifact_id: Option<String>,
+    pub created_at: Timestamp,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

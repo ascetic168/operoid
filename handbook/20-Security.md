@@ -1,4 +1,4 @@
-# Chapter 19 — Security
+# Chapter 20 — Security
 
 Version: 0.1
 Status: Draft
@@ -33,7 +33,7 @@ The guiding rule is **least privilege**: an Employee, a Tool, a human — each r
 
 ### Permission
 
-Permission is the *enforcement* of authority at the point of action. When an Employee invokes a Tool, the Runtime checks permission before execution (Chapter 18). Permission is checked, never assumed.
+Permission is the *enforcement* of authority at the point of action. When an Employee invokes a Tool, the Runtime checks permission before execution (Chapter 19). Permission is checked, never assumed.
 
 ### Accountability
 

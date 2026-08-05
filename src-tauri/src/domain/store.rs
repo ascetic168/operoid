@@ -12,8 +12,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use super::models::{
-    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Project,
-    Task, TaskStatus, Workspace,
+    Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Message,
+    Project, Task, TaskStatus, Workspace,
 };
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
@@ -83,6 +83,13 @@ pub trait Store {
     fn put_event(&self, event: &Event) -> Result<()>;
     /// 列出某員工近期事件（最新在前，最多 `limit` 則）。
     fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>>;
+
+    // ── Phase 7b：對話訊息（Message，Ch.16）──
+
+    /// 寫一則對話訊息（人類 In 或員工 Out）。
+    fn put_message(&self, message: &Message) -> Result<()>;
+    /// 列出某員工的對話訊息（最新在前，最多 `limit` 則）。
+    fn list_messages_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Message>>;
 }
 
 /// 檔案式 JSON store。所有實體存於 `<base>/domain/{workspaces,employees,
@@ -310,6 +317,22 @@ impl Store for JsonStore {
         events.reverse(); // Vec 末尾為最新 → 反轉成最新在前
         events.truncate(limit);
         Ok(events)
+    }
+
+    // ── Phase 7b：對話訊息（JsonStore：全集合讀後 in-memory 過濾）──
+
+    fn put_message(&self, message: &Message) -> Result<()> {
+        upsert_by_id(&self.path("messages.json"), message, |m| &m.id)
+    }
+    fn list_messages_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Message>> {
+        let mut msgs: Vec<Message> = self
+            .read::<Message>("messages.json")?
+            .into_iter()
+            .filter(|m| m.employee_id == employee_id)
+            .collect();
+        msgs.reverse();
+        msgs.truncate(limit);
+        Ok(msgs)
     }
 }
 
