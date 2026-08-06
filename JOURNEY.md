@@ -247,9 +247,15 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
   - [x] `cargo test` 95 全綠（新增 conversational reply 測試）＋`npm run build` 0 error。
 - **狀態：✅ 完成（2026-08-04）。** 落點：`handbook/*`（Message 章＋重編＋多處，中英）；`domain/{models,store,sqlite_store,mod,tools(?)} .rs`；`runtime.rs`（Message＋run_conversational_turn＋run_inbox Option reasoner＋agent_send_message In＋agent_watch messages）；`scheduler.rs`（scan_inbox reasoner）；`EmployeeChatView.vue`(新)／`router.ts`／`tauri.ts`／`EmployeeInstanceView.vue`／i18n。
 
-### 7c — 員工提案承諾 ＋ 人類核可（含 Ch.11 修訂）
+### 7c — 員工提案承諾 ＋ 人類核可（含 Ch.11／Ch.20 修訂）
 
-（待做：Ch.11 加 `Proposed`＋Ch.19 §5 通用化；`agent_propose/approve/reject_commitment`；核可 UI。）
+- **目標**：員工在對話中判斷某事該成為承諾時，主動提案（Proposed），待人類核可後成立（Active）。
+- **退出條件：**
+  - [x] **先手冊後碼**：Ch.11 加 `Proposed`／`Rejected` 生命週期＋Ch.20 §5（Security）「提案-核可」通用化到承諾成立（中英）。
+  - [x] `CommitmentStatus::Proposed`／`Rejected`；`agent_propose/approve/reject_commitment`；`agent_watch` 加 `proposals`；`run_conversational_turn` 擴充 Reasoner schema（`kind: propose` → 建 Proposed 承諾 ＋ Out Message 徵求同意）。
+  - [x] 前端：聊天頁 Out 氣泡下方**內嵌 [核可]／[拒絕] 鈕**（commitment_id 比對 proposals）；wrapper；i18n 三語。
+  - [x] `cargo test` 95 全綠 ＋ `npm run build` 0 error。
+- **狀態：✅ 完成（2026-08-06）。** **Phase 7 全部完成**（7a–7c）。
 
 ---
 
@@ -337,6 +343,6 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-08-04 | **Phase 7a ✅** | 交辦承諾＋立即喚醒。抽 `run_commitments_for_employee` helper（busy-lock→tool/ctx/reasoner→清 Inbox→每個 Active commitment 跑 run_autonomous），`agent_create_commitment` 與 `scheduler::scan_commitments` **共用**（掃描簡化為候選＋委派）；`agent_create_commitment` 建立後**背景非阻塞喚醒**（`async_runtime::spawn`，不必重啟 app）。前端：右鍵「交辦…」modal（標題＋完成條件）、`agentCreateCommitment`/`agentSatisfyCommitment` wrapper、`createCommitment` action、i18n 三語 `instances.delegate*`。`cargo test` 94 全綠、`npm run build` 0 error。 | 7b Message 概念（Handbook 修訂）＋聊天＋對話迴圈 | — |
 | 2026-08-04 | **Phase 7b ✅** | Message 概念＋聊天＋對話迴圈。**先手冊後碼**：Handbook 新增 **Ch.16 Message**（中英）＋**Part IV 重編 16→17–21**（10 檔改名＋header＋Security→Tool-SDK 交叉引用）＋README v0.2（TOC／概念表／概念圖）＋Ch.04／Ch.18（封閉清單：Out message 由 Runtime 代發）／Ch.21 §7 交叉引用；明文調和反聊天立場。後端：`Message`／`MessageDirection`＋Store（`messages` 表）＋`run_conversational_turn`（知識檢索→Reasoner 回覆答案／反問→`Message{Out}`）＋`run_inbox` 注入 `Option<&Reasoner>`（訊息走對話回合，無 reasoner 退回 gbrain）＋`agent_send_message` 寫 `Message{In}`＋`agent_watch` 加 messages。前端：`EmployeeChatView`（`/instances/:id/chat`，氣泡 In 左／Out 右、1.5s 輪詢、auto-scroll）＋右鍵「對話…」＋i18n 三語。`cargo test` **95 全綠**、`npm run build` 0 error。 | 7c 員工提案承諾＋人類核可（Ch.11 修訂） | — |
 
-**目前所在：** 🚧 **Phase 7（人機協作）——7a 交辦＋7b 聊天完成。** 人機介面升級為雙向多次：右鍵「對話」進聊天頁（氣泡往返、1.5s 輪詢）、右鍵「交辦」建承諾並立即喚醒；員工以 Reasoner 回覆（可反問）。Handbook 新增 Message 一級概念（Ch.16，Part IV 重編）並調和反聊天立場。最後一塊 **7c**（員工提案承諾＋人類核可，Ch.11 修訂）。
+**目前所在：** 🎉 **Phase 7（人機協作）完成——7a 交辦＋7b 聊天＋7c 員工提案核可全數落地。** 人機介面從單發 Q&A 升級為完整協作：雙向多次聊天（Reasoner 驅動回覆、可反問）、交辦承諾（立即喚醒自主跑）、員工在對話中主動提案承諾（Proposed）待人類核可（Active）。Handbook 新增 Message 一級概念（Ch.16，Part IV 重編）＋修訂 Ch.11（Proposed/Rejected）＋Ch.20 §5（提案-核可通用化）。**Phase 6＋7 全部完成**——員工生命週期＋人機協作的完整願景已兌現。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。

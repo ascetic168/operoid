@@ -171,7 +171,15 @@
   "chat": {
     "empty": "No messages yet. Send one to start the conversation.",
     "inputPh": "Message…",
-    "send": "Send"
+    "send": "Send",
+    "clear": "Clear conversation",
+    "clearConfirmTitle": "Clear conversation?",
+    "clearConfirmText": "This removes all messages in this conversation. Work artifacts and commitments are kept.",
+    "cleared": "Conversation cleared"
+  },
+  "approval": {
+    "approve": "Approve",
+    "reject": "Reject"
   },
   "operations": {
     "title": "Operations — GBrain CLI",
@@ -225,15 +233,37 @@
     "llmKeySet": "API key set",
     "llmKeyMissing": "Missing API key (env var)",
     "llmResolveFail": "Could not resolve: {error}",
-    "rawLabel": "config.json (file-plane edit; provider_base_urls only takes effect here)",
+    "rawLabel": "config.json (advanced; WARNING: model/tier keys may be overridden by DB plane — use the controls above)",
     "writeBack": "Write back config.json",
     "saved": "Saved",
     "jsonParseFail": "JSON parse failed: {e}",
-    "mainModelTitle": "Main model (chat + think)",
-    "mainModelHint": "gbrain think/ask reads models.default, not chat_model. Applying syncs models.default/think = chat_model so think uses this model.",
-    "mainModelPh": "provider:model (e.g. groq:llama-3.3-70b-versatile)",
+    "tierSection": "Model routing (v0.42 tiers)",
+    "tierDesc": "gbrain v0.42 routes tasks to model tiers. Settings write to the DB plane (authoritative) via gbrain config set.",
+    "unifyModel": "Use one model for all tiers",
+    "unifyModelHint": "Apply a single model to chat + all four tiers (utility/reasoning/deep/subagent).",
+    "mainModelTitle": "Main model (applies to all tiers)",
+    "mainModelHint": "Writes chat_model + models.default/think + all four tiers to the DB plane via gbrain config set.",
+    "mainModelPh": "provider:model (e.g. zhipu:glm-5.2)",
     "apply": "Apply",
-    "modelsDefaultLabel": "models.default (used by think/ask)",
+    "tierUtility": "Utility (haiku-class: drift, synopsis)",
+    "tierReasoning": "Reasoning (sonnet-class: think, chat, extraction)",
+    "tierDeep": "Deep (opus-class: auto_think)",
+    "tierSubagent": "Subagent (agent loop)",
+    "tierModelPh": "provider:model",
+    "subagentCacheWarn": "Only Anthropic models support prompt caching. Other providers run the agent loop hot (cost scales linearly with conversation length).",
+    "tierSourceDb": "DB plane (effective)",
+    "tierSourceFile": "file plane",
+    "tierSourceDefault": "default",
+    "dbOverrideBanner": "DB-plane overrides detected — file-plane edits to these keys have no effect:",
+    "clearOverrides": "Clear all DB overrides",
+    "providerUrlSection": "Provider base URLs (file-plane)",
+    "providerUrlDesc": "Written directly to config.json (gbrain config set is a no-op for provider_base_urls). anthropic/zeroentropy use native schema — only gbrain native tasks, not this app's factory structuring.",
+    "providerLabel": "Provider",
+    "baseUrlLabel": "Base URL",
+    "baseUrlPh": "https://...",
+    "filePlaneOnly": "file-plane only",
+    "clear": "Clear",
+    "modelsDefaultLabel": "models.default (file-plane residue)",
     "synced": "in sync",
     "notSynced": "out of sync — apply to fix",
     "appSection": "App settings (app config)",
@@ -246,7 +276,6 @@
     "autoSyncLabel": "Auto commit + sync after factory write",
     "noPullLabel": "Add --no-pull to sync (recommended for brains with no remote)",
     "agentOsLabel": "Enable Agent-OS (employee templates/instances)",
-    "targetsLegend": "Factory target subdirectories (whitelist)",
     "languageLabel": "Interface language",
     "languageAuto": "Auto-detect (system language)"
   },
@@ -348,7 +377,12 @@
     "noApiKey": "LLM provider {provider} is missing its API key (set env var {envKey} and retry)"
   },
   "gbrain": {
-    "exeNotFound": "gbrain executable not found: {path} (fix the gbrain.exe path on the Settings page)"
+    "exeNotFound": "gbrain executable not found: {path} (fix the gbrain.exe path on the Settings page)",
+    "configCliFail": "gbrain config command failed: {detail}",
+    "configSetFail": "Failed to set {key}: {detail}",
+    "configUnsetFail": "Failed to clear {key}: {detail}",
+    "configEmptyValue": "Model value cannot be empty.",
+    "configBadKey": "Unknown config key: {key}"
   },
   "prereq": {
     "git": { "hint": "Version control; needed to git commit before sync after a factory write." },

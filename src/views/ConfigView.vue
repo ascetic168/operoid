@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
-import { Save, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-vue-next";
+import { Save, AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
 import { formatError, tL10n, type AppConfig } from "@/lib/tauri";
 import { LANGUAGE_OPTIONS } from "@/i18n/languageConfig";
@@ -13,7 +13,7 @@ if (!config.ready && !config.loading) config.load();
 // 安全深拷貝（避開 structuredClone 對 Pinia reactive proxy 可能丟 DataCloneError）。
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
-// ---- GBrain raw JSON editor ----
+// ---- GBrain raw JSON editor（進階；model/tier 鍵可能被 DB plane 蓋過） ----
 const rawText = ref("");
 const rawError = ref<string | null>(null);
 const rawSaved = ref(false);
@@ -42,36 +42,135 @@ async function saveRaw() {
 
 const llm = computed(() => config.gbrain?.llm_endpoint ?? null);
 
-// ---- 主模型（chat_model ↔ models.default/think 同步） ----
+// ---- DB-plane 覆寫橫幅 ----
+const dbOverrides = computed(() => config.gbrain?.db_overrides ?? []);
+const clearing = ref(false);
+const clearError = ref<string | null>(null);
+
+async function clearOverrides() {
+  clearing.value = true;
+  clearError.value = null;
+  try {
+    await config.clearDbOverrides();
+  } catch (e) {
+    clearError.value = formatError(e);
+  } finally {
+    clearing.value = false;
+  }
+}
+
+// ---- Tier 路由編輯（v0.42） ----
+// unifyModel=true（預設）：單一輸入框，套用時同步到全部 tier（set_gbrain_models_all）。
+// unifyModel=false：四個 tier 各自獨立編輯（set_gbrain_model）。
+const unifyModel = ref(true);
 const mainModel = ref("");
 const mainModelSaved = ref(false);
 const mainModelError = ref<string | null>(null);
 
+// 四個 tier 的本地輸入值
+const tierInputs = reactive<{ utility: string; reasoning: string; deep: string; subagent: string }>({
+  utility: "",
+  reasoning: "",
+  deep: "",
+  subagent: "",
+});
+const tierSaved = reactive<{ utility: boolean; reasoning: boolean; deep: boolean; subagent: boolean }>({
+  utility: false,
+  reasoning: false,
+  deep: false,
+  subagent: false,
+});
+const tierError = ref<string | null>(null);
+
+// 從 store 同步輸入框初值
 watchEffect(() => {
-  if (config.gbrain) mainModel.value = config.gbrain.chat_model ?? "";
-});
-
-// models.default 是否已與 chat_model 同步（否則 think 仍會用舊模型或 fallback opus）
-const syncedOk = computed(() => {
   const g = config.gbrain;
-  return !!g && !!g.chat_model && g.models_default === g.chat_model;
+  if (!g) return;
+  mainModel.value = g.chat_model ?? "";
+  tierInputs.utility = g.tiers.utility ?? "";
+  tierInputs.reasoning = g.tiers.reasoning ?? "";
+  tierInputs.deep = g.tiers.deep ?? "";
+  tierInputs.subagent = g.tiers.subagent ?? "";
 });
 
+const TIERS = [
+  { key: "utility", modelKey: "models.tier.utility", label: "tierUtility" },
+  { key: "reasoning", modelKey: "models.tier.reasoning", label: "tierReasoning" },
+  { key: "deep", modelKey: "models.tier.deep", label: "tierDeep" },
+  { key: "subagent", modelKey: "models.tier.subagent", label: "tierSubagent" },
+] as const;
+
+// 單一模型套用全部 tier
 async function applyMainModel() {
   mainModelError.value = null;
   mainModelSaved.value = false;
-  if (!config.gbrain) return;
+  const v = mainModel.value.trim();
+  if (!v) {
+    mainModelError.value = t("gbrain.configEmptyValue");
+    return;
+  }
   try {
-    const raw = clone(config.gbrain.raw) as Record<string, unknown>;
-    const v = mainModel.value.trim();
-    if (v) raw.chat_model = v;
-    else delete raw.chat_model;
-    // 後端 save_gbrain_config_raw 會自動同步 models.default/think = chat_model
-    await config.saveGbrainRaw(raw);
+    await config.setGbrainModelsAll(v);
     mainModelSaved.value = true;
   } catch (e) {
     mainModelError.value = formatError(e);
   }
+}
+
+// 設單一 tier
+async function applyTier(tierKey: "utility" | "reasoning" | "deep" | "subagent", modelKey: string) {
+  tierError.value = null;
+  const v = tierInputs[tierKey].trim();
+  if (!v) {
+    tierError.value = t("gbrain.configEmptyValue");
+    return;
+  }
+  try {
+    await config.setGbrainModel(modelKey, v);
+    tierSaved[tierKey] = true;
+  } catch (e) {
+    tierError.value = formatError(e);
+  }
+}
+
+// tier 來源徽章文字
+function tierSourceLabel(src: string): string {
+  if (src === "db") return t("configView.tierSourceDb");
+  if (src === "file") return t("configView.tierSourceFile");
+  return t("configView.tierSourceDefault");
+}
+
+// ---- Provider base URL 編輯（file-plane，直寫 config.json） ----
+const PROVIDERS = [
+  "groq", "openai", "anthropic", "ollama", "deepseek",
+  "together", "openrouter", "zhipu", "dashscope", "zeroentropy",
+];
+const selProvider = ref("zhipu");
+const baseUrl = ref("");
+const baseUrlSaved = ref(false);
+const baseUrlError = ref<string | null>(null);
+
+watchEffect(() => {
+  const pbus = config.gbrain?.provider_base_urls ?? {};
+  // 當前選中 provider 的既有值帶入輸入框
+  baseUrl.value = pbus[selProvider.value] ?? "";
+});
+
+async function applyBaseUrl() {
+  baseUrlError.value = null;
+  baseUrlSaved.value = false;
+  try {
+    const v = baseUrl.value.trim();
+    await config.setProviderBaseUrl(selProvider.value, v || null);
+    baseUrlSaved.value = true;
+  } catch (e) {
+    baseUrlError.value = formatError(e);
+  }
+}
+
+async function clearBaseUrl() {
+  baseUrl.value = "";
+  await applyBaseUrl();
 }
 
 // ---- App config form ----
@@ -84,7 +183,6 @@ const form = reactive<AppConfig>({
   active_source_id: null,
   auto_sync: true,
   sync_no_pull: true,
-  factory_targets: { people: "people", companies: "companies", meetings: "meetings" },
   llm_temperature: 0.2,
   llm_max_tokens: 4096,
   locale: null,
@@ -174,38 +272,135 @@ async function onLocaleChange(v: string) {
         </div>
       </div>
 
-      <!-- 主模型：套用時同步 chat_model + models.default + models.think -->
+      <!-- DB-plane 覆寫警告橫幅 -->
+      <div
+        v-if="dbOverrides.length > 0"
+        class="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"
+      >
+        <AlertTriangle :size="15" class="shrink-0 text-warning" />
+        <span class="text-warning">{{ $t("configView.dbOverrideBanner") }}</span>
+        <code class="text-xs">{{ dbOverrides.join(", ") }}</code>
+        <button
+          class="ml-auto flex items-center gap-1 rounded-md border border-warning/50 px-2 py-1 text-xs text-warning hover:bg-warning/15"
+          :disabled="clearing"
+          @click="clearOverrides"
+        >
+          <Trash2 :size="13" /> {{ $t("configView.clearOverrides") }}
+        </button>
+        <span v-if="clearError" class="w-full text-xs text-destructive">{{ clearError }}</span>
+      </div>
+
+      <!-- Tier 路由編輯（v0.42） -->
       <div class="mt-4 rounded-lg border border-border/60 bg-background/40 p-3 text-sm">
-        <div class="mb-1 font-medium">{{ $t("configView.mainModelTitle") }}</div>
-        <p class="mb-2 text-xs text-muted-foreground">{{ $t("configView.mainModelHint") }}</p>
+        <div class="mb-1 flex items-center gap-2">
+          <span class="font-medium">{{ $t("configView.tierSection") }}</span>
+        </div>
+        <p class="mb-2 text-xs text-muted-foreground">{{ $t("configView.tierDesc") }}</p>
+
+        <!-- 勾選：單一模型 vs 分層 -->
+        <label class="mb-3 flex items-center gap-2 text-xs">
+          <input v-model="unifyModel" type="checkbox" class="h-3.5 w-3.5" />
+          <span>{{ $t("configView.unifyModel") }}</span>
+          <span class="text-muted-foreground">— {{ $t("configView.unifyModelHint") }}</span>
+        </label>
+
+        <!-- 勾選時：單一輸入框，套用全部 tier -->
+        <div v-if="unifyModel">
+          <p class="mb-2 text-xs text-muted-foreground">{{ $t("configView.mainModelHint") }}</p>
+          <div class="flex flex-wrap items-center gap-2">
+            <input
+              v-model="mainModel"
+              :placeholder="$t('configView.mainModelPh')"
+              class="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+            />
+            <button
+              class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+              @click="applyMainModel"
+            >
+              <Save :size="14" /> {{ $t("configView.apply") }}
+            </button>
+            <span v-if="mainModelError" class="text-xs text-destructive">{{ mainModelError }}</span>
+            <span v-else-if="mainModelSaved" class="flex items-center gap-1 text-xs text-green-500">
+              <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
+            </span>
+          </div>
+        </div>
+
+        <!-- 取消勾選時：四個 tier 各自獨立 -->
+        <div v-else class="flex flex-col gap-2">
+          <div v-for="t in TIERS" :key="t.key" class="flex flex-wrap items-center gap-2">
+            <span class="w-40 shrink-0 text-xs text-muted-foreground">{{ $t(`configView.${t.label}`) }}</span>
+            <input
+              v-model="tierInputs[t.key]"
+              :placeholder="$t('configView.tierModelPh')"
+              class="min-w-[14rem] flex-1 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+            />
+            <button
+              class="flex items-center gap-1 rounded-md bg-primary px-2 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+              @click="applyTier(t.key, t.modelKey)"
+            >
+              <Save :size="13" /> {{ $t("configView.apply") }}
+            </button>
+            <span
+              v-if="config.gbrain"
+              class="rounded px-1.5 py-0.5 text-[10px]"
+              :class="config.gbrain.tier_source[t.key] === 'db'
+                ? 'bg-green-500/15 text-green-500'
+                : 'bg-muted text-muted-foreground'"
+            >
+              {{ tierSourceLabel(config.gbrain.tier_source[t.key]) }}
+            </span>
+            <CheckCircle2 v-if="tierSaved[t.key]" :size="13" class="text-green-500" />
+          </div>
+          <!-- subagent prompt-caching 警告 -->
+          <p class="flex items-start gap-1 text-xs text-warning">
+            <AlertTriangle :size="13" class="mt-0.5 shrink-0" />
+            <span>{{ $t("configView.subagentCacheWarn") }}</span>
+          </p>
+          <span v-if="tierError" class="text-xs text-destructive">{{ tierError }}</span>
+        </div>
+      </div>
+
+      <!-- Provider base URL 編輯（file-plane） -->
+      <div class="mt-4 rounded-lg border border-border/60 bg-background/40 p-3 text-sm">
+        <div class="mb-1 font-medium">{{ $t("configView.providerUrlSection") }}</div>
+        <p class="mb-2 text-xs text-muted-foreground">{{ $t("configView.providerUrlDesc") }}</p>
         <div class="flex flex-wrap items-center gap-2">
+          <select
+            v-model="selProvider"
+            class="rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+          >
+            <option v-for="p in PROVIDERS" :key="p" :value="p">{{ p }}</option>
+          </select>
           <input
-            v-model="mainModel"
-            :placeholder="$t('configView.mainModelPh')"
+            v-model="baseUrl"
+            :placeholder="$t('configView.baseUrlPh')"
             class="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
           />
           <button
             class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
-            @click="applyMainModel"
+            @click="applyBaseUrl"
           >
             <Save :size="14" /> {{ $t("configView.apply") }}
           </button>
-          <span v-if="mainModelError" class="text-xs text-destructive">{{ mainModelError }}</span>
-          <span v-else-if="mainModelSaved" class="flex items-center gap-1 text-xs text-green-500">
-            <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
+          <button
+            class="flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+            @click="clearBaseUrl"
+            :title="$t('configView.clear')"
+          >
+            <Trash2 :size="13" /> {{ $t("configView.clear") }}
+          </button>
+          <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            {{ $t("configView.filePlaneOnly") }}
           </span>
-        </div>
-        <div class="mt-2 text-xs text-muted-foreground">
-          <span>{{ $t("configView.modelsDefaultLabel") }}：</span>
-          <code>{{ config.gbrain?.models_default ?? $t("common.dash") }}</code>
-          <span v-if="syncedOk" class="ml-2 text-green-500">{{ $t("configView.synced") }}</span>
-          <span v-else-if="config.gbrain?.chat_model" class="ml-2 text-warning">
-            {{ $t("configView.notSynced") }}
+          <span v-if="baseUrlError" class="w-full text-xs text-destructive">{{ baseUrlError }}</span>
+          <span v-else-if="baseUrlSaved" class="flex items-center gap-1 text-xs text-green-500">
+            <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
           </span>
         </div>
       </div>
 
-      <!-- raw editor -->
+      <!-- raw editor（進階；警告 model/tier 可能被 DB plane 蓋過） -->
       <label class="mt-4 block text-xs text-muted-foreground">{{ $t("configView.rawLabel") }}</label>
       <textarea
         v-model="rawText"
@@ -292,12 +487,6 @@ async function onLocaleChange(v: string) {
             <span>{{ $t("configView.agentOsLabel") }}</span>
           </label>
         </div>
-        <fieldset class="grid grid-cols-3 gap-2 sm:col-span-2">
-          <legend class="mb-1 text-muted-foreground">{{ $t("configView.targetsLegend") }}</legend>
-          <input v-model="form.factory_targets.people" placeholder="people" class="rounded-md border border-border bg-background px-2 py-1.5" />
-          <input v-model="form.factory_targets.companies" placeholder="companies" class="rounded-md border border-border bg-background px-2 py-1.5" />
-          <input v-model="form.factory_targets.meetings" placeholder="meetings" class="rounded-md border border-border bg-background px-2 py-1.5" />
-        </fieldset>
       </div>
       <div class="mt-4 flex items-center gap-3">
         <button

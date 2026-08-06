@@ -81,6 +81,8 @@ Some actions carry enough consequence that Employees must not perform them unila
 
 For such actions, an Employee proposes; a human approves; the action executes only after approval. The approval is itself an Event, so the decision is as accountable as the action.
 
+This propose-approve pattern also applies to **commitment creation**: when an Employee identifies something worth long-term tracking during a conversation, it may propose a Commitment (`Proposed` status, with a completion condition) that enters `Active` only after human approval (Ch.11 §5). The human may also reject it (`Rejected`).
+
 ---
 
 ## 6. Failure Modes

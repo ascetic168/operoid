@@ -13,7 +13,7 @@
 Emploid 的存在，就是为了成为那个环境。
 
 以 **Tauri v2（Rust）** + **Vue 3 + TypeScript** 打造。
-**作者：** 朱國棟 (Charlie Chu) · **授权：** [MIT](#授权) · **状态：** 早期（v0.1.x）—— 见[当前状态](#当前状态)
+**作者：** 朱國棟 (Charlie Chu) · **授权：** [MIT](#授权) · **状态：** v0.2.0 —— 见[当前状态](#当前状态)
 
 ---
 
@@ -72,19 +72,24 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 
 ## 当前状态
 
-Emploid 还在早期。手册为 **v0.1（草稿）**，路线图的第一个里程碑 ——
-*一个能可靠唤醒、工作、再休眠的 Employee* —— 是近期目标。
+架构手册为 **v0.2（草稿）**，而路线图的里程碑已**一路实现至 Phase 7** ——
+手册中的愿景现在是一个运行中的系统，而不只是草稿。
 
-当前版本（v0.1.x）提供的是那个愿景的**桌面外壳与第一批具体表面**，而不是完成的操作系统：
+当前版本（v0.2.x）实现了完整的 Agent-OS 技术栈：
 
 - 一个 **Tauri v2 桌面工作空间**（Vue 3 + TypeScript 前端、Rust 后端）。
 - 一个以 [GBrain](https://github.com/garrytan/gbrain) 为基础的**知识图谱层** ——
   把日常文件（联系人 CSV、会议 PDF、公司介绍）变成互连、可查询的笔记；
   通过 GUI 而非命令行来同步、提问与推理。
+- 完整的 **Agent-OS 执行引擎**（Phase 1–7）：由 Trigger 驱动的 Employee 生命周期引擎；
+  持久化于 SQLite 的 **Artifact 成果物**与 **Commitment 承诺**；
+  **模板 → 实例**（定义一次、部署多次）；**共享 Brain** 让一次升级惠及所有 Employee；
+  **团队、项目与任务交接**实现多 Employee 协作；以及**对话层** —— 人机聊天、
+  消息驱动唤醒、实时观察面板。
 - 第一个**代理入口**：在工作空间内启动并监视 [Claude Code](https://claude.com/claude-code)。
 
-> ℹ️ GBrain 知识图谱功能是当前版本的*知识*层 —— 一个起点，而非产品的天花板。
-> 完整的 Employee / Runtime / Commitment 架构已定义于手册中，并依路线图逐步构建。
+> ℹ️ GBrain 知识图谱功能是当前版本的*知识*层。
+> 手册中定义的 Employee / Runtime / Commitment 架构如今已实现并运行中。
 
 ## 技术栈
 
@@ -136,22 +141,27 @@ cd src-tauri && cargo check   # 后端快速类型检查
 
 ```
 src/              Vue 3 前端（views、Pinia stores、i18n、带类型 IPC 包装）
-src-tauri/src/    Rust 后端（config、converters、factories、gbrain_cli、
-                  claude_code、brains、classifier、note_view、llm、prereq、i18n）
+                  —— Brains、Factories、Config、员工模板／实例、
+                    员工对话、Operations（实时观察面板）
+src-tauri/src/    Rust 后端
+                    config · converters · factories · gbrain_cli · claude_code
+                    brains · classifier · note_view · llm · prereq · i18n
+                    runtime · agent_state · scheduler · note_server
 handbook/         架构手册 —— 宪法（英文 + 中文）
 ```
 
 ## 路线图
 
-路线图勾勒于手册中，按依赖关系排序：
+路线图勾勒于手册中，按依赖关系排序。五个里程碑皆已**实现至 Phase 7**：
 
-1. **一个真正能工作的 Employee** —— 因 Trigger 唤醒、恢复上下文、调用工具、提交成果物、休眠。
-2. **持久化与 Commitment** —— 工作能扛过完全关机与重启。
-3. **共享的 Brain 与知识** —— 升级一个 Brain，多个 Employee 同步采用。
-4. **模板与实例** —— 一个模板，多个独立员工。
-5. **协作** —— 一群 Employee 合作完成一个 Project。
+1. ✅ **一个真正能工作的 Employee** —— 因 Trigger 唤醒、恢复上下文、调用工具、提交成果物、休眠。
+2. ✅ **持久化与 Commitment** —— 工作能扛过完全关机与重启（SQLite）。
+3. ✅ **共享的 Brain 与知识** —— 升级一个 Brain，多个 Employee 同步采用。
+4. ✅ **模板与实例** —— 一个模板，多个独立员工。
+5. ✅ **协作** —— 一群 Employee 合作完成一个 Project（团队 + 项目 + 任务交接）。
 
-完整说明见[第二十章 — 路线图](handbook/Chinese/20-Roadmap.md)。
+Phase 7 新增了**人机协作层**：交办承诺给人类、Message 概念、聊天对话与错误韧性。
+完整说明见[第二十一章 — 路线图](handbook/Chinese/21-Roadmap.md)。
 
 ## 授权
 

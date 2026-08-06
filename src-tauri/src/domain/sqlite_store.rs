@@ -451,6 +451,15 @@ impl Store for SqliteStore {
         }
         Ok(out)
     }
+    fn clear_messages_by_employee(&self, employee_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM messages WHERE employee_id = ?1",
+            params![employee_id],
+        )
+        .map_err(|e| anyhow!("clear_messages_by_employee: {e}"))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -9,7 +9,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::{frontmatter, slug, wikilink};
-use crate::config::{gbrain_config::LlmEndpoint, AppConfig, FactoryTargets};
+use crate::config::{gbrain_config::LlmEndpoint, AppConfig};
 use crate::llm;
 
 /// LLM 回傳的結構化頁面。
@@ -38,11 +38,11 @@ pub struct TimelineEntry {
 }
 
 /// 產出：slug + 合規 markdown。
-pub fn render(factory: &str, sp: &StructuredPage, targets: &FactoryTargets) -> (String, String) {
+pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
     let (dir, default_type, default_tags): (&str, &str, Vec<&str>) = match factory {
-        "companies" => (&targets.companies, "company", vec!["companies", "contact"]),
-        "meeting" => (&targets.meetings, "meeting", vec!["meeting"]),
-        "people" => (&targets.people, "person", vec!["people", "contact"]),
+        "companies" => ("companies", "company", vec!["companies", "contact"]),
+        "meeting" => ("meetings", "meeting", vec!["meeting"]),
+        "people" => ("people", "person", vec!["people", "contact"]),
         "concepts" => ("concepts", "concept", vec!["concept"]),
         "projects" => ("projects", "project", vec!["project"]),
         _ => ("concepts", "concept", vec![]),
@@ -307,8 +307,7 @@ mod tests {
             timeline: vec![],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let targets = FactoryTargets::default();
-        let (slug, md) = render("companies", &sp, &targets);
+        let (slug, md) = render("companies", &sp);
         assert_eq!(slug, "acme-corp");
         assert!(md.starts_with("---\ntype: company\ntitle: 'Acme Corp'\ntags: [companies, contact]\n---"));
         assert!(md.contains("# Acme Corp"));
@@ -329,8 +328,7 @@ mod tests {
             }],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let targets = FactoryTargets::default();
-        let (slug, md) = render("meeting", &sp, &targets);
+        let (slug, md) = render("meeting", &sp);
         assert_eq!(slug, "q3-review");
         assert!(md.contains("<!-- timeline -->"));
         assert!(md.contains("### 2026-06-15 — Q3 Review"));

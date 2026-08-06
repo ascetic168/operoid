@@ -15,7 +15,7 @@ action to closure. Those responsibilities need an environment that
 Emploid exists to be that environment.
 
 Built with **Tauri v2 (Rust)** + **Vue 3 + TypeScript**.
-**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** early (v0.1.x) — see [Current status](#current-status)
+**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** v0.2.0 — see [Current status](#current-status)
 
 ---
 
@@ -78,21 +78,25 @@ which is the constitution of this operating system.
 
 ## Current status
 
-Emploid is early. The handbook is at **v0.1 (Draft)**, and the roadmap's first
-milestone — *one Employee that reliably wakes, does work, and sleeps* — is the
-near-term goal.
+The Architecture Handbook is at **v0.2 (Draft)**, and the roadmap's milestones
+have been **built end-to-end through Phase 7** — the vision in the handbook is
+now a running system, not just a draft.
 
-What exists in the current build (v0.1.x) is the **desktop shell and the first
-concrete surfaces** of that vision, not the finished OS:
+The current build (v0.2.x) implements the full Agent-OS stack:
 
 - A **Tauri v2 desktop workspace** (Vue 3 + TypeScript frontend, Rust backend).
 - A **knowledge-graph foundation** built on [GBrain](https://github.com/garrytan/gbrain) — turn everyday files (contacts CSVs, meeting PDFs, company write-ups) into linked, queryable notes; sync, ask, and reason over them through a GUI instead of the CLI.
+- A full **Agent-OS runtime** (Phases 1–7): an Employee lifecycle engine driven
+  by Triggers; durable **Artifacts** and **Commitments** persisted in SQLite;
+  **Templates → Instances** (define once, deploy many); **shared Brains** so one
+  upgrade reaches every Employee; **Teams, Projects, and Task handoff** for
+  multi-Employee collaboration; and a **conversational layer** with human–agent
+  chat, message-driven waking, and a live observation panel.
 - A first **agent entry point**: launch and monitor [Claude Code](https://claude.com/claude-code) from inside the workspace.
 
-> ℹ️ The GBrain knowledge-graph features are the *knowledge* layer of today's
-> build — a starting point, not the product's ceiling. The full
-> Employee / Runtime / Commitment architecture is defined in the handbook and
-> being built toward the roadmap.
+> ℹ️ The GBrain knowledge-graph features are the *knowledge* layer of the build.
+> The Employee / Runtime / Commitment architecture — defined in the handbook —
+> is now implemented and running.
 
 ## Tech stack
 
@@ -148,22 +152,30 @@ cd src-tauri && cargo check   # fast backend typecheck
 
 ```
 src/              Vue 3 frontend (views, Pinia stores, i18n, typed IPC wrappers)
-src-tauri/src/    Rust backend (config, converters, factories, gbrain_cli,
-                  claude_code, brains, classifier, note_view, llm, prereq, i18n)
+                  — Brains, Factories, Config, Employee templates/instances,
+                    Employee chat, Operations (live observation panel)
+src-tauri/src/    Rust backend
+                    config · converters · factories · gbrain_cli · claude_code
+                    brains · classifier · note_view · llm · prereq · i18n
+                    runtime · agent_state · scheduler · note_server
 handbook/         The Architecture Handbook — the constitution (EN + 中文)
 ```
 
 ## Roadmap
 
-The roadmap is sketched in the handbook, ordered by dependence:
+The roadmap is laid out in the handbook, ordered by dependence. All five
+milestones have been **implemented through Phase 7**:
 
-1. **One Employee that truly works** — wake on a trigger, restore context, invoke a tool, commit an artifact, sleep.
-2. **Persistence & Commitments** — work survives a full shutdown and restart.
-3. **Shared Brains & Knowledge** — upgrade one Brain, watch many Employees adopt it.
-4. **Templates & Instances** — one template, many independent employees.
-5. **Collaboration** — teams of Employees completing a Project together.
+1. ✅ **One Employee that truly works** — wake on a trigger, restore context, invoke a tool, commit an artifact, sleep.
+2. ✅ **Persistence & Commitments** — work survives a full shutdown and restart (SQLite).
+3. ✅ **Shared Brains & Knowledge** — upgrade one Brain, watch many Employees adopt it.
+4. ✅ **Templates & Instances** — one template, many independent employees.
+5. ✅ **Collaboration** — teams of Employees completing a Project together (Teams + Projects + Task handoff).
 
-See [Chapter 20 — Roadmap](handbook/20-Roadmap.md) for the full picture.
+Phase 7 added the **human-collaboration layer**: commitments handed off to a
+human, the Message concept, conversational chat, and error resilience. See
+[Chapter 21 — Roadmap](handbook/21-Roadmap.md) for the full picture and what
+comes next.
 
 ## License
 

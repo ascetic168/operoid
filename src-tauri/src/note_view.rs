@@ -78,19 +78,20 @@ fn parse_target(target: &str) -> Option<(&str, &str)> {
     Some((dir, stem))
 }
 
-/// 候選「檔案系統子目錄」：factory_targets 三類 + inbox/concepts。用來在 wikilink 的 dir
-/// 與實際目錄（單複數、未知 dir）對不上時，仍能以 stem 在已知目錄裡找到檔。
-fn candidate_dirs(cfg: &config::AppConfig) -> Vec<String> {
-    let mut v: Vec<String> = vec![
-        cfg.factory_targets.people.clone(),
-        cfg.factory_targets.companies.clone(),
-        cfg.factory_targets.meetings.clone(),
-        "inbox".into(),
+/// 候選「檔案系統子目錄」：六類工廠的輸出目錄（寫死）。用來在 wikilink 的 dir 與實際
+/// 目錄（單複數、未知 dir）對不上時，仍能以 stem 在已知目錄裡找到檔。
+///
+/// v0.42 起 gbrain 的 DIR_PATTERN 不再是丟棄閘（#2576），非白名單目錄也能成邊，故此處
+/// 只需涵蓋本系統工廠會寫入的目錄。注意 meeting 工廠寫到複數 `meetings/`。
+fn candidate_dirs() -> Vec<String> {
+    vec![
+        "people".into(),
+        "companies".into(),
+        "meetings".into(),
         "concepts".into(),
-    ];
-    v.sort();
-    v.dedup();
-    v
+        "projects".into(),
+        "inbox".into(),
+    ]
 }
 
 /// 在單一 root 下找 `.md`：先試 wikilink 的 dir，再掃已知目錄，最後大小寫寬容比對。
@@ -289,7 +290,7 @@ async fn resolve_note<R: Runtime>(
     let cfg = config::app_config::load(app).map_err(|e| e.to_string())?;
     let (dir, stem) = parse_target(target)
         .ok_or_else(|| AppError::new("note.notFound").p("target", target))?;
-    let dirs = candidate_dirs(&cfg);
+    let dirs = candidate_dirs();
 
     let roots = collect_roots(app, &cfg).await;
     let file = {

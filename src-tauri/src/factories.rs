@@ -124,9 +124,9 @@ pub async fn factory_save_authored<R: Runtime>(
     let cfg = app_cfg(&app)?;
     let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
     let target_dir = match factory.as_str() {
-        "people" => cfg.factory_targets.people.clone(),
-        "companies" => cfg.factory_targets.companies.clone(),
-        "meeting" => cfg.factory_targets.meetings.clone(),
+        "people" => "people".to_string(),
+        "companies" => "companies".to_string(),
+        "meeting" => "meetings".to_string(),
         "inbox" => "inbox".to_string(),
         "concepts" => "concepts".to_string(),
         "projects" => "projects".to_string(),
@@ -205,9 +205,9 @@ pub fn factory_open_dir<R: Runtime>(
 
     let subdir = match factory.as_str() {
         "inbox" => return Err(AppError::new("factories.openDirInboxHint")),
-        "people" => cfg.factory_targets.people.clone(),
-        "companies" => cfg.factory_targets.companies.clone(),
-        "meeting" => cfg.factory_targets.meetings.clone(),
+        "people" => "people".to_string(),
+        "companies" => "companies".to_string(),
+        "meeting" => "meetings".to_string(),
         "concepts" => "concepts".to_string(),
         "projects" => "projects".to_string(),
         other => return Err(AppError::new("factory.unknown").p("factory", other)),
@@ -302,9 +302,6 @@ async fn run_people(
     notes: &Path,
     paths: &[String],
 ) -> Result<PreviewResult, AppError> {
-    let target = cfg.factory_targets.people.clone();
-    let targets = cfg.factory_targets.clone();
-
     // 僅當含 txt/md 才載 LLM endpoint(純 CSV 批次不要求 API key)。
     let has_text = paths.iter().any(|p| {
         Path::new(p)
@@ -355,7 +352,7 @@ async fn run_people(
                             .iter()
                             .map(|pg| PreviewPage {
                                 slug: pg.slug.clone(),
-                                target_dir: target.clone(),
+                                target_dir: "people".into(),
                                 name: pg.name.clone(),
                                 markdown: pg.markdown.clone(),
                             })
@@ -370,10 +367,10 @@ async fn run_people(
             match read_text(path) {
                 Ok(raw) => match text_to_md::text_to_page("people", &raw, cfg, ep).await {
                     Ok(sp) => {
-                        let (slug, markdown) = text_to_md::render("people", &sp, &targets);
+                        let (slug, markdown) = text_to_md::render("people", &sp);
                         Ok(vec![PreviewPage {
                             slug,
-                            target_dir: target.clone(),
+                            target_dir: "people".into(),
                             name: sp.title,
                             markdown,
                         }])
@@ -441,13 +438,12 @@ async fn run_textual(
             .p("provider", &endpoint.provider)
             .p("envKey", config::gbrain_config::env_key(&endpoint.provider).unwrap_or("?")));
     }
-    let targets = cfg.factory_targets.clone();
     let target_dir = match factory {
-        "companies" => targets.companies.clone(),
-        "meeting" => targets.meetings.clone(),
-        "concepts" => "concepts".into(),
-        "projects" => "projects".into(),
-        _ => "concepts".into(),
+        "companies" => "companies".to_string(),
+        "meeting" => "meetings".to_string(),
+        "concepts" => "concepts".to_string(),
+        "projects" => "projects".to_string(),
+        _ => "concepts".to_string(),
     };
 
     let mut files: Vec<ProcessedFile> = Vec::new();
@@ -474,7 +470,7 @@ async fn run_textual(
         };
         match text_to_md::text_to_page(factory, &raw, cfg, &endpoint).await {
             Ok(sp) => {
-                let (slug, markdown) = text_to_md::render(factory, &sp, &targets);
+                let (slug, markdown) = text_to_md::render(factory, &sp);
                 match write_page(notes, &target_dir, &slug, &markdown) {
                     Ok(f) => written.push(f.to_string_lossy().into_owned()),
                     Err(e) => {
@@ -607,8 +603,8 @@ pub fn extract_companies_run<R: Runtime>(
 ) -> Result<WriteResult, AppError> {
     let cfg = app_cfg(&app)?;
     let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
-    let people_dir = notes.join(&cfg.factory_targets.people);
-    let companies_dir = notes.join(&cfg.factory_targets.companies);
+    let people_dir = notes.join("people");
+    let companies_dir = notes.join("companies");
     std::fs::create_dir_all(&companies_dir).map_err(|e| e.to_string())?;
 
     let aliases =

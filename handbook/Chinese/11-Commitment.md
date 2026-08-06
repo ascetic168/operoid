@@ -58,17 +58,18 @@ Commitment 定義的是*什麼必須隨時間保持為真*；它不執行讓它�
 ## 5. 生命週期
 
 ```
-Created → Active ──────────────► Satisfied → Archived
-              │                     ▲
-              ├─► Suspended ─────────┘   (resumed)
-              │
-              └─► spawns Tasks repeatedly throughout its life
+Proposed → Active ──────────────► Satisfied → Archived
+   │            │                     ▲
+   └─► Rejected ├─► Suspended ─────────┘   (resumed)
+                │
+                └─► spawns Tasks repeatedly throughout its life
 ```
 
-- **Created（建立）** —— 職責被宣告，含完成條件與擁有者。
-- **Active（運作中）** —— Employee 正在處理它，視需要產生 Task。
+- **Proposed（提案）** —— Employee 在對話中識別出一件該長期追蹤的事，主動提案（含完成條件）。等待人類核可。未核可前不運行（不產生 Task、不喚醒）。
+- **Active（運作中）** —— 人類核可（或直接交辦）後，Employee 正在處理它，視需要產生 Task。
 - **Suspended（暫停）** —— 刻意暫停；但未被遺忘。
 - **Satisfied（已滿足）** —— 完成條件已達成。
+- **Rejected（拒絕）** —— 人類拒絕了員工的提案；未進入 Active 即終止。
 - **Archived（封存）** —— 連同完整歷史保留。
 
 一個 Commitment 的壽命是對著它的**完成條件**來衡量，而不是對時間。當條件被滿足，Commitment 就結束 —— 無論為此花了多少個 Task。

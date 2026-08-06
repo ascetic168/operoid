@@ -21,23 +21,6 @@ pub const DEFAULT_BRAIN_ID: &str = "__default__";
 /// 支援的介面語言（與前端 languageConfig 對齊）。
 pub const SUPPORTED_LOCALES: &[&str] = &["zh-TW", "zh-CN", "en"];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FactoryTargets {
-    pub people: String,
-    pub companies: String,
-    pub meetings: String,
-}
-
-impl Default for FactoryTargets {
-    fn default() -> Self {
-        Self {
-            people: "people".into(),
-            companies: "companies".into(),
-            meetings: "meetings".into(),
-        }
-    }
-}
-
 /// 一個註冊的腦。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrainEntry {
@@ -99,9 +82,6 @@ pub struct AppConfig {
     /// sync 是否加 --no-pull（無 remote 的腦建議開）。
     #[serde(default = "default_true")]
     pub sync_no_pull: bool,
-    /// 工廠對應的白名單目標子目錄。
-    #[serde(default)]
-    pub factory_targets: FactoryTargets,
     /// LLM 結構化的取樣溫度。
     #[serde(default = "default_temp")]
     pub llm_temperature: f64,
@@ -243,7 +223,6 @@ impl Default for AppConfig {
             active_source_id: None,
             auto_sync: true,
             sync_no_pull: true,
-            factory_targets: FactoryTargets::default(),
             llm_temperature: default_temp(),
             llm_max_tokens: default_max_tokens(),
             locale: None,

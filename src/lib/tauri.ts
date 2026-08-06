@@ -82,7 +82,7 @@ export interface GBrainConfigView {
   exists: boolean;
   raw: unknown;
   chat_model: string | null;
-  /** models.default — gbrain think/ask 實際讀取的模型（與 chat_model 同步）。 */
+  /** models.default（file-plane 殘值；真正生效值在 DB plane，見 tiers）。 */
   models_default: string | null;
   embedding_model: string | null;
   embedding_dimensions: number | null;
@@ -90,14 +90,30 @@ export interface GBrainConfigView {
   engine: string | null;
   database_path: string | null;
   provider_base_urls: Record<string, string>;
+  /** v0.42 tier 路由：四層各自的有效模型（DB-plane 優先，否則 file/default）。 */
+  tiers: TierModelsView;
+  /** 每個 tier 的來源："db" | "file" | "default"。 */
+  tier_source: TierSourceView;
+  /** DB plane 正在蓋過 file plane 的 model/tier 鍵（前端亮警告）。 */
+  db_overrides: string[];
   llm_endpoint: LlmEndpoint | null;
   llm_error: L10n | null;
 }
 
-export interface FactoryTargets {
-  people: string;
-  companies: string;
-  meetings: string;
+/** 四個 tier 的有效模型值。 */
+export interface TierModelsView {
+  utility: string | null;
+  reasoning: string | null;
+  deep: string | null;
+  subagent: string | null;
+}
+
+/** 每個 tier 的來源標記（"db" | "file" | "default"）。 */
+export interface TierSourceView {
+  utility: string;
+  reasoning: string;
+  deep: string;
+  subagent: string;
 }
 
 export interface AppConfig {
@@ -109,7 +125,6 @@ export interface AppConfig {
   active_source_id: string | null;
   auto_sync: boolean;
   sync_no_pull: boolean;
-  factory_targets: FactoryTargets;
   llm_temperature: number;
   llm_max_tokens: number;
   locale: string | null;
@@ -123,6 +138,25 @@ export const getGbrainConfig = (): Promise<GBrainConfigView> =>
   invoke<GBrainConfigView>("get_gbrain_config");
 export const saveGbrainConfigRaw = (raw: unknown): Promise<void> =>
   invoke<void>("save_gbrain_config_raw", { rawJson: raw });
+
+/** 設單一 model/tier 鍵（走 DB plane via gbrain config set）。 */
+export const setGbrainModel = (key: string, value: string): Promise<void> =>
+  invoke<void>("set_gbrain_model", { key, value });
+/** 單一模型同步到全部 tier + chat_model + models.default/think。 */
+export const setGbrainModelsAll = (model: string): Promise<void> =>
+  invoke<void>("set_gbrain_models_all", { model });
+/** 從 DB plane 移除單一 model/tier 鍵（讓 file/default 生效）。 */
+export const unsetGbrainModel = (key: string): Promise<void> =>
+  invoke<void>("unset_gbrain_model", { key });
+/** 清除所有 DB-plane model/tier 覆寫（修復用）。 */
+export const clearDbOverrides = (): Promise<void> =>
+  invoke<void>("clear_db_overrides");
+/** 設 provider_base_url（直寫檔案；base_url=null 移除覆寫）。 */
+export const setProviderBaseUrl = (
+  provider: string,
+  baseUrl: string | null,
+): Promise<void> => invoke<void>("set_provider_base_url", { provider, baseUrl });
+
 export const getAppConfig = (): Promise<AppConfig> => invoke<AppConfig>("get_app_config");
 export const saveAppConfig = (config: AppConfig): Promise<void> =>
   invoke<void>("save_app_config", { config });
@@ -231,8 +265,9 @@ export interface WriteResult {
 }
 
 /**
- * 工廠／自動分類目標。target_dir 須落在 gbrain 的 DIR_PATTERN 連結白名單，
- * 產出的頁才會在知識圖譜成邊（見 memory: factory-targets-dir-whitelist）。
+ * 工廠／自動分類目標。輸出目錄寫死（people/companies/meetings/concepts/projects，
+ * inbox 走 gbrain capture 不寫檔）。v0.42 起 gbrain 的 DIR_PATTERN 不再是丟棄閘
+ * （#2576），非白名單目錄也能成邊，故目錄名不再需要可配置。
  */
 export type Factory = "people" | "companies" | "meeting" | "inbox" | "concepts" | "projects";
 
@@ -472,10 +507,13 @@ export const agentSendMessage = (
   commitmentId: string | null = null,
 ): Promise<{ task_id: string }> =>
   invoke<{ task_id: string }>("agent_send_message", { employeeId, text, commitmentId });
+export const agentClearMessages = (employeeId: string): Promise<void> =>
+  invoke<void>("agent_clear_messages", { employeeId });
 export interface WatchSnapshot {
   employee: Employee;
   llm_model: string | null;
   commitments: unknown[];
+  proposals: { id: string; title: string; completion_condition: string; status: string }[];
   tasks: unknown[];
   artifacts: unknown[];
   memory: { notes: string[]; last_artifact_id: string | null } | null;
@@ -503,3 +541,7 @@ export const agentCreateCommitment = (
   });
 export const agentSatisfyCommitment = (commitmentId: string): Promise<void> =>
   invoke<void>("agent_satisfy_commitment", { commitmentId });
+export const agentApproveCommitment = (commitmentId: string): Promise<void> =>
+  invoke<void>("agent_approve_commitment", { commitmentId });
+export const agentRejectCommitment = (commitmentId: string): Promise<void> =>
+  invoke<void>("agent_reject_commitment", { commitmentId });

@@ -58,17 +58,18 @@ A Commitment defines *what must remain true over time*; it does not perform the 
 ## 5. Lifecycle
 
 ```
-Created → Active ──────────────► Satisfied → Archived
-              │                     ▲
-              ├─► Suspended ─────────┘   (resumed)
-              │
-              └─► spawns Tasks repeatedly throughout its life
+Proposed → Active ──────────────► Satisfied → Archived
+   │            │                     ▲
+   └─► Rejected ├─► Suspended ─────────┘   (resumed)
+                │
+                └─► spawns Tasks repeatedly throughout its life
 ```
 
-- **Created** — the responsibility is declared, with a completion condition and an owner.
-- **Active** — the Employee is working it, generating Tasks as needed.
+- **Proposed** — an Employee identified something worth long-term tracking during a conversation and proactively proposed it (with a completion condition). Awaits human approval. Does not run until approved (no Tasks, no wake).
+- **Active** — after human approval (or direct delegation), the Employee is working it, generating Tasks as needed.
 - **Suspended** — deliberately paused; not forgotten.
 - **Satisfied** — the completion condition is met.
+- **Rejected** — the human declined the Employee's proposal; it ends without entering Active.
 - **Archived** — retained with its full history.
 
 A Commitment's life is measured against its **completion condition**, not against time. When the condition is met, the Commitment ends — regardless of how many Tasks it took to get there.

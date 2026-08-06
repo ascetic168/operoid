@@ -119,27 +119,61 @@ fn default_models(c: &AppConfig) -> (String, i64, String) {
             l.config
                 .chat_model
                 .clone()
-                .unwrap_or_else(|| "groq:llama-3.3-70b-versatile".into()),
+                .unwrap_or_else(|| gbrain_config::DEFAULT_CHAT_MODEL.into()),
         ),
         _ => (
             "ollama:embeddinggemma".into(),
             768,
-            "groq:llama-3.3-70b-versatile".into(),
+            gbrain_config::DEFAULT_CHAT_MODEL.into(),
         ),
     }
 }
 
-/// 新腦建立後，把 `models.default`/`models.think` 同步成 chat_model。
+/// 新腦建立後，把 chat_model 同步到 DB plane 的 `models.tier.*` + `models.default/think`。
 ///
-/// `gbrain init --chat-model` 只寫頂層 chat_model；但 `gbrain think`/`ask` 讀的是
-/// `models.default`（鏈：models.think → models.default → $GBRAIN_MODEL → opus），
-/// 完全不讀 chat_model。故新腦若不補 models.*，think 會 fallback 到 anthropic opus。
+/// v0.42：`gbrain init --chat-model` 只寫頂層 chat_model；但 runtime 讀 DB plane 的
+/// `models.tier.*`（無則 fallback 到 anthropic claude-*）。若不補，新腦 think/subagent
+/// 會跑到 anthropic（跟你要 ANTHROPIC_API_KEY）。故 init 後用 `gbrain config set` 寫 DB plane。
 ///
-/// 讀該腦 config.json → sync → 寫回。IO/解析錯誤以 String 回傳（供呼叫端包成 AppError）。
-fn sync_new_brain_models(home: &str) -> Result<(), String> {
+/// 同時也寫 file-plane 的 models.default/think（保留舊行為相容）。
+async fn sync_new_brain_models<R: Runtime>(
+    app: &AppHandle<R>,
+    exe: &str,
+    home: &str,
+    chat_model: &str,
+) -> Result<(), String> {
+    // 1. DB plane：chat_model + 四 tier + models.default/think（v0.42 權威層）
+    let keys = [
+        "chat_model",
+        "models.default",
+        "models.think",
+        "models.tier.utility",
+        "models.tier.reasoning",
+        "models.tier.deep",
+        "models.tier.subagent",
+    ];
+    for k in keys {
+        crate::gbrain_cli::config_set(app, exe, Some(home), k, chat_model)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    // 2. file-plane 殘值同步（向後相容；deprecated 但無害）
     let loaded = gbrain_config::load_for(Some(home)).map_err(|e| e.to_string())?;
     let mut raw = loaded.raw;
-    gbrain_config::sync_models_to_chat(&mut raw);
+    {
+        use serde_json::Value;
+        if !raw.is_object() {
+            raw = Value::Object(serde_json::Map::new());
+        }
+        if !raw.get("models").map(|v| v.is_object()).unwrap_or(false) {
+            raw["models"] = Value::Object(serde_json::Map::new());
+        }
+        let target = Value::String(chat_model.to_string());
+        if let Some(models) = raw.get_mut("models").and_then(|v| v.as_object_mut()) {
+            models.insert("default".into(), target.clone());
+            models.insert("think".into(), target);
+        }
+    }
     gbrain_config::save_raw(&loaded.path, &raw).map_err(|e| e.to_string())
 }
 
@@ -209,9 +243,9 @@ pub async fn brains_add<R: Runtime>(
         if code != 0 || !config_json.exists() {
             return Err(AppError::new("brain.initFailed").p("code", code).p("detail", err));
         }
-        // gbrain init 只寫 chat_model；think/ask 讀 models.default。同步寫入，否則
-        // 新腦 think 會 fallback 到 anthropic opus（跟你要 ANTHROPIC_API_KEY）。
-        if let Err(e) = sync_new_brain_models(&home) {
+        // gbrain init 只寫 chat_model；v0.42 runtime 讀 DB plane 的 models.tier.*。
+        // 同步寫入 DB plane（否則 think/subagent fallback 到 anthropic claude-*）。
+        if let Err(e) = sync_new_brain_models(&app, &exe, &home, &cm).await {
             return Err(AppError::new("brain.modelsSyncFailed").p("detail", e));
         }
     } else {

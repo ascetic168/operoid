@@ -6,6 +6,11 @@ import {
   getAppConfig,
   saveAppConfig as saveAppConfigApi,
   saveGbrainConfigRaw,
+  setGbrainModel as setGbrainModelApi,
+  setGbrainModelsAll as setGbrainModelsAllApi,
+  unsetGbrainModel as unsetGbrainModelApi,
+  clearDbOverrides as clearDbOverridesApi,
+  setProviderBaseUrl as setProviderBaseUrlApi,
   setLocale as setLocaleApi,
   formatError,
   type AppInfo,
@@ -62,6 +67,36 @@ export const useConfigStore = defineStore("config", () => {
     await loadGbrain();
   }
 
+  /** 設單一 model/tier 鍵（DB plane），完成後重抓以反映新的 tiers/db_overrides。 */
+  async function setGbrainModel(key: string, value: string) {
+    await setGbrainModelApi(key, value);
+    await loadGbrain();
+  }
+
+  /** 單一模型同步到全部 tier（勾選同步用）。 */
+  async function setGbrainModelsAll(model: string) {
+    await setGbrainModelsAllApi(model);
+    await loadGbrain();
+  }
+
+  /** 移除單一 model/tier 鍵的 DB 覆寫。 */
+  async function unsetGbrainModel(key: string) {
+    await unsetGbrainModelApi(key);
+    await loadGbrain();
+  }
+
+  /** 清除所有 DB-plane model/tier 覆寫（修復用）。 */
+  async function clearDbOverrides() {
+    await clearDbOverridesApi();
+    await loadGbrain();
+  }
+
+  /** 設 provider_base_url（直寫檔案）。 */
+  async function setProviderBaseUrl(provider: string, baseUrl: string | null) {
+    await setProviderBaseUrlApi(provider, baseUrl);
+    await loadGbrain();
+  }
+
   /** 切換介面語言：持久化 + 即時套用。`null` = 回到自動偵測。 */
   async function setLocale(locale: string | null) {
     const eff = await setLocaleApi(locale);
@@ -81,6 +116,11 @@ export const useConfigStore = defineStore("config", () => {
     loadApp,
     saveAppConfig,
     saveGbrainRaw,
+    setGbrainModel,
+    setGbrainModelsAll,
+    unsetGbrainModel,
+    clearDbOverrides,
+    setProviderBaseUrl,
     setLocale,
   };
 });

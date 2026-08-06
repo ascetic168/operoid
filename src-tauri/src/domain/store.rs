@@ -90,6 +90,8 @@ pub trait Store {
     fn put_message(&self, message: &Message) -> Result<()>;
     /// 列出某員工的對話訊息（最新在前，最多 `limit` 則）。
     fn list_messages_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Message>>;
+    /// 清除某員工的全部對話訊息（不影響 artifact／commitment 等工作產出）。
+    fn clear_messages_by_employee(&self, employee_id: &str) -> Result<()>;
 }
 
 /// 檔案式 JSON store。所有實體存於 `<base>/domain/{workspaces,employees,
@@ -333,6 +335,14 @@ impl Store for JsonStore {
         msgs.reverse();
         msgs.truncate(limit);
         Ok(msgs)
+    }
+    fn clear_messages_by_employee(&self, employee_id: &str) -> Result<()> {
+        let path = self.path("messages.json");
+        let remaining: Vec<Message> = read_vec::<Message>(&path)?
+            .into_iter()
+            .filter(|m| m.employee_id != employee_id)
+            .collect();
+        write_vec(&path, &remaining)
     }
 }
 

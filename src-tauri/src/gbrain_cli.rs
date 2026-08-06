@@ -116,6 +116,113 @@ pub(crate) async fn run_capture<R: Runtime>(
     Ok((code, decode_buf(&out.stdout), decode_buf(&out.stderr)))
 }
 
+// ── `gbrain config` 子行程包裝（v0.42 DB-plane 讀寫） ────────────────────
+//
+// gbrain 的 model/tier 設定（chat_model / models.default / models.think /
+// models.tier.*）是 **DB plane**，`config set` 寫入 DB，runtime 優先讀 DB，
+// 檔案層會被靜默蓋過。故設定頁的 model 編輯必須走這些 helper（而非直寫 config.json）。
+//
+// stdout 格式（實測 v0.42.73）：
+//   `gbrain config get <key>` → 第一行為值，第二行 `[config] source: <plane>`；
+//   key 不存在 → exit 1，stdout 空。`[models] ...` 提示走 stderr（會被 2>/dev/null 濾掉，
+//   但 run_capture 分離 stdout/stderr，故我們只取 stdout 第一行）。
+
+/// `gbrain config get <key>`：回傳 (值, 來源 plane)。key 不存在 → None。
+/// 來源 plane 為 stdout 第二行 `[config] source: X` 的 X（"db plane" / "file/env plane"）。
+pub(crate) async fn config_get<R: Runtime>(
+    app: &AppHandle<R>,
+    exe: &str,
+    home: Option<&str>,
+    key: &str,
+) -> Result<Option<(String, String)>, AppError> {
+    let env = env_for_brain(home);
+    let env_ref: Vec<(&str, std::ffi::OsString)> = env;
+    let (code, stdout, _stderr) = run_capture(app, exe, &["config", "get", key], &env_ref)
+        .await
+        .map_err(|e| AppError::new("gbrain.configCliFail").p("detail", e.to_string()))?;
+    if code != 0 {
+        return Ok(None); // key 不存在
+    }
+    let mut lines = stdout.lines();
+    let value = lines.next().unwrap_or("").trim().to_string();
+    // 第二行形如 "[config] source: db plane"
+    let source = lines
+        .next()
+        .and_then(|l| l.split("source:").nth(1))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some((value, source)))
+    }
+}
+
+/// `gbrain config set <key> <value>`：寫入 DB plane。value 不可為空（CLI 會拒絕）。
+pub(crate) async fn config_set<R: Runtime>(
+    app: &AppHandle<R>,
+    exe: &str,
+    home: Option<&str>,
+    key: &str,
+    value: &str,
+) -> Result<(), AppError> {
+    let env = env_for_brain(home);
+    let env_ref: Vec<(&str, std::ffi::OsString)> = env;
+    let (code, _stdout, stderr) =
+        run_capture(app, exe, &["config", "set", key, value], &env_ref)
+            .await
+            .map_err(|e| AppError::new("gbrain.configCliFail").p("detail", e.to_string()))?;
+    if code != 0 {
+        return Err(AppError::new("gbrain.configSetFail")
+            .p("key", key)
+            .p("detail", stderr));
+    }
+    Ok(())
+}
+
+/// `gbrain config unset <key>`：從 DB plane 移除（讓 file plane 或 default 生效）。
+pub(crate) async fn config_unset<R: Runtime>(
+    app: &AppHandle<R>,
+    exe: &str,
+    home: Option<&str>,
+    key: &str,
+) -> Result<(), AppError> {
+    let env = env_for_brain(home);
+    let env_ref: Vec<(&str, std::ffi::OsString)> = env;
+    let (code, _stdout, stderr) = run_capture(app, exe, &["config", "unset", key], &env_ref)
+        .await
+        .map_err(|e| AppError::new("gbrain.configCliFail").p("detail", e.to_string()))?;
+    // unset 不存在的 key 也是成功（冪等）；僅在 CLI 真正報錯時失敗
+    if code != 0 && !stderr.contains("not found") {
+        return Err(AppError::new("gbrain.configUnsetFail")
+            .p("key", key)
+            .p("detail", stderr));
+    }
+    Ok(())
+}
+
+/// `gbrain config unset --pattern <prefix>`：批次移除 DB plane 中符合前綴的鍵。
+/// 用於「清除所有 DB 覆寫」（例如 `models.tier` 清掉全部 tier.* DB 值）。
+pub(crate) async fn config_unset_pattern<R: Runtime>(
+    app: &AppHandle<R>,
+    exe: &str,
+    home: Option<&str>,
+    pattern: &str,
+) -> Result<(), AppError> {
+    let env = env_for_brain(home);
+    let env_ref: Vec<(&str, std::ffi::OsString)> = env;
+    let (code, _stdout, stderr) =
+        run_capture(app, exe, &["config", "unset", "--pattern", pattern], &env_ref)
+            .await
+            .map_err(|e| AppError::new("gbrain.configCliFail").p("detail", e.to_string()))?;
+    if code != 0 {
+        return Err(AppError::new("gbrain.configUnsetFail")
+            .p("key", pattern)
+            .p("detail", stderr));
+    }
+    Ok(())
+}
+
 /// 跑一個子行程，逐行把 stdout/stderr 透過 channel 推給前端；回傳 exit code。
 pub(crate) async fn run_child<R: Runtime>(
     _app: &AppHandle<R>,

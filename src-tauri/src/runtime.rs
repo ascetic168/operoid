@@ -376,11 +376,11 @@ async fn run_conversational_turn(
         task.project_id.as_deref(),
     )?;
 
-    // 2. Reasoner 產生回覆（答案 or 反問）——內容判斷是員工的（Principle 10）。
-    let sys = "你是一名員工，正在回覆人類的訊息。請依提供的知識證據回答；若訊息不清或需要更多資訊才能好好回答，就反問一個釐清問題。只回 JSON：{\"kind\": \"answer\" 或 \"ask\", \"text\": \"給人類的回覆\"}。";
+    // 2. Reasoner 產生回覆（答案／反問／提案）——內容判斷是員工的（Principle 10）。
+    let sys = "你是一名員工，正在回覆人類的訊息。依知識證據回答；若訊息不清或需更多資訊，反問釐清；若你判斷這件事值得長期追蹤（成為承諾），可以提案。只回 JSON：{\"kind\": \"answer\"|\"ask\"|\"propose\", \"text\": \"給人類的回覆\", \"proposal\": {\"title\": \"承諾標題\", \"condition\": \"完成條件\"}}。kind=propose 時才需 proposal。";
     let user = format!("人類訊息：{}\n\n知識證據：\n{}", task.input, output.text);
     // Reasoner 失敗（如 LLM rate limit）→ 退化為知識檢索回覆，不讓對話回合失敗。
-    let (kind, text) = match reasoner.reason(sys, &user).await {
+    let (kind, text, proposal) = match reasoner.reason(sys, &user).await {
         Ok(v) => {
             let kind = v
                 .get("kind")
@@ -392,25 +392,59 @@ async fn run_conversational_turn(
                 .and_then(|x| x.as_str())
                 .map(str::to_string)
                 .unwrap_or_else(|| output.text.clone());
-            (kind, text)
+            let proposal = if kind == "propose" {
+                v.get("proposal").and_then(|p| {
+                    let title = p.get("title")?.as_str()?.to_string();
+                    let condition = p.get("condition")?.as_str()?.to_string();
+                    Some((title, condition))
+                })
+            } else {
+                None
+            };
+            (kind, text, proposal)
         }
         Err(e) => {
             eprintln!("[runtime] 對話 Reasoner 失敗（退化為知識檢索回覆）: {e}");
             (
                 "answer".to_string(),
                 format!("（推理暫時不可用，以下為知識檢索結果）\n\n{}", output.text),
+                None,
             )
         }
     };
 
-    // 3. 寫 Out Message（Ch.16；Runtime 代員工產出，非 SDK op）。
+    // 若 Reasoner 提案 → 建 Proposed 承諾（Ch.11/Ch.20 §5）。
+    let proposed_commitment_id = if let Some((title, condition)) = &proposal {
+        let existing: Vec<String> = store
+            .list_commitments(&workspace_id)?
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        let cid = id_from_name(title, &existing);
+        store.put_commitment(&Commitment {
+            id: cid.clone(),
+            workspace_id: workspace_id.clone(),
+            owner_employee_id: employee_id.to_string(),
+            title: title.clone(),
+            completion_condition: condition.clone(),
+            status: CommitmentStatus::Proposed,
+            created_at: now_rfc3339(),
+            updated_at: now_rfc3339(),
+        })?;
+        record_event(store, &workspace_id, employee_id, "proposed", title.clone());
+        Some(cid)
+    } else {
+        None
+    };
+
+    // 3. 寫 Out Message（Ch.16）；commitment_id 優先指向新提案（讓聊天頁顯示核可鈕）。
     store.put_message(&Message {
         id: fresh_id("msg-out"),
         workspace_id,
         employee_id: employee_id.to_string(),
         direction: MessageDirection::Out,
         text,
-        commitment_id: task.commitment_id.clone(),
+        commitment_id: proposed_commitment_id.clone().or(task.commitment_id.clone()),
         artifact_id: Some(artifact_id.clone()),
         created_at: now_rfc3339(),
     })?;
@@ -418,7 +452,13 @@ async fn run_conversational_turn(
         store,
         &emp.workspace_id,
         employee_id,
-        if kind == "ask" { "ask" } else { "reply" },
+        if kind == "ask" {
+            "ask"
+        } else if kind == "propose" {
+            "propose"
+        } else {
+            "reply"
+        },
         "conversational turn",
     );
     Ok(Some(artifact_id))
@@ -1353,6 +1393,79 @@ pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
     Ok(())
 }
 
+// ───────────────── 員工提案承諾（Phase 7c，Ch.11/Ch.20 §5）─────────────────
+
+/// 員工提案：在對話中識別出該長期追蹤的事 → 建 Proposed 承諾（不喚醒，等人類核可）。
+#[tauri::command]
+pub async fn agent_propose_commitment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+    title: String,
+    completion_condition: String,
+) -> Result<CommitmentResult, AppError> {
+    let store = agent_store(&app)?;
+    let emp = store
+        .get_employee(&employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
+    let ws = emp.workspace_id.clone();
+    let now = now_rfc3339();
+    let existing: Vec<String> = store
+        .list_commitments(&ws)?
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    let commitment_id = id_from_name(&title, &existing);
+    store.put_commitment(&Commitment {
+        id: commitment_id.clone(),
+        workspace_id: ws,
+        owner_employee_id: employee_id,
+        title,
+        completion_condition,
+        status: CommitmentStatus::Proposed,
+        created_at: now.clone(),
+        updated_at: now,
+    })?;
+    Ok(CommitmentResult { commitment_id })
+}
+
+/// 人類核可：Proposed → Active ＋ 喚醒該員工跑 run_commitments_for_employee。
+#[tauri::command]
+pub async fn agent_approve_commitment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    commitment_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    let mut com = store
+        .get_commitment(&commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
+    com.status = CommitmentStatus::Active;
+    com.updated_at = now_rfc3339();
+    let emp_id = com.owner_employee_id.clone();
+    store.put_commitment(&com)?;
+    // 喚醒該員工跑承諾（同 7a 交辦後喚醒）。
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = run_commitments_for_employee(&app2, &emp_id).await;
+    });
+    Ok(())
+}
+
+/// 人類拒絕：Proposed → Rejected。
+#[tauri::command]
+pub async fn agent_reject_commitment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    commitment_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    let mut com = store
+        .get_commitment(&commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
+    com.status = CommitmentStatus::Rejected;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct ReviseResult {
     pub artifact_id: String,
@@ -1681,6 +1794,23 @@ pub async fn agent_send_message<R: tauri::Runtime>(
     Ok(SendMessageResult { task_id })
 }
 
+/// 清除某員工的全部對話訊息（Message）。
+///
+/// 僅清互動層（對話往返）；工作產出（Artifact／Commitment）與事件（Event）不受影響。
+/// 用於對話頁的「清除對話內容」。
+#[tauri::command]
+pub async fn agent_clear_messages<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    store
+        .get_employee(&employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
+    store.clear_messages_by_employee(&employee_id)?;
+    Ok(())
+}
+
 // ───────────────── 監看（Phase 6d）─────────────────
 
 /// 監看：取回某員工的即時觀察快照——給監看 modal 每 ~1.5s 輪詢。
@@ -1707,6 +1837,11 @@ pub async fn agent_watch<R: tauri::Runtime>(
         "employee": emp,
         "llm_model": llm_model,
         "commitments": store.list_active_commitments_by_owner(&employee_id)?,
+        "proposals": store
+            .list_commitments(&emp.workspace_id)?
+            .into_iter()
+            .filter(|c| c.owner_employee_id == employee_id && c.status == CommitmentStatus::Proposed)
+            .collect::<Vec<_>>(),
         "tasks": store.list_assigned_tasks_by_owner(&employee_id)?,
         "artifacts": store
             .list_artifacts_by_producer(&employee_id)?

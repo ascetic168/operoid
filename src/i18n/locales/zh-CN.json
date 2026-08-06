@@ -171,7 +171,15 @@
   "chat": {
     "empty": "尚无消息。发一则开始对话。",
     "inputPh": "输入消息…",
-    "send": "发送"
+    "send": "发送",
+    "clear": "清除对话",
+    "clearConfirmTitle": "清除对话？",
+    "clearConfirmText": "这会移除此对话的所有消息。工作产出（Artifact）与承诺（Commitment）会保留。",
+    "cleared": "对话已清除"
+  },
+  "approval": {
+    "approve": "核可",
+    "reject": "拒绝"
   },
   "operations": {
     "title": "操作 — GBrain CLI",
@@ -225,15 +233,37 @@
     "llmKeySet": "API key 已设",
     "llmKeyMissing": "缺 API key（环境变量）",
     "llmResolveFail": "无法解析：{error}",
-    "rawLabel": "config.json（file-plane 编辑；provider_base_urls 仅此处生效）",
+    "rawLabel": "config.json（进阶；警告：model/tier 键可能被 DB plane 覆写——请用上方控件）",
     "writeBack": "写回 config.json",
     "saved": "已保存",
     "jsonParseFail": "JSON 解析失败：{e}",
-    "mainModelTitle": "主模型（chat + think）",
-    "mainModelHint": "gbrain think/ask 读 models.default 而非 chat_model。套用时自动同步 models.default/think = chat_model，确保 think 使用此模型。",
-    "mainModelPh": "provider:model（例如 groq:llama-3.3-70b-versatile）",
+    "tierSection": "模型路由（v0.42 tier）",
+    "tierDesc": "gbrain v0.42 依 tier 路由任务。设置经 gbrain config set 写入 DB plane（权威层）。",
+    "unifyModel": "全部 tier 用同一个模型",
+    "unifyModelHint": "把单一模型套用到 chat + 四个 tier（utility/reasoning/deep/subagent）。",
+    "mainModelTitle": "主模型（套用至全部 tier）",
+    "mainModelHint": "经 gbrain config set 写入 chat_model + models.default/think + 四个 tier 到 DB plane。",
+    "mainModelPh": "provider:model（例如 zhipu:glm-5.2）",
     "apply": "应用",
-    "modelsDefaultLabel": "models.default（think/ask 使用）",
+    "tierUtility": "Utility（haiku 级：drift、摘要）",
+    "tierReasoning": "Reasoning（sonnet 级：think、chat、抽取）",
+    "tierDeep": "Deep（opus 级：auto_think）",
+    "tierSubagent": "Subagent（代理循环）",
+    "tierModelPh": "provider:model",
+    "subagentCacheWarn": "仅 Anthropic 模型支持 prompt caching。其他 provider 的代理循环会跑 hot（成本随对话长度线性增）。",
+    "tierSourceDb": "DB plane（生效中）",
+    "tierSourceFile": "file plane",
+    "tierSourceDefault": "默认",
+    "dbOverrideBanner": "检测到 DB-plane 覆写——这些键的 file-plane 编辑无效：",
+    "clearOverrides": "清除所有 DB 覆写",
+    "providerUrlSection": "Provider base URL（file-plane）",
+    "providerUrlDesc": "直写 config.json（gbrain config set 对 provider_base_urls 是 no-op）。anthropic/zeroentropy 走 native schema——仅 gbrain 原生任务，不支持本系统工厂结构化。",
+    "providerLabel": "Provider",
+    "baseUrlLabel": "Base URL",
+    "baseUrlPh": "https://...",
+    "filePlaneOnly": "仅 file-plane",
+    "clear": "清除",
+    "modelsDefaultLabel": "models.default（file-plane 残值）",
     "synced": "已同步",
     "notSynced": "未同步 — 套用后即一致",
     "appSection": "本系统设置（app config）",
@@ -246,7 +276,6 @@
     "autoSyncLabel": "工厂写档后自动 commit + sync",
     "noPullLabel": "sync 加 --no-pull（无 remote 的脑建议开）",
     "agentOsLabel": "启用 Agent-OS（员工模板／实体管理）",
-    "targetsLegend": "工厂目标子目录（白名单）",
     "languageLabel": "界面语言",
     "languageAuto": "自动侦测（系统语言）"
   },
@@ -348,7 +377,12 @@
     "noApiKey": "LLM provider {provider} 缺 API key（设环境变量 {envKey} 后重试）"
   },
   "gbrain": {
-    "exeNotFound": "找不到 gbrain 执行档：{path}（请到设置页修正 gbrain.exe 路径）"
+    "exeNotFound": "找不到 gbrain 执行档：{path}（请至设置页修正 gbrain.exe 路径）",
+    "configCliFail": "gbrain config 指令失败：{detail}",
+    "configSetFail": "设置 {key} 失败：{detail}",
+    "configUnsetFail": "清除 {key} 失败：{detail}",
+    "configEmptyValue": "模型值不可为空。",
+    "configBadKey": "未知的 config 键：{key}"
   },
   "prereq": {
     "git": { "hint": "版本控制；工厂写入后 sync 前需要 git commit。" },

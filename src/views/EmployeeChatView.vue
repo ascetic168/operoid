@@ -2,8 +2,16 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { ArrowLeft, Loader2, Send } from "lucide-vue-next";
-import { agentSendMessage, agentWatch, formatError, type WatchSnapshot } from "@/lib/tauri";
+import { ArrowLeft, Eraser, Loader2, Send } from "lucide-vue-next";
+import {
+  agentApproveCommitment,
+  agentClearMessages,
+  agentRejectCommitment,
+  agentSendMessage,
+  agentWatch,
+  formatError,
+  type WatchSnapshot,
+} from "@/lib/tauri";
 
 const props = defineProps<{ id: string }>();
 const { t } = useI18n();
@@ -18,6 +26,52 @@ let timer: ReturnType<typeof setInterval> | null = null;
 
 /** 對話串＝messages 反轉成時序（最舊在上、最新在下）。 */
 const thread = computed(() => (data.value ? [...data.value.messages].reverse() : []));
+
+/** 將 RFC 3339 時間戳格式化為本地 HH:MM。失敗回空字串。 */
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** 目前待核可的提案 commitment IDs（用來在 Out 氣泡上顯示核可／拒絕鈕）。 */
+const proposedIds = computed(
+  () => new Set((data.value?.proposals ?? []).map((p) => p.id)),
+);
+
+async function approve(cid: string) {
+  try {
+    await agentApproveCommitment(cid);
+    await poll();
+  } catch (e) {
+    error.value = formatError(e);
+  }
+}
+async function reject(cid: string) {
+  try {
+    await agentRejectCommitment(cid);
+    await poll();
+  } catch (e) {
+    error.value = formatError(e);
+  }
+}
+
+// ── 清除對話 ──
+const clearOpen = ref(false);
+const clearing = ref(false);
+
+async function confirmClear() {
+  clearing.value = true;
+  try {
+    await agentClearMessages(props.id);
+    clearOpen.value = false;
+    await poll();
+  } catch (e) {
+    error.value = formatError(e);
+  } finally {
+    clearing.value = false;
+  }
+}
 
 async function poll() {
   try {
@@ -77,7 +131,17 @@ function stateColor(s: string | undefined): string {
       <span class="h-2 w-2 rounded-full" :class="stateColor(data?.employee.state)" />
       <span class="text-sm font-medium">{{ data?.employee.name ?? "…" }}</span>
       <span class="text-xs text-muted-foreground">{{ data?.employee.state ?? "" }}</span>
-      <span v-if="data?.llm_model" class="ml-auto rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground">{{ data.llm_model }}</span>
+      <div class="ml-auto flex items-center gap-2">
+        <span v-if="data?.llm_model" class="rounded bg-accent px-1.5 py-0.5 text-[10px] text-muted-foreground">{{ data.llm_model }}</span>
+        <button
+          v-if="thread.length > 0"
+          class="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          :title="t('chat.clear')"
+          @click="clearOpen = true"
+        >
+          <Eraser :size="13" /> {{ t("chat.clear") }}
+        </button>
+      </div>
     </div>
 
     <!-- 對話捲動區 -->
@@ -91,8 +155,8 @@ function stateColor(s: string | undefined): string {
       <div
         v-for="m in thread"
         :key="m.id"
-        class="mb-2 flex"
-        :class="m.direction === 'out' ? 'justify-end' : 'justify-start'"
+        class="mb-2 flex flex-col"
+        :class="m.direction === 'out' ? 'items-end' : 'items-start'"
       >
         <div
           class="max-w-[75%] whitespace-pre-wrap rounded-lg px-3 py-1.5 text-sm"
@@ -103,6 +167,32 @@ function stateColor(s: string | undefined): string {
           "
         >
           {{ m.text }}
+        </div>
+        <!-- 時間戳（氣泡下方） -->
+        <time
+          v-if="formatTime(m.created_at)"
+          class="mt-0.5 px-1 text-[10px] text-muted-foreground"
+          :class="m.direction === 'out' ? 'text-right' : 'text-left'"
+        >
+          {{ formatTime(m.created_at) }}
+        </time>
+        <!-- 提案核可鈕（僅 Out message 的 commitment 在 proposals 待核可時顯示） -->
+        <div
+          v-if="m.direction === 'out' && m.commitment_id && proposedIds.has(m.commitment_id)"
+          class="mt-1 flex gap-2"
+        >
+          <button
+            class="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:opacity-90"
+            @click="approve(m.commitment_id!)"
+          >
+            ✓ {{ t("approval.approve") }}
+          </button>
+          <button
+            class="rounded border border-border px-2.5 py-1 text-xs hover:bg-accent"
+            @click="reject(m.commitment_id!)"
+          >
+            ✗ {{ t("approval.reject") }}
+          </button>
         </div>
       </div>
     </div>
@@ -129,6 +219,38 @@ function stateColor(s: string | undefined): string {
         </button>
       </div>
       <p v-if="error" class="mt-1 text-xs text-destructive">{{ error }}</p>
+    </div>
+
+    <!-- 清除對話確認 modal -->
+    <div
+      v-if="clearOpen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      @click.self="clearOpen = false"
+    >
+      <div class="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <h3 class="mb-2 font-semibold">{{ t("chat.clearConfirmTitle") }}</h3>
+        <p class="text-sm text-muted-foreground">{{ t("chat.clearConfirmText") }}</p>
+        <p v-if="error" class="mt-2 text-xs text-destructive">{{ error }}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent"
+            @click="clearOpen = false"
+          >
+            {{ t("common.cancel") }}
+          </button>
+          <button
+            type="button"
+            :disabled="clearing"
+            class="flex items-center gap-1 rounded-md bg-destructive px-3 py-1.5 text-xs text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+            @click="confirmClear"
+          >
+            <Loader2 v-if="clearing" :size="13" class="animate-spin" />
+            <Eraser v-else :size="13" />
+            {{ t("chat.clear") }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
