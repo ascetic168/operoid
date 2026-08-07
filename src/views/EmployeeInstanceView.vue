@@ -2,10 +2,10 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { Plus, Loader2, X, UserSquare } from "lucide-vue-next";
+import { Archive, Plus, Loader2, X, UserSquare } from "lucide-vue-next";
 import { useAgentStore } from "@/stores/agent";
 import { useBrainsStore } from "@/stores/brains";
-import { agentWatch, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
+import { agentWatch, agentApproveCommitment, agentRejectCommitment, agentArchiveCommitment, agentCancelTask, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
 import ContextMenu, { type MenuItem } from "@/components/ContextMenu.vue";
 
 const { t } = useI18n();
@@ -152,6 +152,40 @@ function closeWatch() {
   if (watchTimer) {
     clearInterval(watchTimer);
     watchTimer = null;
+  }
+}
+// ── 待核可提案審核（獨立於聊天訊息的入口：訊息被截斷／清除後仍可核可）──
+async function approveProposal(cid: string) {
+  try {
+    await agentApproveCommitment(cid);
+    await pollWatch();
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+async function rejectProposal(cid: string) {
+  try {
+    await agentRejectCommitment(cid);
+    await pollWatch();
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+// ── 封存／取消（人類領導的軟刪除：撤回交辦、取消工作、清理已決策項目）──
+async function archiveCommitment(cid: string) {
+  try {
+    await agentArchiveCommitment(cid);
+    await pollWatch();
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+async function cancelTask(tid: string) {
+  try {
+    await agentCancelTask(tid);
+    await pollWatch();
+  } catch (e) {
+    errorMsg.value = formatError(e);
   }
 }
 onUnmounted(() => {
@@ -428,11 +462,39 @@ async function confirmDelete() {
           </button>
         </div>
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4 text-sm">
+          <!-- 待核可提案（獨立於聊天訊息的審核入口：訊息被截斷／清除後仍可核可）-->
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchProposals") }}</div>
+            <div v-if="watchData && watchData.proposals.length" class="flex flex-col gap-2">
+              <div
+                v-for="p in watchData.proposals"
+                :key="p.id"
+                class="rounded-md border border-border bg-background p-2"
+              >
+                <div class="truncate text-xs font-medium">{{ p.title }}</div>
+                <div class="mt-0.5 truncate text-[11px] text-muted-foreground">{{ p.completion_condition }}</div>
+                <div class="mt-1.5 flex gap-2">
+                  <button
+                    class="rounded bg-emerald-600 px-2 py-0.5 text-[11px] text-white hover:opacity-90"
+                    @click="approveProposal(p.id)"
+                  >✓ {{ t("approval.approve") }}</button>
+                  <button
+                    class="rounded border border-border px-2 py-0.5 text-[11px] hover:bg-accent"
+                    @click="rejectProposal(p.id)"
+                  >✗ {{ t("approval.reject") }}</button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
+          </div>
           <div>
             <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchCommitments") }}</div>
             <div v-if="watchData && watchData.commitments.length" class="flex flex-col gap-0.5">
-              <div v-for="c in watchData.commitments" :key="(c as any).id" class="truncate">
-                • {{ (c as any).title }} <span class="text-xs text-muted-foreground">[{{ (c as any).status }}]</span>
+              <div v-for="c in watchData.commitments" :key="(c as any).id" class="flex items-center gap-1">
+                <span class="truncate flex-1">• {{ (c as any).title }} <span class="text-xs text-muted-foreground">[{{ (c as any).status }}]</span></span>
+                <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.archive')" @click="archiveCommitment((c as any).id)">
+                  <Archive :size="12" />
+                </button>
               </div>
             </div>
             <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
@@ -440,8 +502,34 @@ async function confirmDelete() {
           <div>
             <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchTasks") }}</div>
             <div v-if="watchData && watchData.tasks.length" class="flex flex-col gap-0.5">
-              <div v-for="tk in watchData.tasks" :key="(tk as any).id" class="truncate">
-                ▸ {{ (tk as any).objective }} <span class="text-xs text-muted-foreground">[{{ (tk as any).status }}]</span>
+              <div v-for="tk in watchData.tasks" :key="(tk as any).id" class="flex items-center gap-1">
+                <span class="truncate flex-1">▸ {{ (tk as any).objective }} <span class="text-xs text-muted-foreground">[{{ (tk as any).status }}]</span></span>
+                <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.cancelTask')" @click="cancelTask((tk as any).id)">
+                  <X :size="12" />
+                </button>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
+          </div>
+          <!-- 已決策承諾（Satisfied/Rejected；可封存清理）-->
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchResolved") }}</div>
+            <div v-if="watchData && watchData.resolved_commitments.length" class="flex flex-col gap-0.5">
+              <div v-for="c in watchData.resolved_commitments" :key="c.id" class="flex items-center gap-1">
+                <span class="truncate flex-1">• {{ c.title }} <span class="text-xs text-muted-foreground">[{{ c.status }}]</span></span>
+                <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.archive')" @click="archiveCommitment(c.id)">
+                  <Archive :size="12" />
+                </button>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
+          </div>
+          <!-- 已完成工作（Completed/Cancelled；終態，僅顯示）-->
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchCompleted") }}</div>
+            <div v-if="watchData && watchData.completed_tasks.length" class="flex flex-col gap-0.5">
+              <div v-for="tk in watchData.completed_tasks" :key="tk.id" class="truncate">
+                ▸ {{ tk.objective }} <span class="text-xs text-muted-foreground">[{{ tk.status }}]</span>
               </div>
             </div>
             <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>

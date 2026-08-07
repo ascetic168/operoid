@@ -56,6 +56,16 @@ pub trait Store {
     /// 列出**所有** workspace 的員工（排程器啟動掃描用）。
     fn list_all_employees(&self) -> Result<Vec<Employee>>;
 
+    /// 列出**所有** workspace 的 commitments（動詞軌跨員工聚合用）。
+    fn list_all_commitments(&self) -> Result<Vec<Commitment>> {
+        // 預設實作：遍歷 workspaces 再串接。SqliteStore 覆寫為無 where 的 select_all。
+        let mut out = Vec::new();
+        for ws in self.list_workspaces()? {
+            out.extend(self.list_commitments(&ws.id)?);
+        }
+        Ok(out)
+    }
+
     /// 列出某員工具特定狀態的 tasks（status 存於 data blob，故這裡以 owner 為索引取出後在記憶體過濾）。
     fn list_tasks_by_owner(
         &self,
@@ -83,6 +93,8 @@ pub trait Store {
     fn put_event(&self, event: &Event) -> Result<()>;
     /// 列出某員工近期事件（最新在前，最多 `limit` 則）。
     fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>>;
+    /// 列出跨所有員工的近期事件（最新在前，最多 `limit` 則；動詞軌活動流用）。
+    fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>>;
 
     // ── Phase 7b：對話訊息（Message，Ch.16）──
 
@@ -316,6 +328,12 @@ impl Store for JsonStore {
             .into_iter()
             .filter(|e| e.employee_id == employee_id)
             .collect();
+        events.reverse(); // Vec 末尾為最新 → 反轉成最新在前
+        events.truncate(limit);
+        Ok(events)
+    }
+    fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>> {
+        let mut events: Vec<Event> = self.read::<Event>("events.json")?;
         events.reverse(); // Vec 末尾為最新 → 反轉成最新在前
         events.truncate(limit);
         Ok(events)

@@ -360,6 +360,11 @@ impl Store for SqliteStore {
         select_all(&conn, "employees", "", params![])
     }
 
+    fn list_all_commitments(&self) -> Result<Vec<Commitment>> {
+        let conn = self.lock()?;
+        select_all(&conn, "commitments", "", params![])
+    }
+
     fn list_tasks_by_owner(
         &self,
         owner_employee_id: &str,
@@ -419,6 +424,19 @@ impl Store for SqliteStore {
         let mut stmt = conn.prepare(sql).map_err(|e| anyhow!("prepare: {e}"))?;
         let rows = stmt
             .query_map(params![employee_id, limit as i64], |row| row.get::<_, String>(0))
+            .map_err(|e| anyhow!("query: {e}"))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(decode(&r.map_err(|e| anyhow!("row: {e}"))?)?);
+        }
+        Ok(out)
+    }
+    fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>> {
+        let conn = self.lock()?;
+        let sql = "SELECT data FROM events ORDER BY rowid DESC LIMIT ?1";
+        let mut stmt = conn.prepare(sql).map_err(|e| anyhow!("prepare: {e}"))?;
+        let rows = stmt
+            .query_map(params![limit as i64], |row| row.get::<_, String>(0))
             .map_err(|e| anyhow!("query: {e}"))?;
         let mut out = Vec::new();
         for r in rows {

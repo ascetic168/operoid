@@ -515,6 +515,8 @@ export interface WatchSnapshot {
   commitments: unknown[];
   proposals: { id: string; title: string; completion_condition: string; status: string }[];
   tasks: unknown[];
+  resolved_commitments: { id: string; title: string; status: string }[];
+  completed_tasks: { id: string; objective: string; status: string }[];
   artifacts: unknown[];
   memory: { notes: string[]; last_artifact_id: string | null } | null;
   events: { id: string; kind: string; detail: string; created_at: string }[];
@@ -522,7 +524,8 @@ export interface WatchSnapshot {
     id: string;
     direction: "in" | "out";
     text: string;
-    commitment_id: string | null;
+    source_commitment_id: string | null;
+    proposed_commitment_id: string | null;
     artifact_id: string | null;
     created_at: string;
   }[];
@@ -545,3 +548,38 @@ export const agentApproveCommitment = (commitmentId: string): Promise<void> =>
   invoke<void>("agent_approve_commitment", { commitmentId });
 export const agentRejectCommitment = (commitmentId: string): Promise<void> =>
   invoke<void>("agent_reject_commitment", { commitmentId });
+export const agentArchiveCommitment = (commitmentId: string): Promise<void> =>
+  invoke<void>("agent_archive_commitment", { commitmentId });
+export const agentCancelTask = (taskId: string): Promise<void> =>
+  invoke<void>("agent_cancel_task", { taskId });
+
+// ── 動詞軌：跨員工聚合（頂列鈴鐺／待辦／事件頁用）──
+export interface ProposedItem {
+  commitment_id: string;
+  title: string;
+  completion_condition: string;
+  employee_id: string;
+  employee_name: string;
+}
+export interface FlaggedItem {
+  employee_id: string;
+  employee_name: string;
+  state: string;
+}
+export interface InboxSummary {
+  proposals: ProposedItem[];
+  flagged_employees: FlaggedItem[];
+}
+export interface EventWithMeta {
+  id: string;
+  workspace_id: string;
+  employee_id: string;
+  employee_name: string;
+  kind: string;
+  detail: string;
+  created_at: string;
+}
+export const agentInboxSummary = (): Promise<InboxSummary> =>
+  invoke<InboxSummary>("agent_inbox_summary");
+export const agentRecentEvents = (limit?: number): Promise<EventWithMeta[]> =>
+  invoke<EventWithMeta[]>("agent_recent_events", { limit: limit ?? 50 });

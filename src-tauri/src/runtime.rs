@@ -173,6 +173,43 @@ fn record_event(
     });
 }
 
+/// 建立員工主動提案的承諾（Proposed），或重用既有的同標題待核可提案（去重）。
+/// 供 `run_inbox` 使用；回傳 commitment id（供 Out Message 帶上，讓聊天頁顯示核可鈕）。
+fn create_proposed_commitment(
+    store: &dyn Store,
+    workspace_id: &str,
+    employee_id: &str,
+    title: &str,
+    completion_condition: &str,
+) -> anyhow::Result<String> {
+    let existing = store.list_commitments(workspace_id)?;
+    // 去重（缺陷 2）：同 owner + 同標題已有一筆 Proposed → 重用之，更新條件與時間。
+    if let Some(dup) = existing.iter().find(|c| {
+        c.owner_employee_id == employee_id && c.title == title && c.status == CommitmentStatus::Proposed
+    }) {
+        let mut updated = dup.clone();
+        updated.completion_condition = completion_condition.to_string();
+        updated.updated_at = now_rfc3339();
+        store.put_commitment(&updated)?;
+        return Ok(dup.id.clone());
+    }
+    // 無重複 → 新建 Proposed（含 record_event；統一 run_inbox 與已移除命令版的行為）。
+    let ids: Vec<String> = existing.iter().map(|c| c.id.clone()).collect();
+    let id = id_from_name(title, &ids);
+    store.put_commitment(&Commitment {
+        id: id.clone(),
+        workspace_id: workspace_id.to_string(),
+        owner_employee_id: employee_id.to_string(),
+        title: title.to_string(),
+        completion_condition: completion_condition.to_string(),
+        status: CommitmentStatus::Proposed,
+        created_at: now_rfc3339(),
+        updated_at: now_rfc3339(),
+    })?;
+    record_event(store, workspace_id, employee_id, "proposed", title.to_string());
+    Ok(id)
+}
+
 /// 把 Tool 輸出固化為 first-class Committed Artifact（完整 provenance），回傳 artifact_id。
 /// 供 `run_cycle`（單發）與 `run_inbox`／`run_autonomous`（持續）共用——commit 是「暫時→真實」的邊界。
 fn commit_artifact(
@@ -285,7 +322,8 @@ pub async fn run_inbox(
                         employee_id: employee_id.to_string(),
                         direction: MessageDirection::Out,
                         text: output.text,
-                        commitment_id: task.commitment_id.clone(),
+                        source_commitment_id: task.commitment_id.clone(),
+                        proposed_commitment_id: None,
                         artifact_id: aid.clone(),
                         created_at: now_rfc3339(),
                     });
@@ -415,36 +453,26 @@ async fn run_conversational_turn(
 
     // 若 Reasoner 提案 → 建 Proposed 承諾（Ch.11/Ch.20 §5）。
     let proposed_commitment_id = if let Some((title, condition)) = &proposal {
-        let existing: Vec<String> = store
-            .list_commitments(&workspace_id)?
-            .into_iter()
-            .map(|c| c.id)
-            .collect();
-        let cid = id_from_name(title, &existing);
-        store.put_commitment(&Commitment {
-            id: cid.clone(),
-            workspace_id: workspace_id.clone(),
-            owner_employee_id: employee_id.to_string(),
-            title: title.clone(),
-            completion_condition: condition.clone(),
-            status: CommitmentStatus::Proposed,
-            created_at: now_rfc3339(),
-            updated_at: now_rfc3339(),
-        })?;
-        record_event(store, &workspace_id, employee_id, "proposed", title.clone());
-        Some(cid)
+        Some(create_proposed_commitment(
+            store,
+            &workspace_id,
+            employee_id,
+            title,
+            condition,
+        )?)
     } else {
         None
     };
 
-    // 3. 寫 Out Message（Ch.16）；commitment_id 優先指向新提案（讓聊天頁顯示核可鈕）。
+    // 3. 寫 Out Message（Ch.16）；拆分語義：proposed 指向新提案（核可鈕）、source 標記來源責任。
     store.put_message(&Message {
         id: fresh_id("msg-out"),
         workspace_id,
         employee_id: employee_id.to_string(),
         direction: MessageDirection::Out,
         text,
-        commitment_id: proposed_commitment_id.clone().or(task.commitment_id.clone()),
+        proposed_commitment_id: proposed_commitment_id.clone(),
+        source_commitment_id: task.commitment_id.clone(),
         artifact_id: Some(artifact_id.clone()),
         created_at: now_rfc3339(),
     })?;
@@ -1393,42 +1421,11 @@ pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
     Ok(())
 }
 
-// ───────────────── 員工提案承諾（Phase 7c，Ch.11/Ch.20 §5）─────────────────
-
-/// 員工提案：在對話中識別出該長期追蹤的事 → 建 Proposed 承諾（不喚醒，等人類核可）。
-#[tauri::command]
-pub async fn agent_propose_commitment<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    employee_id: String,
-    title: String,
-    completion_condition: String,
-) -> Result<CommitmentResult, AppError> {
-    let store = agent_store(&app)?;
-    let emp = store
-        .get_employee(&employee_id)?
-        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
-    let ws = emp.workspace_id.clone();
-    let now = now_rfc3339();
-    let existing: Vec<String> = store
-        .list_commitments(&ws)?
-        .into_iter()
-        .map(|c| c.id)
-        .collect();
-    let commitment_id = id_from_name(&title, &existing);
-    store.put_commitment(&Commitment {
-        id: commitment_id.clone(),
-        workspace_id: ws,
-        owner_employee_id: employee_id,
-        title,
-        completion_condition,
-        status: CommitmentStatus::Proposed,
-        created_at: now.clone(),
-        updated_at: now,
-    })?;
-    Ok(CommitmentResult { commitment_id })
-}
+// ───────────────── 承諾審核（Phase 7c，Ch.11/Ch.20 §5）─────────────────
+// 提案的建立由 run_inbox 內聯 → create_proposed_commitment（去重 + record_event）。
 
 /// 人類核可：Proposed → Active ＋ 喚醒該員工跑 run_commitments_for_employee。
+/// 狀態守衛：僅 Proposed 可被核可（缺陷 3）。
 #[tauri::command]
 pub async fn agent_approve_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -1438,6 +1435,12 @@ pub async fn agent_approve_commitment<R: tauri::Runtime>(
     let mut com = store
         .get_commitment(&commitment_id)?
         .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
+    if com.status != CommitmentStatus::Proposed {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", &commitment_id)
+            .p("from", format!("{:?}", com.status).to_lowercase())
+            .p("to", "active"));
+    }
     com.status = CommitmentStatus::Active;
     com.updated_at = now_rfc3339();
     let emp_id = com.owner_employee_id.clone();
@@ -1451,6 +1454,7 @@ pub async fn agent_approve_commitment<R: tauri::Runtime>(
 }
 
 /// 人類拒絕：Proposed → Rejected。
+/// 狀態守衛：僅 Proposed 可被拒絕（缺陷 3）。
 #[tauri::command]
 pub async fn agent_reject_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -1460,9 +1464,60 @@ pub async fn agent_reject_commitment<R: tauri::Runtime>(
     let mut com = store
         .get_commitment(&commitment_id)?
         .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
+    if com.status != CommitmentStatus::Proposed {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", &commitment_id)
+            .p("from", format!("{:?}", com.status).to_lowercase())
+            .p("to", "rejected"));
+    }
     com.status = CommitmentStatus::Rejected;
     com.updated_at = now_rfc3339();
     store.put_commitment(&com)?;
+    Ok(())
+}
+
+/// 人類封存：任意狀態 → Archived（軟刪除；資料保留可稽核）。
+/// 已 Archived 者拒絕重複封存。封存不喚醒員工（退出，非啟動）。
+#[tauri::command]
+pub async fn agent_archive_commitment<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    commitment_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    let mut com = store
+        .get_commitment(&commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
+    if com.status == CommitmentStatus::Archived {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", &commitment_id)
+            .p("from", "archived")
+            .p("to", "archived"));
+    }
+    com.status = CommitmentStatus::Archived;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    Ok(())
+}
+
+/// 人類取消：活躍 task（Created/Assigned/InProgress）→ Cancelled（軟刪除）。
+/// 已 Completed/Failed/Cancelled 者拒絕。取消不喚醒員工（退出，非啟動）。
+#[tauri::command]
+pub async fn agent_cancel_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    task_id: String,
+) -> Result<(), AppError> {
+    let store = agent_store(&app)?;
+    let mut tk = store
+        .get_task(&task_id)?
+        .ok_or_else(|| AppError::new("agent_os.taskNotFound").p("id", &task_id))?;
+    if !matches!(tk.status, TaskStatus::Created | TaskStatus::Assigned | TaskStatus::InProgress) {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", &task_id)
+            .p("from", format!("{:?}", tk.status).to_lowercase())
+            .p("to", "cancelled"));
+    }
+    tk.status = TaskStatus::Cancelled;
+    store.put_task(&tk)?;
     Ok(())
 }
 
@@ -1769,7 +1824,8 @@ pub async fn agent_send_message<R: tauri::Runtime>(
         employee_id: employee_id.clone(),
         direction: MessageDirection::In,
         text: text.clone(),
-        commitment_id: commitment_id.clone(),
+        source_commitment_id: commitment_id.clone(),
+        proposed_commitment_id: None,
         artifact_id: None,
         created_at: now.clone(),
     })?;
@@ -1843,6 +1899,16 @@ pub async fn agent_watch<R: tauri::Runtime>(
             .filter(|c| c.owner_employee_id == employee_id && c.status == CommitmentStatus::Proposed)
             .collect::<Vec<_>>(),
         "tasks": store.list_assigned_tasks_by_owner(&employee_id)?,
+        "resolved_commitments": store
+            .list_commitments(&emp.workspace_id)?
+            .into_iter()
+            .filter(|c| {
+                c.owner_employee_id == employee_id
+                    && matches!(c.status, CommitmentStatus::Satisfied | CommitmentStatus::Rejected)
+            })
+            .collect::<Vec<_>>(),
+        "completed_tasks": store
+            .list_tasks_by_owner(&employee_id, &[TaskStatus::Completed, TaskStatus::Cancelled])?,
         "artifacts": store
             .list_artifacts_by_producer(&employee_id)?
             .into_iter()
@@ -1853,6 +1919,110 @@ pub async fn agent_watch<R: tauri::Runtime>(
         "events": store.list_events_by_employee(&employee_id, 20)?,
         "messages": store.list_messages_by_employee(&employee_id, 50)?,
     }))
+}
+
+/// 動詞軌：跨員工聚合「需要人類關注的事」（待核可提案 + 異常狀態員工）。
+#[derive(Serialize)]
+pub struct InboxSummary {
+    pub proposals: Vec<ProposedItem>,
+    pub flagged_employees: Vec<FlaggedItem>,
+}
+#[derive(Serialize)]
+pub struct ProposedItem {
+    pub commitment_id: String,
+    pub title: String,
+    pub completion_condition: String,
+    pub employee_id: String,
+    pub employee_name: String,
+}
+#[derive(Serialize)]
+pub struct FlaggedItem {
+    pub employee_id: String,
+    pub employee_name: String,
+    pub state: String,
+}
+#[tauri::command]
+pub async fn agent_inbox_summary<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<InboxSummary, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
+    // 待核可提案：跨所有 workspace 的 Proposed commitment，join 員工名。
+    let mut proposals = Vec::new();
+    for c in store.list_all_commitments()? {
+        if c.status == CommitmentStatus::Proposed {
+            let name = store
+                .get_employee(&c.owner_employee_id)?
+                .map(|e| e.name)
+                .unwrap_or_else(|| c.owner_employee_id.clone());
+            proposals.push(ProposedItem {
+                commitment_id: c.id,
+                title: c.title,
+                completion_condition: c.completion_condition,
+                employee_id: c.owner_employee_id,
+                employee_name: name,
+            });
+        }
+    }
+    // 異常狀態員工：Error / Paused。
+    let mut flagged_employees = Vec::new();
+    for e in store.list_all_employees()? {
+        if matches!(e.state, EmployeeState::Error | EmployeeState::Paused) {
+            flagged_employees.push(FlaggedItem {
+                employee_id: e.id.clone(),
+                employee_name: e.name,
+                state: format!("{:?}", e.state).to_lowercase(),
+            });
+        }
+    }
+    Ok(InboxSummary {
+        proposals,
+        flagged_employees,
+    })
+}
+
+/// 動詞軌：跨員工最近事件（活動流），每則附員工名。
+#[derive(Serialize)]
+pub struct EventWithMeta {
+    pub id: String,
+    pub workspace_id: String,
+    pub employee_id: String,
+    pub employee_name: String,
+    pub kind: String,
+    pub detail: String,
+    pub created_at: String,
+}
+#[tauri::command]
+pub async fn agent_recent_events<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    limit: Option<usize>,
+) -> Result<Vec<EventWithMeta>, AppError> {
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
+    }
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
+    let limit = limit.unwrap_or(50);
+    let mut out = Vec::new();
+    for ev in store.list_recent_events(limit)? {
+        let name = store
+            .get_employee(&ev.employee_id)?
+            .map(|e| e.name)
+            .unwrap_or_else(|| ev.employee_id.clone());
+        out.push(EventWithMeta {
+            id: ev.id,
+            workspace_id: ev.workspace_id,
+            employee_id: ev.employee_id,
+            employee_name: name,
+            kind: ev.kind,
+            detail: ev.detail,
+            created_at: ev.created_at,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

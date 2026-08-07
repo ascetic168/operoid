@@ -118,9 +118,10 @@ pub fn run() {
             runtime::agent_run,
             runtime::agent_create_commitment,
             runtime::agent_satisfy_commitment,
-            runtime::agent_propose_commitment,
             runtime::agent_approve_commitment,
             runtime::agent_reject_commitment,
+            runtime::agent_archive_commitment,
+            runtime::agent_cancel_task,
             runtime::agent_revise_artifact,
             runtime::agent_list_state,
             runtime::agent_create_project,
@@ -130,6 +131,8 @@ pub fn run() {
             runtime::agent_send_message,
             runtime::agent_clear_messages,
             runtime::agent_watch,
+            runtime::agent_inbox_summary,
+            runtime::agent_recent_events,
         ])
         .setup(|app| {
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。

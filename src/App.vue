@@ -1,18 +1,23 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
+import { useInboxStore } from "@/stores/inbox";
 import { checkPrerequisites, openUrl, tL10n, type DepStatus } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import ClaudeCodeDialog from "@/components/ClaudeCodeDialog.vue";
 
 const config = useConfigStore();
+const inbox = useInboxStore();
 const missingDeps = ref<DepStatus[]>([]);
 const claudeOpen = ref(false);
+const bellOpen = ref(false);
 
 onMounted(async () => {
   config.load();
+  // 動詞軌：啟動全域輪詢（跨員工待辦聚合）。
+  inbox.start();
   // 啟動時檢查前置程式;缺漏則彈出說明視窗。
   try {
     const deps = await checkPrerequisites();
@@ -20,6 +25,9 @@ onMounted(async () => {
   } catch {
     // 檢查本身失敗不阻擋使用
   }
+});
+onUnmounted(() => {
+  inbox.stop();
 });
 
 const nav = [
@@ -33,7 +41,81 @@ const nav = [
 </script>
 
 <template>
-  <div class="flex h-full w-full overflow-hidden">
+  <div class="flex h-full w-full flex-col overflow-hidden">
+    <!-- 頂列（動詞軌）：跨員工待辦與事件入口 -->
+    <header
+      class="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-card/60 px-2 text-muted-foreground"
+      data-tauri-drag-region
+    >
+      <div class="flex items-center gap-2 px-1 text-foreground">
+        <Brain :size="15" />
+      </div>
+      <!-- 鈴鐺（待辦計數徽章；點擊展開 popover）-->
+      <div class="relative">
+        <button
+          class="relative flex h-7 items-center gap-1 rounded-md px-2 text-xs hover:bg-accent hover:text-foreground"
+          :title="$t('topbar.inbox')"
+          @click="bellOpen = !bellOpen"
+        >
+          <Bell :size="14" />
+          <span
+            v-if="inbox.pendingCount > 0"
+            class="ml-0.5 rounded-full bg-destructive px-1.5 text-[10px] font-medium leading-4 text-destructive-foreground"
+          >{{ inbox.pendingCount }}</span>
+        </button>
+        <!-- 待辦 popover（Teleport 脫離 drag-region）-->
+        <Teleport to="body">
+          <div v-if="bellOpen" class="fixed inset-0 z-50" @click="bellOpen = false">
+            <div
+              class="absolute left-2 top-9 w-80 rounded-lg border border-border bg-card shadow-2xl"
+              @click.stop
+            >
+              <div class="border-b border-border px-3 py-2 text-xs font-medium text-foreground">{{ $t('topbar.inbox') }}</div>
+              <div class="max-h-80 overflow-y-auto p-2 text-xs">
+                <div v-if="inbox.pendingCount === 0" class="py-4 text-center text-muted-foreground">{{ $t('inbox.empty') }}</div>
+                <!-- 待核可提案 -->
+                <div v-for="p in inbox.summary?.proposals ?? []" :key="p.commitment_id" class="mb-1 rounded-md border border-border bg-background p-2">
+                  <div class="truncate font-medium text-foreground">{{ p.title }}</div>
+                  <div class="truncate text-muted-foreground">{{ p.employee_name }}</div>
+                </div>
+                <!-- 異常員工 -->
+                <div v-for="f in inbox.summary?.flagged_employees ?? []" :key="f.employee_id" class="mb-1 rounded-md border border-warning/40 bg-warning/5 p-2">
+                  <div class="truncate font-medium text-foreground">{{ f.employee_name }}</div>
+                  <div class="text-muted-foreground">[{{ f.state }}]</div>
+                </div>
+              </div>
+              <RouterLink
+                v-if="inbox.pendingCount > 0"
+                :to="'/inbox'"
+                class="block border-t border-border px-3 py-2 text-center text-xs text-primary hover:bg-accent"
+                @click="bellOpen = false"
+              >{{ $t('topbar.inbox') }} →</RouterLink>
+            </div>
+          </div>
+        </Teleport>
+      </div>
+      <!-- 待辦入口 -->
+      <RouterLink
+        :to="'/inbox'"
+        class="flex h-7 items-center gap-1 rounded-md px-2 text-xs hover:bg-accent hover:text-foreground"
+        :class="$route.path === '/inbox' ? 'text-foreground' : 'text-muted-foreground'"
+      >
+        <Inbox :size="14" />
+        <span>{{ $t('topbar.inbox') }}</span>
+      </RouterLink>
+      <!-- 事件入口 -->
+      <RouterLink
+        :to="'/events'"
+        class="flex h-7 items-center gap-1 rounded-md px-2 text-xs hover:bg-accent hover:text-foreground"
+        :class="$route.path === '/events' ? 'text-foreground' : 'text-muted-foreground'"
+      >
+        <Activity :size="14" />
+        <span>{{ $t('topbar.events') }}</span>
+      </RouterLink>
+    </header>
+
+    <!-- 名詞軌 + 主內容區 -->
+    <div class="flex min-h-0 flex-1 overflow-hidden">
     <!-- 側邊導覽 -->
     <aside
       class="flex w-16 flex-col items-center gap-2 border-r border-border bg-card/40 py-4"
@@ -82,6 +164,7 @@ const nav = [
     <main class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <RouterView />
     </main>
+    </div><!-- /名詞軌 + 主內容區 -->
 
     <!-- 缺漏前置程式彈窗 -->
     <div

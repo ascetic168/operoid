@@ -10,6 +10,21 @@
     "loading": "載入中…",
     "dash": "—"
   },
+  "topbar": {
+    "inbox": "待辦",
+    "events": "事件"
+  },
+  "inbox": {
+    "title": "待辦",
+    "empty": "沒有需要關注的事",
+    "proposals": "待核可提案",
+    "flagged": "異常員工",
+    "viewEmployee": "查看"
+  },
+  "events": {
+    "title": "生命週期事件",
+    "empty": "尚無事件"
+  },
   "templates": {
     "title": "員工模板",
     "subtitle": "定義可重用的員工類型；每個模板對應一個腦。",
@@ -50,11 +65,16 @@
     "messagePh": "輸入要給這位員工的訊息…",
     "send": "送出",
     "watch": "監看…",
+    "watchProposals": "待核可提案",
     "watchCommitments": "進行中的承諾",
     "watchTasks": "目前工作",
     "watchArtifacts": "近期產出",
     "watchEvents": "生命週期事件",
+    "watchResolved": "已決策承諾",
+    "watchCompleted": "已完成工作",
     "watchNone": "（無）",
+    "archive": "封存",
+    "cancelTask": "取消工作",
     "delegate": "交辦…",
     "delegateTitle": "承諾標題",
     "delegateTitlePh": "例如：追蹤蝕刻良率事件到結案",
@@ -175,11 +195,14 @@
     "clear": "清除對話",
     "clearConfirmTitle": "清除對話？",
     "clearConfirmText": "這會移除此對話的所有訊息。工作產出（Artifact）與承諾（Commitment）會保留。",
-    "cleared": "對話已清除"
+    "cleared": "對話已清除",
+    "pollError": "即時更新暫時失效，仍可繼續操作"
   },
   "approval": {
     "approve": "核可",
-    "reject": "拒絕"
+    "reject": "拒絕",
+    "approved": "已核可",
+    "rejected": "已拒絕"
   },
   "operations": {
     "title": "操作 — GBrain CLI",

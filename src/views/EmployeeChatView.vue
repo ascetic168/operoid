@@ -39,20 +39,35 @@ const proposedIds = computed(
   () => new Set((data.value?.proposals ?? []).map((p) => p.id)),
 );
 
+/** 動作中的 commitment id（防重入、期間 disable 按鈕）。 */
+const pending = ref<string | null>(null);
+/** 本 session 內已決策的提案（核可／拒絕後立刻顯示徽章；proposed_commitment_id 為鍵）。 */
+const decided = ref(new Map<string, "approved" | "rejected">());
+
 async function approve(cid: string) {
+  if (pending.value) return; // 防重入
+  pending.value = cid;
   try {
     await agentApproveCommitment(cid);
+    decided.value.set(cid, "approved");
     await poll();
   } catch (e) {
     error.value = formatError(e);
+  } finally {
+    pending.value = null;
   }
 }
 async function reject(cid: string) {
+  if (pending.value) return; // 防重入
+  pending.value = cid;
   try {
     await agentRejectCommitment(cid);
+    decided.value.set(cid, "rejected");
     await poll();
   } catch (e) {
     error.value = formatError(e);
+  } finally {
+    pending.value = null;
   }
 }
 
@@ -73,13 +88,17 @@ async function confirmClear() {
   }
 }
 
+let pollFailures = 0;
 async function poll() {
   try {
     data.value = await agentWatch(props.id);
+    pollFailures = 0;
     await nextTick();
     if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
   } catch {
-    // 唯讀觀察：靜默，下個 tick 再試。
+    // 唯讀觀察：靜默重試；連續失敗才提示使用者（不阻斷操作）。
+    pollFailures += 1;
+    if (pollFailures === 3) error.value = t("chat.pollError");
   }
 }
 async function send() {
@@ -176,21 +195,33 @@ function stateColor(s: string | undefined): string {
         >
           {{ formatTime(m.created_at) }}
         </time>
-        <!-- 提案核可鈕（僅 Out message 的 commitment 在 proposals 待核可時顯示） -->
+        <!-- 決策徽章（本 session 已核可／拒絕）-->
         <div
-          v-if="m.direction === 'out' && m.commitment_id && proposedIds.has(m.commitment_id)"
+          v-if="m.direction === 'out' && m.proposed_commitment_id && decided.has(m.proposed_commitment_id)"
+          class="mt-1 px-1 text-[10px]"
+          :class="decided.get(m.proposed_commitment_id!) === 'approved' ? 'text-emerald-600' : 'text-muted-foreground'"
+        >
+          {{ decided.get(m.proposed_commitment_id!) === "approved" ? "✓ " + t("approval.approved") : "✗ " + t("approval.rejected") }}
+        </div>
+        <!-- 提案核可鈕（僅 Out message 帶待核可提案、且尚未決策時顯示） -->
+        <div
+          v-else-if="m.direction === 'out' && m.proposed_commitment_id && proposedIds.has(m.proposed_commitment_id)"
           class="mt-1 flex gap-2"
         >
           <button
-            class="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:opacity-90"
-            @click="approve(m.commitment_id!)"
+            class="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
+            :disabled="pending !== null"
+            @click="approve(m.proposed_commitment_id!)"
           >
+            <Loader2 v-if="pending === m.proposed_commitment_id" :size="12" class="animate-spin" />
             ✓ {{ t("approval.approve") }}
           </button>
           <button
-            class="rounded border border-border px-2.5 py-1 text-xs hover:bg-accent"
-            @click="reject(m.commitment_id!)"
+            class="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50"
+            :disabled="pending !== null"
+            @click="reject(m.proposed_commitment_id!)"
           >
+            <Loader2 v-if="pending === m.proposed_commitment_id" :size="12" class="animate-spin" />
             ✗ {{ t("approval.reject") }}
           </button>
         </div>

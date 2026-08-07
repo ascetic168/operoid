@@ -303,9 +303,12 @@ pub struct Message {
     pub employee_id: String,
     pub direction: MessageDirection,
     pub text: String,
-    /// 此趟往返所屬的 Commitment（可選）。
+    /// 此趟往返所屬的既有 Commitment（provenance；人類交辦時指定的來源）。
     #[serde(default)]
-    pub commitment_id: Option<String>,
+    pub source_commitment_id: Option<String>,
+    /// 此趟往返新提案、待核可的 Commitment（僅員工自主提案的 Out message 才有值）。
+    #[serde(default)]
+    pub proposed_commitment_id: Option<String>,
     /// 員工回覆附帶的實質產出 Artifact（可選；Out 才有）。
     #[serde(default)]
     pub artifact_id: Option<String>,

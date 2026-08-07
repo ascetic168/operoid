@@ -10,6 +10,21 @@
     "loading": "Loading…",
     "dash": "—"
   },
+  "topbar": {
+    "inbox": "Inbox",
+    "events": "Events"
+  },
+  "inbox": {
+    "title": "Inbox",
+    "empty": "Nothing to act on",
+    "proposals": "Pending proposals",
+    "flagged": "Flagged employees",
+    "viewEmployee": "View"
+  },
+  "events": {
+    "title": "Lifecycle events",
+    "empty": "No events yet"
+  },
   "templates": {
     "title": "Employee Templates",
     "subtitle": "Reusable employee definitions; each maps to one brain.",
@@ -50,11 +65,16 @@
     "messagePh": "Type a message to this employee…",
     "send": "Send",
     "watch": "Watch…",
+    "watchProposals": "Pending proposals",
     "watchCommitments": "Active commitments",
     "watchTasks": "Current tasks",
     "watchArtifacts": "Recent artifacts",
     "watchEvents": "Lifecycle events",
+    "watchResolved": "Resolved commitments",
+    "watchCompleted": "Completed tasks",
     "watchNone": "(none)",
+    "archive": "Archive",
+    "cancelTask": "Cancel task",
     "delegate": "Delegate…",
     "delegateTitle": "Commitment title",
     "delegateTitlePh": "e.g. Track the etching-yield incident to closure",
@@ -175,11 +195,14 @@
     "clear": "Clear conversation",
     "clearConfirmTitle": "Clear conversation?",
     "clearConfirmText": "This removes all messages in this conversation. Work artifacts and commitments are kept.",
-    "cleared": "Conversation cleared"
+    "cleared": "Conversation cleared",
+    "pollError": "Live updates temporarily unavailable; you can still interact."
   },
   "approval": {
     "approve": "Approve",
-    "reject": "Reject"
+    "reject": "Reject",
+    "approved": "Approved",
+    "rejected": "Rejected"
   },
   "operations": {
     "title": "Operations — GBrain CLI",

@@ -28,3 +28,6 @@ src-tauri/target/
 # ZCode workspace (本地專案記憶，不共享)
 .zcode/
 
+# Docs（情境劇本、圖片、內部待處理清單——不共享）
+docs/
+
