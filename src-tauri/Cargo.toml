@@ -1,6 +1,6 @@
 [package]
 name = "emploid"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Emploid — preprocessing & operations GUI for GBrain"
 authors = ["朱國棟 (Charlie Chu)"]
