@@ -3,14 +3,14 @@
 Version: 0.1
 Status: Draft
 
-> An Employee and an AI Agent are the same object in Emploid.
+> An Employee and an AI Agent are the same object in Operoid.
 > We call it an Employee because the system is modeled on how real organizations work.
 
 ---
 
 ## 1. Purpose
 
-The Employee is the **only object in Emploid that actually works**.
+The Employee is the **only object in Operoid that actually works**.
 
 Brains do not work. Tools do not work. Workspaces do not work. Every piece of meaningful work — every decision, every tool invocation, every artifact produced, every commitment honored — is performed by an Employee.
 
@@ -31,7 +31,7 @@ An Employee is accountable for:
 - **Honoring Commitments** — carrying persistent responsibilities across many wakes.
 - **Maintaining its working Memory** — keeping enough context to resume work correctly.
 
-When something is done inside Emploid, an Employee did it. When something goes wrong, an Employee owned it.
+When something is done inside Operoid, an Employee did it. When something goes wrong, an Employee owned it.
 
 ---
 

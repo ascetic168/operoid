@@ -398,7 +398,7 @@ pub(crate) async fn git_add_commit<R: Runtime>(
     let _ = run_child(app, ch, "git", &["add", "-A"], Some(repo), &[]).await;
 
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-    let msg = format!("Emploid sync {stamp}");
+    let msg = format!("Operoid sync {stamp}");
     let _ = ch.send(CliLine { stream: "step".into(), text: "▶ git commit".into() });
     let commit_code = run_child(app, ch, "git", &["commit", "-m", &msg], Some(repo), &[]).await?;
     if commit_code != 0 {
@@ -434,9 +434,9 @@ pub(crate) async fn git_init_commit<R: Runtime>(
         "git",
         &[
             "-c",
-            "user.email=emploid@local",
+            "user.email=operoid@local",
             "-c",
-            "user.name=Emploid",
+            "user.name=Operoid",
             "commit",
             "--allow-empty",
             "-m",

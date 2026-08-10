@@ -3,14 +3,14 @@
 版本：0.1
 狀態：草稿
 
-> 在 Emploid 中，Employee 與 AI Agent 是同一個物件。
+> 在 Operoid 中，Employee 與 AI Agent 是同一個物件。
 > 我們稱之為員工，是因為整個系統是模擬真實組織的運作方式。
 
 ---
 
 ## 1. 目的
 
-Employee 是 Emploid 中**唯一真正在工作的物件**。
+Employee 是 Operoid 中**唯一真正在工作的物件**。
 
 Brain 不工作。Tool 不工作。Workspace 不工作。每一件有意義的工作 —— 每一個決策、每一次工具調用、每一份產出的成果、每一項被履行的職責 —— 都是由 Employee 完成的。
 
@@ -31,7 +31,7 @@ Employee **引用** 一個 Brain。它不是一個 Brain。Brain 是*它所知*�
 - **履行職責** —— 在多次喚醒之間承擔持久的責任。
 - **維護工作記憶** —— 保留足夠的上下文以便正確地恢復工作。
 
-在 Emploid 裡完成一件事，就是某個 Employee 完成的。出了問題，就是某個 Employee 該負責。
+在 Operoid 裡完成一件事，就是某個 Employee 完成的。出了問題，就是某個 Employee 該負責。
 
 ---
 

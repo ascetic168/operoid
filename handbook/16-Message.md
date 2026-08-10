@@ -11,7 +11,7 @@ Status: Draft
 
 A Message is **a record of one conversational turn between a human and an Employee** — a piece of text with a direction (human→employee, or employee→human).
 
-Emploid is deliberately not a chat application: work must not be buried in conversation (Principle 3). But human–Employee collaboration (Goal 4) needs an interaction layer — a human gives direction, an Employee replies or asks back. A Message carries **the interaction itself**, while the durable results that the interaction triggers or produces still land separately as Tasks (work items), Artifacts (outputs), and Commitments (responsibilities).
+Operoid is deliberately not a chat application: work must not be buried in conversation (Principle 3). But human–Employee collaboration (Goal 4) needs an interaction layer — a human gives direction, an Employee replies or asks back. A Message carries **the interaction itself**, while the durable results that the interaction triggers or produces still land separately as Tasks (work items), Artifacts (outputs), and Commitments (responsibilities).
 
 A Message solves two things: (a) an Employee needs to be able to **speak** to a human — reply, ask, propose; (b) these exchanges need to be retained as reviewable interaction records, not just vanish once they become an Inbox Task.
 

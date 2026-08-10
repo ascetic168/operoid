@@ -1,4 +1,4 @@
-//! Emploid — Tauri backend entry.
+//! Operoid — Tauri backend entry.
 //!
 //! Domain modules: config (Phase 1), converters (Phase 2), gbrain_cli (Phase 3),
 //! llm + factories (Phase 4).
@@ -36,7 +36,7 @@ pub struct AppInfo {
 #[tauri::command]
 fn app_info() -> AppInfo {
     AppInfo {
-        name: "Emploid",
+        name: "Operoid",
         version: env!("CARGO_PKG_VERSION"),
         // GBrain 以 GBRAIN_HOME 為準（gbrain 會自己補上 .gbrain）；未設則為 ~/.gbrain
         gbrain_home: std::env::var("GBRAIN_HOME").unwrap_or_else(|_| {
@@ -62,6 +62,50 @@ fn app_info() -> AppInfo {
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
+}
+
+/// 一次性 identifier 遷移（Emploid→Operoid）。
+///
+/// Tauri 以 `tauri.conf.json` 的 `identifier` 決定 app-data 目錄名。改名後
+/// identifier 從 `com.emploid.studio` 變為 `com.operoid.studio`，既有使用者的
+/// `app-settings.json`（gbrain 路徑、腦清單、locale…）會在新目錄找不到。本函式在
+/// 啟動時檢查舊目錄，若新目錄尚無 `app-settings.json` 就把舊目錄內容遞迴複製過來。
+///
+/// 冪等：新目錄已有 `app-settings.json` 時直接返回（遷移已完成或全新安裝）。
+fn migrate_app_data_dir() {
+    let config_dir = match dirs::config_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let old_dir = config_dir.join("com.emploid.studio");
+    let new_dir = config_dir.join("com.operoid.studio");
+    // 新目錄已有設定檔 → 遷移已完成或全新安裝，無事可做。
+    if new_dir.join("app-settings.json").exists() {
+        return;
+    }
+    if !old_dir.is_dir() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&new_dir);
+    // 遞迴複製舊目錄下所有檔案至新目錄（保留子目錄結構）。
+    let _ = copy_dir_contents(&old_dir, &new_dir);
+}
+
+/// 遞迴複製 `src` 下所有檔案／子目錄至 `dst`（已存在則覆寫）。
+fn copy_dir_contents(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let meta = entry.file_type()?;
+        if meta.is_dir() {
+            std::fs::create_dir_all(&to)?;
+            copy_dir_contents(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -135,6 +179,11 @@ pub fn run() {
             runtime::agent_recent_events,
         ])
         .setup(|app| {
+            // 一次性 identifier 遷移：Emploid→Operoid 改名後，把舊 app-data 目錄
+            // （com.emploid.studio）的內容搬至新目錄（com.operoid.studio），讓既有
+            // 使用者的 app-settings.json（gbrain 路徑、腦清單、locale…）無痛延續。
+            // 冪等：新目錄已有 app-settings.json 就跳過。
+            migrate_app_data_dir();
             // 確保 app data 目錄存在，供 tauri-plugin-store 寫入本系統設定。
             if let Ok(dir) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&dir);
@@ -148,5 +197,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Emploid");
+        .expect("error while running Operoid");
 }

@@ -9,7 +9,7 @@
 
 Workspace 是**組織**。
 
-它是 Emploid 中最外層的容器。一切存在的事物 —— 每一個 Employee、Brain、Artifact、知識庫、Tool、Project、Task 與 Commitment —— 都隸屬於恰好一個 Workspace。
+它是 Operoid 中最外層的容器。一切存在的事物 —— 每一個 Employee、Brain、Artifact、知識庫、Tool、Project、Task 與 Commitment —— 都隸屬於恰好一個 Workspace。
 
 Workspace 的存在，是為了執行系統中最重要的邊界：**什麼屬於一起** 的邊界。屬於同一個組織的工作、知識、職權與成果，絕不會外漏到另一個組織。
 

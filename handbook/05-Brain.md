@@ -9,7 +9,7 @@ Status: Draft
 
 The Brain is **reusable intelligence**.
 
-It holds everything an Employee *knows* and *is disposed to do* — separate from who the Employee *is* and what the Employee *is responsible for*. By extracting intelligence into its own object, Emploid lets knowledge be shared, versioned, upgraded, and replaced independently of the workers that use it.
+It holds everything an Employee *knows* and *is disposed to do* — separate from who the Employee *is* and what the Employee *is responsible for*. By extracting intelligence into its own object, Operoid lets knowledge be shared, versioned, upgraded, and replaced independently of the workers that use it.
 
 The Brain answers the question: *"Given this situation, how should someone with this expertise think and respond?"*
 

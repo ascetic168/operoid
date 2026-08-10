@@ -13,7 +13,7 @@ A Tool exposes an **external capability** to Employees.
 
 An Employee can reason, but reasoning alone changes nothing. To act on the world — to send a message, query a database, run a calculation, operate a design tool, call an external service — the Employee invokes a Tool.
 
-Tools are how Emploid reaches outside its own boundary. They are the hands and eyes of the Employee. But like hands, they do not choose what to grasp. The Employee chooses; the Tool grasps.
+Tools are how Operoid reaches outside its own boundary. They are the hands and eyes of the Employee. But like hands, they do not choose what to grasp. The Employee chooses; the Tool grasps.
 
 ---
 

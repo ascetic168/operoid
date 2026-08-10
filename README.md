@@ -1,8 +1,8 @@
-# Emploid
+# Operoid
 
 **English** | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md)
 
-> Emploid is not a chat application. It is an **AI Agent Operating System** — an
+> Operoid is not a chat application. It is an **AI Agent Operating System** — an
 > operating environment where AI agents, called **Employees**, continuously do
 > meaningful work inside a shared, persistent **Workspace**.
 
@@ -12,18 +12,18 @@ for weeks; a QA engineer follows a nonconformance from report to corrective
 action to closure. Those responsibilities need an environment that
 **persists, remembers, and keeps working after the window closes.**
 
-Emploid exists to be that environment.
+Operoid exists to be that environment.
 
 Built with **Tauri v2 (Rust)** + **Vue 3 + TypeScript**.
 **Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** v0.2.0 — see [Current status](#current-status)
 
 ---
 
-## Why Emploid?
+## Why Operoid?
 
 Today's AI behaves more like a **consultant** than an **employee**. A consultant
 gives advice and leaves. An employee joins the organization, owns outcomes, and
-stays accountable. Emploid is built for the latter.
+stays accountable. Operoid is built for the latter.
 
 Today's AI systems generally lack:
 
@@ -34,15 +34,15 @@ Today's AI systems generally lack:
 - **enterprise roles** — an agent has no identity, authority, or accountability.
 - **continuous execution** — nothing wakes the agent when something relevant happens.
 
-Emploid treats AI as **organizational members, not chatbots.**
+Operoid treats AI as **organizational members, not chatbots.**
 
 ## What is an "AI Agent Operating System"?
 
 A conventional OS manages processes, memory, files, and devices so programs can
-run — it provides the environment, it doesn't do the programs' work. Emploid
+run — it provides the environment, it doesn't do the programs' work. Operoid
 does the same for AI agents:
 
-| OS concept | In Emploid |
+| OS concept | In Operoid |
 |---|---|
 | **Processes** | **Employees** — agents that are scheduled, run, and suspended |
 | **Files** | **Artifacts** — durable outputs owned by the workspace, not the chat |
@@ -51,7 +51,7 @@ does the same for AI agents:
 | **The kernel** | **The Runtime** — wakes an Employee, restores its context, lets it execute, puts it back to sleep |
 
 The Runtime manages **execution**. It never manages **reasoning** — what an
-Employee thinks is its own. That is why Emploid is an operating system, not an
+Employee thinks is its own. That is why Operoid is an operating system, not an
 application.
 
 ## Core concepts
@@ -120,8 +120,8 @@ overridden on the **Config** page.
 
 **For most users — grab the prebuilt installer.** Download the latest build for
 your platform from the
-[**Releases** page](https://github.com/ascetic168/Emploid/releases) and run it.
-No need to `git clone` or build from source unless you intend to develop Emploid.
+[**Releases** page](https://github.com/ascetic168/Operoid/releases) and run it.
+No need to `git clone` or build from source unless you intend to develop Operoid.
 
 ### For developers (build from source)
 
@@ -129,8 +129,8 @@ Building the desktop app needs the **Rust toolchain** and the
 [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```bash
-git clone https://github.com/ascetic168/Emploid.git
-cd Emploid
+git clone https://github.com/ascetic168/Operoid.git
+cd Operoid
 npm install          # install dependencies
 npm run tauri dev    # run the app (hot reload)
 npm run tauri build  # build a distributable installer

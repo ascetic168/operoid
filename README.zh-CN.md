@@ -1,8 +1,8 @@
-# Emploid
+# Operoid
 
 [English](README.md) | [繁體中文](README.zh-TW.md) | **简体中文**
 
-> Emploid 不是一个聊天应用程序。它是一套 **AI Agent 操作系统** —— 一个作业环境，
+> Operoid 不是一个聊天应用程序。它是一套 **AI Agent 操作系统** —— 一个作业环境，
 > 让 AI 代理（称为 **Employee 员工**）在一个共享、持久的工作空间（**Workspace**）里
 > 持续完成有意义的工作。
 
@@ -10,17 +10,17 @@
 采购助理会追踪一张订单长达数周；质量工程师会从异常报告、到纠正措施、再到结案一路追踪。
 这些职责需要一个能**持久、能记忆、并在窗口关闭后仍继续运行**的环境。
 
-Emploid 的存在，就是为了成为那个环境。
+Operoid 的存在，就是为了成为那个环境。
 
 以 **Tauri v2（Rust）** + **Vue 3 + TypeScript** 打造。
 **作者：** 朱國棟 (Charlie Chu) · **授权：** [MIT](#授权) · **状态：** v0.2.0 —— 见[当前状态](#当前状态)
 
 ---
 
-## 为什么需要 Emploid？
+## 为什么需要 Operoid？
 
 今天的 AI，行为更像一个**顾问**，而不是一个**员工**。顾问给完建议就离开；
-员工加入组织、承担成果、并持续负责。Emploid 是为后者而打造的。
+员工加入组织、承担成果、并持续负责。Operoid 是为后者而打造的。
 
 今天的 AI 系统普遍缺乏：
 
@@ -31,14 +31,14 @@ Emploid 的存在，就是为了成为那个环境。
 - **企业角色** —— 代理没有身份、职权或问责。
 - **持续的执行** —— 没有东西会在相关事件发生时把代理唤醒。
 
-Emploid 把 AI 视为**组织成员，而不是聊天机器人。**
+Operoid 把 AI 视为**组织成员，而不是聊天机器人。**
 
 ## 什么是"AI Agent 操作系统"？
 
 传统操作系统管理进程、内存、文件与设备，让程序得以运行 —— 它提供环境，不做程序的工作。
-Emploid 对 AI 代理做同样的事：
+Operoid 对 AI 代理做同样的事：
 
-| 操作系统概念 | 在 Emploid 里 |
+| 操作系统概念 | 在 Operoid 里 |
 |---|---|
 | **进程** | **Employee 员工** —— 被调度、运行与挂起的代理 |
 | **文件** | **Artifact 成果物** —— 由工作空间拥有、而非由对话拥有的持久产出 |
@@ -47,7 +47,7 @@ Emploid 对 AI 代理做同样的事：
 | **内核（kernel）** | **Runtime 执行引擎** —— 唤醒 Employee、恢复其上下文、让它运行、再让它休眠 |
 
 Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，是它自己的事。
-这就是为什么 Emploid 被称为操作系统，而不是应用程序。
+这就是为什么 Operoid 被称为操作系统，而不是应用程序。
 
 ## 核心概念
 
@@ -111,16 +111,16 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 ## 安装与运行
 
 **一般用户 —— 直接下载预编译安装包即可。** 到
-[**Releases** 页面](https://github.com/ascetic168/Emploid/releases)下载对应平台的最新版本并运行。
-除非你要开发 Emploid，否则不需要 `git clone` 或从源码构建。
+[**Releases** 页面](https://github.com/ascetic168/Operoid/releases)下载对应平台的最新版本并运行。
+除非你要开发 Operoid，否则不需要 `git clone` 或从源码构建。
 
 ### 开发者（从源码构建）
 
 构建桌面应用需要 **Rust 工具链**与 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)。
 
 ```bash
-git clone https://github.com/ascetic168/Emploid.git
-cd Emploid
+git clone https://github.com/ascetic168/Operoid.git
+cd Operoid
 npm install          # 安装依赖
 npm run tauri dev    # 运行应用（热重载）
 npm run tauri build  # 构建分发用安装包

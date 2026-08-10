@@ -12,7 +12,7 @@ Status: Draft
 
 The Tool SDK is the **contract between an Employee and a Tool**.
 
-It defines what a Tool must expose to be usable inside Emploid, and what guarantees the Runtime makes around a Tool invocation. By fixing this contract, the system lets Tools be written once and used by any authorized Employee — and lets new kinds of Tools (a new driver, a new protocol) be added without changing the Employees that use them.
+It defines what a Tool must expose to be usable inside Operoid, and what guarantees the Runtime makes around a Tool invocation. By fixing this contract, the system lets Tools be written once and used by any authorized Employee — and lets new kinds of Tools (a new driver, a new protocol) be added without changing the Employees that use them.
 
 A capability that does not honor this contract is not a Tool. It is an ungoverned risk.
 

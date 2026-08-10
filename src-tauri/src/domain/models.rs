@@ -17,7 +17,7 @@ pub type Timestamp = String;
 
 // ───────────────── Workspace（Handbook Ch.03）─────────────────
 
-/// Workspace——組織。Emploid 最外層容器；一切事物都隸屬恰一個 Workspace。
+/// Workspace——組織。Operoid 最外層容器；一切事物都隸屬恰一個 Workspace。
 ///
 /// 它是邊界與容器，不是行為者。Phase 0 只攜帶身份、生命週期狀態與建立時間；
 /// 組織的設定／政策等留待日後。
@@ -76,7 +76,7 @@ pub struct BrainRef {
 
 // ───────────────── Employee（Handbook Ch.04）─────────────────
 
-/// Employee——Emploid 中**唯一實際做事**的物件（Employee ≡ Agent）。
+/// Employee——Operoid 中**唯一實際做事**的物件（Employee ≡ Agent）。
 ///
 /// Phase 0 先把 Spec/Status 合併成最小集合：身份、所屬 Workspace、腦參照、
 /// 角色（佔位）、運行狀態、建立時間。Handbook 的完整 10 屬性（Inbox、Commitments、

@@ -11,7 +11,7 @@ Event 是**某件事已發生的不可變紀錄**。
 
 一個 Employee 提交了一份 Artifact。一個 Tool 被調用。一個 Commitment 被滿足。一個 Trigger 觸發。這其中每一件都是一個 Event —— 一個加蓋時間戳、被系統記住的事實。
 
-Event 是讓 Emploid 各部分保持解耦的骨幹。Trigger 監看 Event；Runtime 記錄 Event；稽核與指標都從 Event 建立而來。因為 Event 是不可變的，它們構成工作空間所做一切的可信歷史。
+Event 是讓 Operoid 各部分保持解耦的骨幹。Trigger 監看 Event；Runtime 記錄 Event；稽核與指標都從 Event 建立而來。因為 Event 是不可變的，它們構成工作空間所做一切的可信歷史。
 
 ---
 

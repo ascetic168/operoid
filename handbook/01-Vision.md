@@ -5,7 +5,7 @@ Status: Draft
 
 ---
 
-## 1. Why Emploid Exists
+## 1. Why Operoid Exists
 
 Large Language Models have dramatically improved the ability of AI to understand and generate information.
 
@@ -21,7 +21,7 @@ A purchasing assistant follows an order for weeks. A project manager monitors ma
 
 These responsibilities cannot be represented as isolated conversations. They require an environment that persists, that remembers, and that keeps working after the window closes.
 
-Emploid exists to provide that environment. It is an **AI Agent Operating System** — a master control platform where AI agents live as organizational members and perform work continuously inside a persistent workspace.
+Operoid exists to provide that environment. It is an **AI Agent Operating System** — a master control platform where AI agents live as organizational members and perform work continuously inside a persistent workspace.
 
 ---
 
@@ -38,13 +38,13 @@ Today's AI systems are optimized for conversations. They generally lack:
 
 Consequently, AI behaves more like a **consultant** than an **employee**.
 
-A consultant gives advice and leaves. An employee joins the organization, owns outcomes, and stays accountable. Emploid is built for the latter.
+A consultant gives advice and leaves. An employee joins the organization, owns outcomes, and stays accountable. Operoid is built for the latter.
 
 ---
 
 ## 3. The Vision
 
-Emploid treats AI as **organizational members**, not chatbots.
+Operoid treats AI as **organizational members**, not chatbots.
 
 Each AI employee has:
 
@@ -62,7 +62,7 @@ An AI employee should be able to join an organization, take on a role, and conti
 
 ## 4. Design Goals
 
-Emploid is designed around five goals.
+Operoid is designed around five goals.
 
 **Goal 1 — Knowledge survives model replacement.**
 Replacing one language model with another must not destroy organizational knowledge. Knowledge lives in Brains and the knowledge base, not in any single model.
@@ -83,14 +83,14 @@ Projects, employees, commitments, and knowledge continue to exist regardless of 
 
 ## 5. Non-goals
 
-Emploid is **not** designed to become:
+Operoid is **not** designed to become:
 
 - another chat application.
 - another note-taking tool.
 - another workflow editor.
 - another IDE.
 
-These capabilities may exist *inside* Emploid, but none of them is its purpose. The purpose is to be the **operating environment** in which AI agents do real work.
+These capabilities may exist *inside* Operoid, but none of them is its purpose. The purpose is to be the **operating environment** in which AI agents do real work.
 
 ---
 
@@ -98,7 +98,7 @@ These capabilities may exist *inside* Emploid, but none of them is its purpose. 
 
 A conventional operating system manages processes, memory, files, and devices so that programs can run. It does not do the programs' work; it provides the environment in which they do it.
 
-Emploid does the same for AI agents.
+Operoid does the same for AI agents.
 
 - **Processes** become **Employees** — units that are scheduled, run, and suspended.
 - **Files** become **Artifacts** — durable outputs owned by the system, not the process.
@@ -108,12 +108,12 @@ Emploid does the same for AI agents.
 
 The Runtime manages **execution**. It never manages **reasoning**. What an Employee thinks is the Employee's own. When it runs, how long, and with what context — that is the Runtime's job.
 
-This is why Emploid is called an **operating system** and not an application.
+This is why Operoid is called an **operating system** and not an application.
 
 ---
 
 ## 7. Definition
 
-Emploid is an **AI Agent Operating System**.
+Operoid is an **AI Agent Operating System**.
 
 It provides a persistent Workspace in which AI Employees perform organizational work through knowledge, tools, and responsibilities — waking when there is work, sleeping when there is not, and persisting across every change of model, tool, and session.

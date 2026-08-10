@@ -12,7 +12,7 @@ Status: Draft
 
 The Agent SDK is the **contract between the Runtime and an Employee**.
 
-It defines what an Employee can be asked to do — start, pause, resume, cancel — and what the workspace can be asked to do on the Employee's behalf. By fixing this contract at the concept level, Emploid ensures that Employees and the Runtime can evolve independently: a new Brain, a new model, a new tool protocol, none of them requires breaking this interface.
+It defines what an Employee can be asked to do — start, pause, resume, cancel — and what the workspace can be asked to do on the Employee's behalf. By fixing this contract at the concept level, Operoid ensures that Employees and the Runtime can evolve independently: a new Brain, a new model, a new tool protocol, none of them requires breaking this interface.
 
 ---
 

@@ -1,13 +1,13 @@
 [package]
-name = "emploid"
-version = "0.2.2"
+name = "operoid"
+version = "0.2.3"
 edition = "2021"
-description = "Emploid — preprocessing & operations GUI for GBrain"
+description = "Operoid — preprocessing & operations GUI for GBrain"
 authors = ["朱國棟 (Charlie Chu)"]
 license = "MIT"
 
 [lib]
-name = "emploid_lib"
+name = "operoid_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

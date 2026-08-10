@@ -493,7 +493,7 @@ mod tests {
         use std::sync::atomic::{AtomicU32, Ordering};
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let p = std::env::temp_dir().join(format!("emploid-sqlite-test-{}-{n}.db", std::process::id()));
+        let p = std::env::temp_dir().join(format!("operoid-sqlite-test-{}-{n}.db", std::process::id()));
         let _ = std::fs::remove_file(&p);
         p
     }

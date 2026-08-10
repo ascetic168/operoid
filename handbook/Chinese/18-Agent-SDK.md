@@ -12,7 +12,7 @@
 
 Agent SDK 是 **Runtime 與 Employee 之間的契約**。
 
-它定義了可對 Employee 提出什麼要求 —— 啟動、暫停、恢復、取消 —— 以及可代 Employee 對工作空間提出什麼要求。透過在概念層級固定這份契約，Emploid 確保 Employee 與 Runtime 能各自獨立演進：新的 Brain、新的模型、新的工具協定，沒有一個需要打破這份介面。
+它定義了可對 Employee 提出什麼要求 —— 啟動、暫停、恢復、取消 —— 以及可代 Employee 對工作空間提出什麼要求。透過在概念層級固定這份契約，Operoid 確保 Employee 與 Runtime 能各自獨立演進：新的 Brain、新的模型、新的工具協定，沒有一個需要打破這份介面。
 
 ---
 

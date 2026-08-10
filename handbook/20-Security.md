@@ -7,7 +7,7 @@ Status: Draft
 
 ## 1. Purpose
 
-Security in Emploid is not a feature added later. It is a property of the architecture itself.
+Security in Operoid is not a feature added later. It is a property of the architecture itself.
 
 Because Employees invoke Tools that act on the real world — sending messages, writing records, operating systems — the system must answer three questions at all times:
 
@@ -72,7 +72,7 @@ Keeping these separate means authority can be versioned, audited, and rolled bac
 
 ## 5. High-Impact Actions
 
-Some actions carry enough consequence that Employees must not perform them unilaterally. For these, Emploid requires **human-in-the-loop**:
+Some actions carry enough consequence that Employees must not perform them unilaterally. For these, Operoid requires **human-in-the-loop**:
 
 - spending above a threshold.
 - sending externally to customers or partners.

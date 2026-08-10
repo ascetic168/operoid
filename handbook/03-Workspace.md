@@ -9,7 +9,7 @@ Status: Draft
 
 The Workspace is the **organization**.
 
-It is the outermost container in Emploid. Everything that exists — every Employee, Brain, Artifact, Knowledge base, Tool, Project, Task, and Commitment — lives inside exactly one Workspace.
+It is the outermost container in Operoid. Everything that exists — every Employee, Brain, Artifact, Knowledge base, Tool, Project, Task, and Commitment — lives inside exactly one Workspace.
 
 The Workspace exists to enforce the most important boundary in the system: the boundary of **what belongs together**. Work, knowledge, authority, and results that belong to one organization never leak into another.
 

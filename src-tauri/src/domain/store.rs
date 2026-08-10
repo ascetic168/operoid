@@ -460,7 +460,7 @@ mod tests {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!(
-            "emploid-domain-test-{}-{n}",
+            "operoid-domain-test-{}-{n}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

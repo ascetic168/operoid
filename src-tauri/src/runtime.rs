@@ -1,4 +1,4 @@
-//! Runtime（Handbook Ch.13）——Emploid 的執行引擎：管理 wake→restore→execute→commit→sleep
+//! Runtime（Handbook Ch.13）——Operoid 的執行引擎：管理 wake→restore→execute→commit→sleep
 //! 的循環，**永不介入推理**（Principle 10）。
 //!
 //! Phase 1：單一 Employee、單發（一次 think → 一個 Artifact）、人工觸發（`agent_run` 指令）。
@@ -1055,8 +1055,7 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
 const AGENT_WS: &str = "ws-default";
 
 /// Agent-OS DB 路徑：**Local AppData**（避免 Roaming 被 OneDrive／網域同步導致 WAL 損壞——
-/// WAL 的 `-wal`／`-shm` 必須是共置本地檔案）。首次啟動若舊位置（Roaming app_data_dir）有
-/// `emploid.db`，一次性遷移複製過來。
+/// WAL 的 `-wal`／`-shm` 必須是共置本地檔案）。
 pub(crate) fn agent_db_path<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<std::path::PathBuf, AppError> {
@@ -1065,20 +1064,10 @@ pub(crate) fn agent_db_path<R: tauri::Runtime>(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
     let _ = std::fs::create_dir_all(&local_dir);
-    let new_path = local_dir.join("emploid.db");
-    if !new_path.exists() {
-        // 一次性遷移：舊 Roaming 位置有 DB → 複製到 Local。
-        if let Ok(old_dir) = app.path().app_data_dir() {
-            let old_path = old_dir.join("emploid.db");
-            if old_path.exists() {
-                let _ = std::fs::copy(&old_path, &new_path);
-            }
-        }
-    }
-    Ok(new_path)
+    Ok(local_dir.join("operoid.db"))
 }
 
-/// 共用：Agent-OS flag 檢查 ＋ 開 `emploid.db`（Local AppData）。
+/// 共用：Agent-OS flag 檢查 ＋ 開 `operoid.db`（Local AppData）。
 pub(crate) fn agent_store<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<SqliteStore, AppError> {
@@ -2130,7 +2119,7 @@ mod tests {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!(
-            "emploid-runtime-test-{}-{n}",
+            "operoid-runtime-test-{}-{n}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2441,7 +2430,7 @@ mod tests {
     async fn real_gbrain_think_cycle() {
         let cfg_path = dirs::config_dir()
             .expect("no config dir")
-            .join("com.emploid.studio")
+            .join("com.operoid.studio")
             .join("app-settings.json");
         let raw: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(&cfg_path).expect("read app-settings.json"),
@@ -2529,7 +2518,7 @@ mod tests {
     async fn real_inbox_wake() {
         let cfg_path = dirs::config_dir()
             .expect("no config dir")
-            .join("com.emploid.studio")
+            .join("com.operoid.studio")
             .join("app-settings.json");
         let raw: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(&cfg_path).expect("read app-settings.json"),
@@ -2862,7 +2851,7 @@ mod tests {
     async fn real_shared_brain() {
         let cfg_path = dirs::config_dir()
             .expect("no config dir")
-            .join("com.emploid.studio")
+            .join("com.operoid.studio")
             .join("app-settings.json");
         let raw: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&cfg_path).expect("read app-settings.json"))
@@ -3172,7 +3161,7 @@ mod tests {
     async fn real_team_concurrent() {
         let cfg_path = dirs::config_dir()
             .expect("no config dir")
-            .join("com.emploid.studio")
+            .join("com.operoid.studio")
             .join("app-settings.json");
         let raw: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&cfg_path).expect("read app-settings.json"))
@@ -3253,13 +3242,13 @@ mod tests {
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
         assert!(ga > 0, "Graph 應 > 0（實際 {ga}）");
-        // 注意：同腦（demo）下 gbrain 對該腦 DB 序列化，故 wall-clock 不證 Emploid 併行；
-        // Emploid 的併發機制由 `concurrent_cycles_overlap_in_time`（延遲 stub）證明。
+        // 注意：同腦（demo）下 gbrain 對該腦 DB 序列化，故 wall-clock 不證 Operoid 併行；
+        // Operoid 的併發機制由 `concurrent_cycles_overlap_in_time`（延遲 stub）證明。
         println!("concurrent 2 employees elapsed (同腦，gbrain 序列化): {elapsed:?}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Emploid 併發實證：3 個 run_cycle（各 800ms 延遲）併發跑，總時間 ≈ 1×（非 3×）。
+    /// Operoid 併發實證：3 個 run_cycle（各 800ms 延遲）併發跑，總時間 ≈ 1×（非 3×）。
     #[tokio::test]
     async fn concurrent_cycles_overlap_in_time() {
         let dir = test_dir();

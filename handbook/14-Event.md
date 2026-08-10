@@ -11,7 +11,7 @@ An Event is an **immutable record that something happened**.
 
 An Employee committed an Artifact. A Tool was invoked. A Commitment was satisfied. A Trigger fired. Each of these is an Event — a fact, stamped in time, that the system remembers.
 
-Events are the backbone that lets Emploid's parts stay decoupled. Triggers watch for Events; the Runtime records them; audits and metrics are built from them. Because Events are immutable, they form a trustworthy history of everything the workspace has done.
+Events are the backbone that lets Operoid's parts stay decoupled. Triggers watch for Events; the Runtime records them; audits and metrics are built from them. Because Events are immutable, they form a trustworthy history of everything the workspace has done.
 
 ---
 

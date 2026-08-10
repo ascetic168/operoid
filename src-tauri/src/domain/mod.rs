@@ -1,4 +1,4 @@
-//! Domain 模組（Phase 0 地基）——Emploid Agent-OS 核心概念的最小資料模型與持久化。
+//! Domain 模組（Phase 0 地基）——Operoid Agent-OS 核心概念的最小資料模型與持久化。
 //!
 //! 本模組為純 Rust（不依賴 Tauri），故可單測、且日後可換儲存後端（D2）。
 //! Phase 0 不接任何 Tauri 指令／前端——這裡只立骨架＋證明能存。完整的 Runtime

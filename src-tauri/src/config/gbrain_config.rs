@@ -225,7 +225,7 @@ pub fn tier_of(raw: &serde_json::Value, tier: &str) -> Option<String> {
 }
 
 /// 設定頁 provider 下拉清單：所有 gbrain 支援的 provider（含 anthropic）。
-/// 注意：anthropic/zeroentropy 走 native schema，**Emploid 的 llm.rs 不支援**，
+/// 注意：anthropic/zeroentropy 走 native schema，**Operoid 的 llm.rs 不支援**，
 /// 僅 gbrain 原生任務（think/ask/dream）與前端顯示用。
 pub const ALL_PROVIDERS: &[&str] = &[
     "groq",

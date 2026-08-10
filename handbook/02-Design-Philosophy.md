@@ -7,7 +7,7 @@ Status: Draft
 
 ## How to Use These Principles
 
-These ten principles are the constitution of Emploid. Every architectural decision should be measurable against them.
+These ten principles are the constitution of Operoid. Every architectural decision should be measurable against them.
 
 When a proposed design conflicts with a principle, there are two acceptable outcomes:
 

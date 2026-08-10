@@ -13,7 +13,7 @@ Tool 把**外部能力**暴露給 Employee。
 
 Employee 能推理，但光推理改變不了任何事。要對世界採取行動 —— 寄一封信、查一筆資料、跑一段計算、操作一套設計工具、呼叫一個外部服務 —— Employee 必須調用一個 Tool。
 
-Tool 是 Emploid 跨越自身邊界的方式。它們是 Employee 的手與眼。但就像手一樣，它們不選擇要抓什麼。由 Employee 選擇；由 Tool 去抓。
+Tool 是 Operoid 跨越自身邊界的方式。它們是 Employee 的手與眼。但就像手一樣，它們不選擇要抓什麼。由 Employee 選擇；由 Tool 去抓。
 
 ---
 

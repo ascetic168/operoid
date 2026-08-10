@@ -12,7 +12,7 @@
 
 Tool SDK 是 **Employee 與 Tool 之間的契約**。
 
-它定義一個 Tool 必須暴露什麼，才能在 Emploid 之內被使用，以及 Runtime 在一次 Tool 調用周圍做出哪些保證。透過固定這份契約，系統讓 Tool 撰寫一次就能被任何被授權的 Employee 使用 —— 也讓新型態的 Tool（新的驅動器、新的協定）得以加入，而不必改動使用它們的 Employee。
+它定義一個 Tool 必須暴露什麼，才能在 Operoid 之內被使用，以及 Runtime 在一次 Tool 調用周圍做出哪些保證。透過固定這份契約，系統讓 Tool 撰寫一次就能被任何被授權的 Employee 使用 —— 也讓新型態的 Tool（新的驅動器、新的協定）得以加入，而不必改動使用它們的 Employee。
 
 不遵守這份契約的能力，不是 Tool。它是一個不受治理的風險。
 

@@ -11,7 +11,7 @@ Status: Draft
 
 ## 1. Purpose
 
-This chapter sketches how Emploid may evolve while staying true to its constitution. It exists so that growth is **deliberate**: each new capability is recognized as an extension of the core concepts, not an exception to them.
+This chapter sketches how Operoid may evolve while staying true to its constitution. It exists so that growth is **deliberate**: each new capability is recognized as an extension of the core concepts, not an exception to them.
 
 ---
 

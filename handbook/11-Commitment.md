@@ -13,7 +13,7 @@ A Commitment is a **persistent responsibility**.
 
 Where a Task is a single executable objective that ends, a Commitment is an ongoing duty that continues until a completion condition is met. "Track this purchase order until goods are received." "Monitor this customer complaint until resolved." "Keep this audit ready until it closes."
 
-Commitments are how Emploid represents the kind of work that *matters* in an organization: the responsibilities that span days, weeks, or months and that no single conversation could ever contain.
+Commitments are how Operoid represents the kind of work that *matters* in an organization: the responsibilities that span days, weeks, or months and that no single conversation could ever contain.
 
 A Commitment is not a large Task. It is a different kind of object — one that *generates* Tasks over its lifetime.
 

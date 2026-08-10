@@ -9,7 +9,7 @@ Status: Draft
 
 ## 1. Purpose
 
-The Runtime is the **engine** of Emploid.
+The Runtime is the **engine** of Operoid.
 
 It is the counterpart to the operating-system kernel: it does not do the work, but it makes the work possible. The Runtime decides which Employee runs, when, for how long, and with what context — and it ensures that when work is done, the result is safely committed before the Employee returns to sleep.
 
@@ -89,7 +89,7 @@ This is the canonical cycle the Runtime enforces for every Employee, every time 
 
 A long-running process keeps its state in memory and loses it if it crashes. An Employee is not a long-running process.
 
-By restoring context on every wake and persisting it on every sleep, Emploid guarantees that an Employee's state is **durable and reconstructable**. A crash, a restart, a model swap, or a migration never destroys in-flight work — because the work was committed before the Employee slept, and the context was saved.
+By restoring context on every wake and persisting it on every sleep, Operoid guarantees that an Employee's state is **durable and reconstructable**. A crash, a restart, a model swap, or a migration never destroys in-flight work — because the work was committed before the Employee slept, and the context was saved.
 
 This is what makes it possible for a workspace to hold thousands of Employees while only the ones with work are ever awake.
 

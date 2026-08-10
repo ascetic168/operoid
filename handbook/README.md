@@ -1,22 +1,22 @@
-# Emploid Architecture Handbook
+# Operoid Architecture Handbook
 
 **Version:** 0.2
 **Status:** Draft
 
-> Emploid is not an AI chat application.
+> Operoid is not an AI chat application.
 > It is an operating environment where AI agents — called Employees — continuously perform meaningful work inside a shared workspace.
 
 ---
 
-## What Emploid Is
+## What Operoid Is
 
-Emploid is an **AI Agent Operating System**.
+Operoid is an **AI Agent Operating System**.
 
 It is the master control platform (主控平台) in which AI agents are recruited, given roles and authority, woken when there is work, and put to sleep when there is not. Every agent lives inside exactly one Workspace. Every artifact an agent produces belongs to the organization, not to a conversation. Every responsibility persists across model changes, session boundaries, and tool replacements.
 
-An **Agent** and an **Employee** are the same thing. We use the word *Employee* because the system is modeled on how organizations actually work: people hold roles, own responsibilities, use tools, produce results, and persist across the work they do. Emploid brings that model to AI.
+An **Agent** and an **Employee** are the same thing. We use the word *Employee* because the system is modeled on how organizations actually work: people hold roles, own responsibilities, use tools, produce results, and persist across the work they do. Operoid brings that model to AI.
 
-The name follows from this: an AI employee — an employee-like being — is an **emploid**. The platform is Emploid; the workers that live inside it are emploids. The formal architectural term used throughout this handbook remains **Employee**.
+The name follows from this: a being that *operates* — that keeps running, keeps working, holds a role and does the work — is an **operoid**. The platform is Operoid; the workers that live inside it are operoids. The formal architectural term used throughout this handbook remains **Employee**.
 
 This handbook is the **constitution** of that operating system.
 
@@ -24,7 +24,7 @@ This handbook is the **constitution** of that operating system.
 
 ## What This Handbook Is — and Is Not
 
-This handbook defines the **core abstractions** of Emploid: the objects the system is built from, the relationships between them, and the design philosophy that governs them.
+This handbook defines the **core abstractions** of Operoid: the objects the system is built from, the relationships between them, and the design philosophy that governs them.
 
 It is **not** an API reference. It is **not** a technology survey. It contains no mandates about which programming language, database, model, or tool protocol must be used.
 
@@ -42,7 +42,7 @@ If a proposed feature cannot be expressed in the concepts defined here, the answ
 
 The handbook is organized in four parts.
 
-**Part I — Vision** establishes *why* Emploid exists and the principles every decision is measured against.
+**Part I — Vision** establishes *why* Operoid exists and the principles every decision is measured against.
 
 **Part II — Core Concepts** defines each first-class object: what it is, what it owns, what it does not own, how it lives, and how it may evolve.
 
