@@ -617,7 +617,7 @@ mod tests {
         let mut differ = 0usize;
         let mut norm_match = 0usize; // 換行正規化（\r\n → \n）後一致
         let mut only_rust = 0usize;
-        let mut only_disk = 0usize;
+        let only_disk: usize;
         let mut diffs_sample: Vec<String> = Vec::new();
         let norm = |s: &str| s.replace("\r\n", "\n");
         for (slug, md) in &gen {

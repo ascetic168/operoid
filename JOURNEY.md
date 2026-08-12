@@ -180,7 +180,7 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 > v1（Phase 0–5）完成了**資料模型＋單發人工循環**，但員工「不會自己跑」。Phase 6 兌現 Handbook
 > 里程碑 1 的**完整循環**（因 Trigger 喚醒→還原→**讀 Inbox**→調用 Tool→提交 Artifact→睡眠）與 Runtime
 > 排程器——把員工從「CRUD 列」變成「會醒來、持續工作到完成才睡」的工作者。**紅線**：Trigger 驅動
-> 非常駐（守原則 7／8）。範圍決策：**承諾驅動（完整願景）**。計畫見 `.claude/plans/soft-tickling-swan.md`。
+> 非常駐（守原則 7／8）。範圍決策：**承諾驅動（完整願景）**。
 
 ### 6a — Runtime 地基（排程器 + busy-lock + 收件匣喚醒）
 
@@ -200,7 +200,7 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
   - [x] `run_autonomous`：plan→act→evaluate 循環；`done`→`Satisfied`；0 產出卡住→`Suspended`；硬錯→`Error`。`completion_condition` 終於被評估。
   - [x] 排程器：啟動一次承諾掃描（不在每次 tick 重跑，免燒 LLM）＋每次 tick／信號的 Inbox 掃描。`cargo test` 93 全綠。
 - **狀態：✅ 完成（2026-08-03）。** 落點：Handbook 六檔；`domain/tools.rs` 加 `Reasoner`／`parse_json_value`；`runtime.rs` 加 `LlmReasoner`／`build_reasoner`／`run_autonomous`／`CycleBudget`／`AutonomousOutcome`；`scheduler.rs` 拆 `scan_inbox`（tick）／`scan_commitments`（啟動）。**v1 簡化**：未新增 Memory/Commitment 欄位（用既有 `Suspended` 狀態＋`memory.notes` 進度脈絡）；承諾僅啟動喚醒（每次 tick 重跑列為未來，搭配 backpressure）。
-- **待補**：真實 gbrain+llm 的 `run_autonomous` ignored 測試（手動驗證）。
+- **待補**：真實 gbrain+llm 的 `run_autonomous` ignored 測試——**已補 `real_run_autonomous`（2026-08-12，`#[ignore]`），待手動驗證**（需 demo 腦＋LLM API key）。
 
 ### 6c — 溝通（Message-driven Trigger）
 
@@ -225,7 +225,7 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 
 ## Phase 7 — 人機協作（聊天＋交辦＋提案承諾）
 
-> Phase 6 讓員工會自己醒來工作，但人機介面仍單發（溝通＝一次 Q&A、承諾無 UI 入口、員工不會發問／提案）。Phase 7 升級為**雙向多次對話**＋**交辦承諾**＋**員工提案承諾待人類核可**。範圍決策：**新增 Message 一級概念**（接受 Handbook 修訂）＋**分階段 7a→7b→7c**。計畫見 `.claude/plans/soft-tickling-swan.md`（Phase 7 段）。
+> Phase 6 讓員工會自己醒來工作，但人機介面仍單發（溝通＝一次 Q&A、承諾無 UI 入口、員工不會發問／提案）。Phase 7 升級為**雙向多次對話**＋**交辦承諾**＋**員工提案承諾待人類核可**。範圍決策：**新增 Message 一級概念**（接受 Handbook 修訂）＋**分階段 7a→7b→7c**。
 
 ### 7a — 交辦承諾 ＋ 立即喚醒（無需改手冊）
 
@@ -344,6 +344,8 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-08-04 | **Phase 7b ✅** | Message 概念＋聊天＋對話迴圈。**先手冊後碼**：Handbook 新增 **Ch.16 Message**（中英）＋**Part IV 重編 16→17–21**（10 檔改名＋header＋Security→Tool-SDK 交叉引用）＋README v0.2（TOC／概念表／概念圖）＋Ch.04／Ch.18（封閉清單：Out message 由 Runtime 代發）／Ch.21 §7 交叉引用；明文調和反聊天立場。後端：`Message`／`MessageDirection`＋Store（`messages` 表）＋`run_conversational_turn`（知識檢索→Reasoner 回覆答案／反問→`Message{Out}`）＋`run_inbox` 注入 `Option<&Reasoner>`（訊息走對話回合，無 reasoner 退回 gbrain）＋`agent_send_message` 寫 `Message{In}`＋`agent_watch` 加 messages。前端：`EmployeeChatView`（`/instances/:id/chat`，氣泡 In 左／Out 右、1.5s 輪詢、auto-scroll）＋右鍵「對話…」＋i18n 三語。`cargo test` **95 全綠**、`npm run build` 0 error。 | 7c 員工提案承諾＋人類核可（Ch.11 修訂） | — |
 | 2026-08-10 | —（品牌） | **專案更名 Emploid→Operoid**（與 `pixquilly/emploid` Python 套件品牌碰撞）。深度查證：GitHub 0 衝突、npm/PyPI 可用、USPTO 商標空白、`operoid.io`/`.co` 網域可用。機械替換涵蓋 48 檔（README×3、handbook×42、Cargo.toml/tauri.conf/lib/main/runtime 等 Rust 全域）；`agent_db_path` 移除 Roaming→Local 遷移死碼，DB 檔名 `operoid.db`（可重建，不遷移）；`lib.rs` 加 `migrate_app_data_dir`——identifier `com.emploid.studio→com.operoid.studio` 一次性目錄遷移（app-settings.json 無痛延續）；handbook 詞源句改寫為 operation 詞根（EN＋中）。docs/ 4 檔重命名（含 PDF 劇本）。 | GitHub repo 重命名；發新 release | JOURNEY 歷史文字保留 Emploid 不動（如實記錄） |
 | 2026-08-12 | —（Event 匯流排） | **Event 匯流排架構**（Workstream A–E＋G，commit a9ab669）。實作 Handbook Ch.12 第四種 Trigger——**Event-driven**（前三種 Message/Time/Manual 已在 Phase 6 落地）。核心：factory 寫入→`InboundEvent`→mpsc channel→`dispatch_event`（腦→員工 1:N 路由）→重用 `agent_send_message` 內部邏輯（`Message{In}`+`Task{Assigned}`+`wake()`）→下游 `run_inbox`/`run_conversational_turn`/propose 零改動接手。附帶：①LLM 全域 Semaphore 節流（`LlmReasoner` 持 permit，涵蓋對話/PLAN/EVAL 全路徑，預設 4 並發）；②`run_autonomous` 每輪先清一個 inbox（修復 doc/impl 不一致——承諾 session 期間的訊息不再苦等 session 結束）；③`process_one_inbox_task` 共用 helper 抽取。新檔 `event_bus.rs`；`AppConfig` 加 `llm_concurrency`/`event_review_enabled`。`cargo test` **103 全綠**（+2 新測：`run_autonomous_processes_inbox_first`、`list_employees_by_brain`）。詳見 `docs/Operoid-計畫-Event匯流排架構.md`。 | F（webhook 進氣口，Phase 2）—見待處理清單 E7 | brain_sync fire-and-forget 未做（E8，靠 summary 預覽兜底） |
+| 2026-08-12 | —（收尾 sprint） | **收尾＋驗證 sprint**。清債：T3（JOURNEY 第 183／228 行 `.claude/plans/soft-tickling-swan.md` 懸空引用移除）、`csv_people.rs` L620 unused-assignment（`let mut only_disk = 0usize`→`let only_disk: usize`）、package-lock 版本同步（0.2.2→0.2.4，`npm install`）。補測：`real_run_autonomous`（`#[ignore]`，**第一個需真實 LLM API key 的測試**——真實 demo 腦＋LLM 跑完 plan→act→evaluate，實證斷言 Satisfied／Stalled／Errored，不硬斷言必然 Satisfied）。清單校正：T4（`20-Roadmap` 過時路徑）、E1 doc、T5 package-lock 舊名三項皆為**誤報**（早已完成），已於待處理清單標正。驗證：`cargo test` **103 全綠＋7 ignored**（+1 新測試）、`cargo check --all-targets` csv_people 警告消失（唯一殘留為既有 `ExternalMessage` dead-code，屬 E7 webhook）、`npm run build` 0 error。 | 手動驗證：跑 `real_run_autonomous` ignored 測試（需 demo 腦＋API key）＋ GUI 視覺驗證（`npm run tauri dev`） | 真實 LLM 測試待手動跑；GUI 待視覺驗證 |
+| 2026-08-12 | —（自主循環修復） | **修復 `run_autonomous` 真實 LLM 下 Stalled 的雙根因**（`real_run_autonomous` 揭露）。① **`Ok(false)` fall-through**：PLAN 階段 LLM 回 `done:true` 但 `evaluate_done` 判 false 時，原 `Ok(false) => {}` 直接 fall through 取 `next_query`（但 PLAN 既回 done 就不會給 query）→ 必然 Stalled「未給出 next_query」；改為留 note（「評估未過，請由新角度繼續」）＋ `continue` 重新 PLAN。② **`evaluate_done` 看不見 artifact 內容**：評估者 prompt 原本只拿 artifact id 列表，無從判斷成果 → 傾向回 false；加 `store` 參數，取最近 3 個 artifact 各截 400 字放進 prompt。三個 stub 測試不變（皆走 `Ok(true)` 或不進 evaluate）。`cargo test` 103 全綠、`cargo check --all-targets` 無新 warning。 | 重跑 `real_run_autonomous` 驗證 Stalled→Satisfied（需 demo 腦＋API key） | — |
 
 **目前所在：** 🎉 **Phase 7（人機協作）完成——7a 交辦＋7b 聊天＋7c 員工提案核可全數落地。** 人機介面從單發 Q&A 升級為完整協作：雙向多次聊天（Reasoner 驅動回覆、可反問）、交辦承諾（立即喚醒自主跑）、員工在對話中主動提案承諾（Proposed）待人類核可（Active）。Handbook 新增 Message 一級概念（Ch.16，Part IV 重編）＋修訂 Ch.11（Proposed/Rejected）＋Ch.20 §5（提案-核可通用化）。**Phase 6＋7 全部完成**——員工生命週期＋人機協作的完整願景已兌現。
 

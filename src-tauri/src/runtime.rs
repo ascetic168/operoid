@@ -668,7 +668,7 @@ pub async fn run_autonomous(
         };
         // 規劃器主張已完成 → 進 EVAL 確認（仍由 Brain 判斷，非 Runtime 決定）。
         if plan.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
-            match evaluate_done(reasoner, &commitment, &artifact_ids).await {
+            match evaluate_done(reasoner, &commitment, &artifact_ids, store).await {
                 Ok(true) => {
                     outcome = AutonomousOutcome::Satisfied {
                         artifact_ids,
@@ -676,7 +676,19 @@ pub async fn run_autonomous(
                     };
                     break;
                 }
-                Ok(false) => {}
+                Ok(false) => {
+                    // 評估未過：LLM 主張完成但 Brain 認為尚未滿足完成條件。留 note 提示下一輪 PLAN
+                    // 由新角度繼續推進，而非 fall through 取 plan 裡不存在的 next_query（PLAN 既回了
+                    // done 就不會同時給 query）→ 否則必然 Stalled「未給出 next_query」。
+                    memory.notes.push(format!(
+                        "（完成評估未過：承諾「{}」尚未滿足，請由新角度繼續推進）",
+                        commitment.title
+                    ));
+                    cap_notes(&mut memory);
+                    memory.updated_at = now_rfc3339();
+                    store.put_memory(&memory)?;
+                    continue;
+                }
                 Err(e) => {
                     outcome = AutonomousOutcome::Errored {
                         detail: format!("eval: {e}"),
@@ -748,7 +760,7 @@ pub async fn run_autonomous(
         store.put_commitment(&commitment)?;
 
         // EVALUATE：reasoner 判斷完成條件。
-        match evaluate_done(reasoner, &commitment, &artifact_ids).await {
+        match evaluate_done(reasoner, &commitment, &artifact_ids, store).await {
             Ok(true) => {
                 outcome = AutonomousOutcome::Satisfied {
                     artifact_ids,
@@ -812,15 +824,25 @@ async fn evaluate_done(
     reasoner: &dyn Reasoner,
     commitment: &Commitment,
     artifact_ids: &[String],
+    store: &(dyn Store + Send + Sync),
 ) -> anyhow::Result<bool> {
+    // 取出近期 artifact 的內容摘要——評估者需實質內容才能判斷成果是否滿足條件，而非只看 id
+    // （只看 id 會傾向保守回 false，使承諾難以真正 Satisfied）。取最近 3 個、各截 400 字避免爆 token。
+    let mut summaries: Vec<String> = Vec::new();
+    for id in artifact_ids.iter().rev().take(3) {
+        if let Some(art) = store.get_artifact(id)? {
+            let snippet: String = art.content.chars().take(400).collect();
+            summaries.push(format!("• {id}：{snippet}"));
+        }
+    }
     let eval_user = format!(
-        "完成條件：{cond}\n本次產出的 artifacts：{arts}\n\
+        "完成條件：{cond}\n本次產出的成果（近期）：\n{arts}\n\
          判斷完成條件是否已滿足。只回 JSON：{{\"done\": true 或 false, \"rationale\": \"...\"}}。",
         cond = commitment.completion_condition,
-        arts = if artifact_ids.is_empty() {
+        arts = if summaries.is_empty() {
             "(尚無)".into()
         } else {
-            artifact_ids.iter().take(8).cloned().collect::<Vec<_>>().join(", ")
+            summaries.join("\n")
         },
     );
     let v = reasoner.reason(EVAL_SYSTEM, &eval_user).await?;
@@ -2745,6 +2767,125 @@ mod tests {
         let emp = store.get_employee(&emp_id).unwrap().unwrap();
         assert_eq!(emp.state, EmployeeState::Sleeping);
         println!("== inbox artifact ==\n{}", art.content);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Phase 6b 真實驗證：員工帶著一個 Active commitment → `run_autonomous` 以真實 gbrain（知識檢索）
+    /// ＋真實 LLM（Reasoner 規劃／評估）自主跑完 plan→act→evaluate，直到 Satisfied 或 Stalled。
+    /// 這是**第一個需要真實 LLM API key** 的 ignored 測試（既有 `real_*` 測試只走 gbrain think，不碰 LLM）。
+    ///
+    /// 前提：本機 demo 腦已 sync（Graph>0）＋作用中腦的 chat_model 對應 provider 之 API key 環境變數已設
+    /// （如 `zhipu:glm-5.2` → `ZHIPU_API_KEY`；ollama 免 key）。缺 key 時 `build_reasoner` 會回 `llm.noApiKey`。
+    ///
+    /// 跑法：`cargo test --manifest-path src-tauri/Cargo.toml runtime::tests::real_run_autonomous -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn real_run_autonomous() {
+        let cfg_path = dirs::config_dir()
+            .expect("no config dir")
+            .join("com.operoid.studio")
+            .join("app-settings.json");
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&cfg_path).expect("read app-settings.json"),
+        )
+        .expect("parse app-settings.json");
+        let app_cfg = raw.get("app_config").expect("app_config").clone();
+        let cfg: crate::config::app_config::AppConfig =
+            serde_json::from_value(app_cfg).expect("deserialize AppConfig");
+        let active = cfg
+            .active_brain_id
+            .clone()
+            .expect("active_brain_id 未設於 app-settings.json");
+
+        let dir = test_dir();
+        let store = SqliteStore::open(dir.join("test.db")).unwrap();
+        store
+            .put_workspace(&Workspace {
+                id: "ws".into(),
+                name: "WS".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        let emp_id = "emp".to_string();
+        // Employee 的腦由 build_tool_ctx／build_reasoner 從 cfg 解析（= active 腦）。
+        store
+            .put_employee(&Employee {
+                id: emp_id.clone(),
+                workspace_id: "ws".into(),
+                name: "E".into(),
+                brain: BrainRef { brain_id: active },
+                role: None,
+                template_id: None,
+                state: EmployeeState::Sleeping,
+                created_at: now_rfc3339(),
+            })
+            .unwrap();
+        let c_id = "c1".to_string();
+        store
+            .put_commitment(&Commitment {
+                id: c_id.clone(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "總結晶瀚半導體會議".into(),
+                completion_condition: "找出晶瀚半導體開過的會議並總結其要點".into(),
+                status: CommitmentStatus::Active,
+                created_at: now_rfc3339(),
+                updated_at: now_rfc3339(),
+            })
+            .unwrap();
+
+        let (tool, ctx) = build_tool_ctx(&cfg, &store, &emp_id).expect("build_tool_ctx");
+        let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.llm_concurrency));
+        let reasoner = build_reasoner(&cfg, &store, &emp_id, permits)
+            .expect("build_reasoner（缺 LLM API key？檢查作用中腦 chat_model 對應之環境變數）");
+
+        let budget = CycleBudget::default_session();
+        let outcome = run_autonomous(&emp_id, &c_id, &budget, &tool, &reasoner, &ctx, &store)
+            .await
+            .expect("run_autonomous");
+
+        // 實證斷言：跑完不 panic、員工睡回 Sleeping、commitment 狀態與 outcome 一致。
+        // 不硬斷言必然 Satisfied——真實 LLM 可能因規劃重複而 Stalled，這屬可接受結果（自主循環本身已跑通）。
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping, "員工應睡回 Sleeping");
+        let commitment = store.get_commitment(&c_id).unwrap().unwrap();
+        match &outcome {
+            AutonomousOutcome::Satisfied { artifact_ids, cycles } => {
+                assert_eq!(
+                    commitment.status,
+                    CommitmentStatus::Satisfied,
+                    "Satisfied outcome 應將 commitment 標為 Satisfied"
+                );
+                assert!(
+                    !artifact_ids.is_empty(),
+                    "Satisfied 應至少產出一個 artifact"
+                );
+                println!(
+                    "== Satisfied（{cycles} cycles, {} artifacts）==",
+                    artifact_ids.len()
+                );
+                for aid in artifact_ids {
+                    if let Some(art) = store.get_artifact(aid).unwrap() {
+                        println!("--- artifact {aid} ---\n{}\n", art.content);
+                    }
+                }
+            }
+            AutonomousOutcome::Stalled { reason, cycles } => {
+                assert_eq!(
+                    commitment.status,
+                    CommitmentStatus::Active,
+                    "Stalled outcome 應讓 commitment 維持 Active（待人類／下次喚醒）"
+                );
+                println!(
+                    "== Stalled（{cycles} cycles）==\n原因：{reason}\n（真實 LLM 規劃重複屬可接受結果，自主循環已跑通）"
+                );
+            }
+            AutonomousOutcome::Errored { detail } => {
+                panic!("run_autonomous 發生未預期硬錯（Errored）：{detail}");
+            }
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
