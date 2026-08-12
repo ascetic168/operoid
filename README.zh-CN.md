@@ -13,7 +13,7 @@
 Operoid 的存在，就是为了成为那个环境。
 
 以 **Tauri v2（Rust）** + **Vue 3 + TypeScript** 打造。
-**作者：** 朱國棟 (Charlie Chu) · **授权：** [MIT](#授权) · **状态：** v0.2.0 —— 见[当前状态](#当前状态)
+**作者：** 朱國棟 (Charlie Chu) · **授权：** [MIT](#授权) · **状态：** 见[当前状态](#当前状态)
 
 ---
 
@@ -146,7 +146,7 @@ src/              Vue 3 前端（views、Pinia stores、i18n、带类型 IPC 包
 src-tauri/src/    Rust 后端
                     config · converters · factories · gbrain_cli · claude_code
                     brains · classifier · note_view · llm · prereq · i18n
-                    runtime · agent_state · scheduler · note_server
+                    runtime · agent_state · scheduler · event_bus · note_server
 handbook/         架构手册 —— 宪法（英文 + 中文）
 ```
 

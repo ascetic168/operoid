@@ -1460,7 +1460,9 @@ pub async fn agent_create_commitment<R: tauri::Runtime>(
     Ok(CommitmentResult { commitment_id })
 }
 
-/// 手動標記一個 Commitment 已滿足（Satisfied）。完成條件的自動判斷屬更成熟 Runtime。
+/// 手動標記一個 Commitment 已滿足（Satisfied）。
+/// 自動判斷已由 `run_autonomous` 的 `evaluate_done`（Reasoner 評估 completion_condition）實作；
+/// 本指令為人工覆寫——使用者可直接標記完成，不必等自主循環。
 #[tauri::command]
 pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

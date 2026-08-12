@@ -261,7 +261,7 @@ D1／D2／D4 已於 2026-07-30 定案（見 §七）；D3（GUI 演進）刻意�
 
 ## Horizon — v1 之後
 
-Skill learning、cloning/parallelism、marketplace、federation、distributed runtime、人機團隊——詳見 `handbook/20-Roadmap.md §7`。現階段**不展開**；重點是：這些都不需要新核心概念，是對既有概念的延伸。這正是好架構的檢驗。
+Skill learning、cloning/parallelism、marketplace、federation、distributed runtime、人機團隊——詳見 `handbook/21-Roadmap.md §7`。現階段**不展開**；重點是：這些都不需要新核心概念，是對既有概念的延伸。這正是好架構的檢驗。
 
 ---
 
@@ -343,7 +343,10 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 | 2026-08-04 | **Phase 7a ✅** | 交辦承諾＋立即喚醒。抽 `run_commitments_for_employee` helper（busy-lock→tool/ctx/reasoner→清 Inbox→每個 Active commitment 跑 run_autonomous），`agent_create_commitment` 與 `scheduler::scan_commitments` **共用**（掃描簡化為候選＋委派）；`agent_create_commitment` 建立後**背景非阻塞喚醒**（`async_runtime::spawn`，不必重啟 app）。前端：右鍵「交辦…」modal（標題＋完成條件）、`agentCreateCommitment`/`agentSatisfyCommitment` wrapper、`createCommitment` action、i18n 三語 `instances.delegate*`。`cargo test` 94 全綠、`npm run build` 0 error。 | 7b Message 概念（Handbook 修訂）＋聊天＋對話迴圈 | — |
 | 2026-08-04 | **Phase 7b ✅** | Message 概念＋聊天＋對話迴圈。**先手冊後碼**：Handbook 新增 **Ch.16 Message**（中英）＋**Part IV 重編 16→17–21**（10 檔改名＋header＋Security→Tool-SDK 交叉引用）＋README v0.2（TOC／概念表／概念圖）＋Ch.04／Ch.18（封閉清單：Out message 由 Runtime 代發）／Ch.21 §7 交叉引用；明文調和反聊天立場。後端：`Message`／`MessageDirection`＋Store（`messages` 表）＋`run_conversational_turn`（知識檢索→Reasoner 回覆答案／反問→`Message{Out}`）＋`run_inbox` 注入 `Option<&Reasoner>`（訊息走對話回合，無 reasoner 退回 gbrain）＋`agent_send_message` 寫 `Message{In}`＋`agent_watch` 加 messages。前端：`EmployeeChatView`（`/instances/:id/chat`，氣泡 In 左／Out 右、1.5s 輪詢、auto-scroll）＋右鍵「對話…」＋i18n 三語。`cargo test` **95 全綠**、`npm run build` 0 error。 | 7c 員工提案承諾＋人類核可（Ch.11 修訂） | — |
 | 2026-08-10 | —（品牌） | **專案更名 Emploid→Operoid**（與 `pixquilly/emploid` Python 套件品牌碰撞）。深度查證：GitHub 0 衝突、npm/PyPI 可用、USPTO 商標空白、`operoid.io`/`.co` 網域可用。機械替換涵蓋 48 檔（README×3、handbook×42、Cargo.toml/tauri.conf/lib/main/runtime 等 Rust 全域）；`agent_db_path` 移除 Roaming→Local 遷移死碼，DB 檔名 `operoid.db`（可重建，不遷移）；`lib.rs` 加 `migrate_app_data_dir`——identifier `com.emploid.studio→com.operoid.studio` 一次性目錄遷移（app-settings.json 無痛延續）；handbook 詞源句改寫為 operation 詞根（EN＋中）。docs/ 4 檔重命名（含 PDF 劇本）。 | GitHub repo 重命名；發新 release | JOURNEY 歷史文字保留 Emploid 不動（如實記錄） |
+| 2026-08-12 | —（Event 匯流排） | **Event 匯流排架構**（Workstream A–E＋G，commit a9ab669）。實作 Handbook Ch.12 第四種 Trigger——**Event-driven**（前三種 Message/Time/Manual 已在 Phase 6 落地）。核心：factory 寫入→`InboundEvent`→mpsc channel→`dispatch_event`（腦→員工 1:N 路由）→重用 `agent_send_message` 內部邏輯（`Message{In}`+`Task{Assigned}`+`wake()`）→下游 `run_inbox`/`run_conversational_turn`/propose 零改動接手。附帶：①LLM 全域 Semaphore 節流（`LlmReasoner` 持 permit，涵蓋對話/PLAN/EVAL 全路徑，預設 4 並發）；②`run_autonomous` 每輪先清一個 inbox（修復 doc/impl 不一致——承諾 session 期間的訊息不再苦等 session 結束）；③`process_one_inbox_task` 共用 helper 抽取。新檔 `event_bus.rs`；`AppConfig` 加 `llm_concurrency`/`event_review_enabled`。`cargo test` **103 全綠**（+2 新測：`run_autonomous_processes_inbox_first`、`list_employees_by_brain`）。詳見 `docs/Operoid-計畫-Event匯流排架構.md`。 | F（webhook 進氣口，Phase 2）—見待處理清單 E7 | brain_sync fire-and-forget 未做（E8，靠 summary 預覽兜底） |
 
 **目前所在：** 🎉 **Phase 7（人機協作）完成——7a 交辦＋7b 聊天＋7c 員工提案核可全數落地。** 人機介面從單發 Q&A 升級為完整協作：雙向多次聊天（Reasoner 驅動回覆、可反問）、交辦承諾（立即喚醒自主跑）、員工在對話中主動提案承諾（Proposed）待人類核可（Active）。Handbook 新增 Message 一級概念（Ch.16，Part IV 重編）＋修訂 Ch.11（Proposed/Rejected）＋Ch.20 §5（提案-核可通用化）。**Phase 6＋7 全部完成**——員工生命週期＋人機協作的完整願景已兌現。
+
+**Event 匯流排（2026-08-12）**：實作 Handbook Ch.12 第四種 Trigger——**Event-driven**。factory 寫入（會議記錄/people/companies）完成後，具備對應腦的員工自動被喚醒 review，產生回應或提案承諾（待人類核可）。附帶 LLM 全域並發節流（Semaphore）＋ inbox 佇列延遲修復。webhook 進氣口（Email/IM 將來的統一 API）為 Phase 2 待辦。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。

@@ -15,7 +15,7 @@ action to closure. Those responsibilities need an environment that
 Operoid exists to be that environment.
 
 Built with **Tauri v2 (Rust)** + **Vue 3 + TypeScript**.
-**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** v0.2.0 — see [Current status](#current-status)
+**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** see [Current status](#current-status)
 
 ---
 
@@ -157,7 +157,7 @@ src/              Vue 3 frontend (views, Pinia stores, i18n, typed IPC wrappers)
 src-tauri/src/    Rust backend
                     config · converters · factories · gbrain_cli · claude_code
                     brains · classifier · note_view · llm · prereq · i18n
-                    runtime · agent_state · scheduler · note_server
+                    runtime · agent_state · scheduler · event_bus · note_server
 handbook/         The Architecture Handbook — the constitution (EN + 中文)
 ```
 
