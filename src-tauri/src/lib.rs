@@ -10,6 +10,7 @@ mod claude_code;
 mod config;
 mod converters;
 mod domain;
+mod event_bus;
 mod factories;
 mod gbrain_cli;
 mod i18n;

@@ -81,6 +81,16 @@ pub trait Store {
         )
     }
 
+    /// 列出**共用某腦**的全部員工（Event 匯流排腦→員工路由用；關係 1:N——多員工可共用一腦）。
+    /// `brain_id` 在 SQLite 藏在 JSON blob，故 in-memory 過濾（與既有 `list_tasks_by_owner` 過濾
+    /// status 的模式一致）。員工數量小，暫不需加 DB index。
+    fn list_employees_by_brain(&self, brain_id: &str) -> Result<Vec<Employee>> {
+        Ok(self.list_all_employees()?
+            .into_iter()
+            .filter(|e| e.brain.brain_id == brain_id)
+            .collect())
+    }
+
     /// 列出某員工名下 `Active` 的 commitments（承諾驅動喚醒用）。
     fn list_active_commitments_by_owner(&self, owner_employee_id: &str) -> Result<Vec<Commitment>>;
 
@@ -549,6 +559,55 @@ mod tests {
         let s2 = JsonStore::new(&dir);
         assert_eq!(s2.list_employees("acme").unwrap().len(), 1);
         assert_eq!(s2.list_employees("other").unwrap().len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn list_employees_by_brain_returns_all_sharing_brain() {
+        let dir = test_dir();
+        let s = JsonStore::new(&dir);
+        // 兩名員工（跨 workspace）共用 "__default__" 腦；一名用 "other-brain"。
+        for id in ["steve", "mary"] {
+            s.put_employee(&Employee {
+                id: id.into(),
+                workspace_id: "acme".into(),
+                name: id.into(),
+                brain: BrainRef {
+                    brain_id: "__default__".into(),
+                },
+                role: None,
+                template_id: None,
+                state: EmployeeState::Created,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        }
+        s.put_employee(&Employee {
+            id: "alex".into(),
+            workspace_id: "other".into(),
+            name: "Alex".into(),
+            brain: BrainRef {
+                brain_id: "other-brain".into(),
+            },
+            role: None,
+            template_id: None,
+            state: EmployeeState::Created,
+            created_at: "t".into(),
+        })
+        .unwrap();
+
+        // 1:N 路由：list_employees_by_brain 回全部共用此腦的員工（跨 workspace）。
+        let default_brain = s.list_employees_by_brain("__default__").unwrap();
+        assert_eq!(default_brain.len(), 2);
+        assert!(default_brain.iter().any(|e| e.id == "steve"));
+        assert!(default_brain.iter().any(|e| e.id == "mary"));
+
+        let other = s.list_employees_by_brain("other-brain").unwrap();
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].id, "alex");
+
+        // 不存在的腦 → 空。
+        assert!(s.list_employees_by_brain("nonexistent").unwrap().is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 

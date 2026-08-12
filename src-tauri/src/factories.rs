@@ -7,8 +7,9 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
+use crate::agent_state::{AppState, EventKind, InboundEvent};
 use crate::config;
 use crate::converters::{csv_people, extract_companies, pdf_text, text_to_md};
 use crate::gbrain_cli::no_console;
@@ -171,6 +172,18 @@ pub async fn factory_save_authored<R: Runtime>(
     };
 
     let file = write_page(&notes, &target_dir, &slug, &to_write).map_err(|e| e.to_string())?;
+    // 事件匯流排（Phase 7c）：手寫存檔後 emit 給腦匹配的員工 review（best-effort）。
+    if cfg.event_review_enabled {
+        app.state::<AppState>().emit(InboundEvent {
+            kind: EventKind::FactoryWritten,
+            brain_id: cfg.active_brain_id.clone(),
+            employee_id: None,
+            category: Some(target_dir.clone()),
+            title: slug.clone(),
+            summary: to_write.chars().take(800).collect(),
+            source: "factory".into(),
+        });
+    }
     Ok(AuthoredResult {
         slug,
         target_dir,
@@ -584,10 +597,29 @@ pub fn factory_write_pages<R: Runtime>(
     };
     let mut written = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
-    for pg in pages {
+    for pg in &pages {
         match write_page(&notes, &pg.target_dir, &pg.slug, &pg.markdown) {
             Ok(f) => written.push(f.to_string_lossy().into_owned()),
             Err(e) => errors.push(file_err(format!("{}/{}", pg.target_dir, pg.slug), e)),
+        }
+    }
+    // 事件匯流排（Phase 7c）：寫入完成後 emit 給腦匹配的員工 review（best-effort；同步 try_send）。
+    // active_brain_id 為路由錨點——喚醒共用此腦的全部員工。summary 帶內容預覽，reasoner 不靠
+    // 圖譜同步也能審閱（gbrain 索引的 race 由 dispatcher fire-and-forget sync + 預覽雙保險兜底）。
+    if let Ok(cfg) = config::app_config::load(&app) {
+        if cfg.event_review_enabled {
+            let state = app.state::<AppState>();
+            for pg in &pages {
+                state.emit(InboundEvent {
+                    kind: EventKind::FactoryWritten,
+                    brain_id: cfg.active_brain_id.clone(),
+                    employee_id: None,
+                    category: Some(pg.target_dir.clone()),
+                    title: pg.slug.clone(),
+                    summary: pg.markdown.chars().take(800).collect(),
+                    source: "factory".into(),
+                });
+            }
         }
     }
     Ok(WriteResult { written, errors, note: None })

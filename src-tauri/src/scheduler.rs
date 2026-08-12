@@ -13,14 +13,16 @@
 //!
 //! 喚醒合取條件守原則 7：「Trigger 觸發 **且** 有工作」。busy-lock 防同一員工被並發執行。
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::future;
 use tauri::{async_runtime, AppHandle, Manager, Runtime};
 
-use crate::agent_state::{AppState, WakeSignal};
+use crate::agent_state::{AppState, InboundEvent, WakeSignal};
 use crate::config::app_config;
 use crate::domain::{EmployeeState, SqliteStore, Store};
+use crate::event_bus;
 use crate::runtime::{
     agent_db_path, build_reasoner, build_tool_ctx, run_commitments_for_employee, run_inbox,
 };
@@ -29,15 +31,19 @@ use crate::runtime::{
 ///
 /// `agent_os_enabled` 不在此把關——loop 內每輪自查，讓使用者於設定開關後下次 tick 即生效。
 pub fn start<R: Runtime>(app: AppHandle<R>) {
+    let cfg = app_config::load(&app).unwrap_or_default();
+    let permits = cfg.llm_concurrency;
     let (wake_tx, wake_rx) = tokio::sync::mpsc::channel::<WakeSignal>(64);
-    app.manage(AppState::new(wake_tx));
-    async_runtime::spawn(scheduler_loop(app, wake_rx));
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<InboundEvent>(128);
+    app.manage(AppState::new(wake_tx, event_tx, permits));
+    async_runtime::spawn(scheduler_loop(app, wake_rx, event_rx));
 }
 
 /// 排程器主迴圈。首次 tick 做承諾掃描（啟動喚醒）；其後每次 tick／信號只做 Inbox 掃描。
 async fn scheduler_loop<R: Runtime>(
     app: AppHandle<R>,
     mut wake_rx: tokio::sync::mpsc::Receiver<WakeSignal>,
+    mut event_rx: tokio::sync::mpsc::Receiver<InboundEvent>,
 ) {
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     let mut started = false;
@@ -52,6 +58,9 @@ async fn scheduler_loop<R: Runtime>(
                 let _ = scan_inbox(&app).await;
             }
             Some(_sig) = wake_rx.recv() => { let _ = scan_inbox(&app).await; }
+            Some(ev) = event_rx.recv() => {       // 外部事件（工廠寫入／webhook）
+                let _ = event_bus::dispatch_event(&app, ev).await;
+            }
         }
     }
 }
@@ -100,15 +109,17 @@ async fn scan_inbox<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
         return Ok(());
     }
     let state = app.state::<AppState>();
+    let permits = state.llm_permits();
     let cfg = &cfg;
     let store = &store;
     let futs = candidates.into_iter().filter_map(|id| {
         let guard = state.try_acquire(&id)?; // 已在跑則跳過
+        let permits = Arc::clone(&permits);
         Some(async move {
             let _guard = guard; // 釋放於此 future 完成（含錯誤路徑）
             if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id) {
                 // Reasoner 為可選：有則訊息走對話回合，無則退回 gbrain 單發（守 6c 行為）。
-                let reasoner = match build_reasoner(cfg, store, &id) {
+                let reasoner = match build_reasoner(cfg, store, &id, permits) {
                     Ok(r) => Some(r),
                     Err(e) => {
                         eprintln!("[scheduler] build_reasoner({id}) 失敗（退化為 gbrain-only）: {e}");

@@ -104,6 +104,12 @@ pub struct AppConfig {
     /// 預設關閉；既有 app-settings.json 因 `#[serde(default)]` 可無痛載入。
     #[serde(default)]
     pub agent_os_enabled: bool,
+    /// LLM 並發上限（全域 Semaphore permit 數；節流「全部喚醒」的尖峰並發 LLM 呼叫）。
+    #[serde(default = "default_llm_concurrency")]
+    pub llm_concurrency: usize,
+    /// 工廠寫檔後是否觸發員工 review（Event 匯流排開關；Phase 7c）。
+    #[serde(default = "default_true")]
+    pub event_review_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -111,6 +117,9 @@ fn default_true() -> bool {
 }
 fn default_temp() -> f64 {
     0.2
+}
+fn default_llm_concurrency() -> usize {
+    4
 }
 fn default_max_tokens() -> u32 {
     4096
@@ -230,6 +239,8 @@ impl Default for AppConfig {
             claude_terminal: None,
             claude_terminal_template: None,
             agent_os_enabled: false,
+            llm_concurrency: default_llm_concurrency(),
+            event_review_enabled: true,
         };
         cfg.normalize();
         cfg

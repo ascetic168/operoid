@@ -6,6 +6,7 @@
 //! Tool 邊界由 [`crate::domain::tools::Tool`] trait 結構保證（只有 `invoke`，見 Principle 5）。
 
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -254,6 +255,108 @@ fn commit_artifact(
     Ok(artifact_id)
 }
 
+/// 處理至多一個 inbox task（訊息／交接／事件 review）；回傳 `true` 表有處理（inbox 非空），
+/// `false` 表 inbox 空。**不做** wake/sleep 設定（已由呼叫端 `run_inbox`／`run_autonomous`
+/// 各自一次性處理），僅消費一個 task 並更新 memory。
+///
+/// 供兩處共用：`run_inbox`（吃完所有 inbox 再睡）與 `run_autonomous`（每輪先清一個——訊息／
+/// 事件 review 優先於承諾自主推進，修復 doc/impl 不一致造成的佇列延遲）。
+async fn process_one_inbox_task(
+    employee_id: &str,
+    workspace_id: &str,
+    memory: &mut Memory,
+    tool: &dyn Tool,
+    reasoner: Option<&dyn Reasoner>,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+) -> anyhow::Result<bool> {
+    // 取一個 Inbox task（Assigned/Created/InProgress）；無則回 false。
+    let Some(mut task) = store
+        .list_assigned_tasks_by_owner(employee_id)?
+        .into_iter()
+        .next()
+    else {
+        return Ok(false);
+    };
+    // 標 InProgress（讓監看可見「正在做這件」）。
+    task.status = TaskStatus::InProgress;
+    store.put_task(&task)?;
+
+    // 訊息任務＋有 Reasoner → 對話回合（回覆＋Out Message，Ch.16）；其餘走 gbrain think→artifact。
+    let artifact_id = match (task.objective.as_str(), reasoner) {
+        ("Human message", Some(r)) => {
+            run_conversational_turn(employee_id, &task, tool, r, ctx, store).await?
+        }
+        _ => {
+            let output = tool
+                .invoke(
+                    ToolInput {
+                        query: task.input.clone(),
+                        anchor: None,
+                    },
+                    ctx,
+                )
+                .await?;
+            let aid = Some(commit_artifact(
+                store,
+                workspace_id,
+                employee_id,
+                &task.input,
+                &output.text,
+                Some(&task.id),
+                task.commitment_id.as_deref(),
+                task.project_id.as_deref(),
+            )?);
+            // 訊息 task 但無 Reasoner → 仍寫 Out Message（gbrain 證據作為回覆），讓對話不斷線。
+            if task.objective == "Human message" {
+                let _ = store.put_message(&Message {
+                    id: fresh_id("msg-out"),
+                    workspace_id: workspace_id.to_string(),
+                    employee_id: employee_id.to_string(),
+                    direction: MessageDirection::Out,
+                    text: output.text,
+                    source_commitment_id: task.commitment_id.clone(),
+                    proposed_commitment_id: None,
+                    artifact_id: aid.clone(),
+                    created_at: now_rfc3339(),
+                });
+                record_event(
+                    store,
+                    workspace_id,
+                    employee_id,
+                    "reply",
+                    "gbrain fallback (no reasoner)",
+                );
+            }
+            aid
+        }
+    };
+    // 原任務完成、連結產出。
+    task.status = TaskStatus::Completed;
+    task.output_artifact_id = artifact_id.clone();
+    store.put_task(&task)?;
+    if let Some(cid) = task.commitment_id.as_deref() {
+        if let Some(mut com) = store.get_commitment(cid)? {
+            com.updated_at = now_rfc3339();
+            store.put_commitment(&com)?;
+        }
+    }
+    match artifact_id {
+        Some(aid) => {
+            memory.notes.push(if task.objective == "Human message" {
+                format!("replied \"{}\" → {}", task.input, aid)
+            } else {
+                format!("inbox \"{}\" → artifact {}", task.objective, aid)
+            });
+            memory.last_artifact_id = Some(aid);
+        }
+        None => memory
+            .notes
+            .push(format!("replied \"{}\" (no artifact)", task.input)),
+    }
+    Ok(true)
+}
+
 /// 收件匣驅動喚醒（Phase 6）：員工醒來、依序吃完所有 Inbox（Assigned）tasks、再睡。
 ///
 /// 與 `run_cycle` 的差別：不接收外部 query——query 來自員工自己的 inbox task；
@@ -277,89 +380,18 @@ pub async fn run_inbox(
     record_event(store, &workspace_id, employee_id, "wake", "inbox");
 
     loop {
-        // 取一個 Inbox task（Assigned/Created/InProgress）；無則結束。
-        let Some(mut task) = store
-            .list_assigned_tasks_by_owner(employee_id)?
-            .into_iter()
-            .next()
-        else {
+        if !process_one_inbox_task(
+            employee_id,
+            &workspace_id,
+            &mut memory,
+            tool,
+            reasoner,
+            ctx,
+            store,
+        )
+        .await?
+        {
             break;
-        };
-        // 標 InProgress（讓監看可見「正在做這件」）。
-        task.status = TaskStatus::InProgress;
-        store.put_task(&task)?;
-
-        // 訊息任務＋有 Reasoner → 對話回合（回覆＋Out Message，Ch.16）；其餘走 gbrain think→artifact。
-        let artifact_id = match (task.objective.as_str(), reasoner) {
-            ("Human message", Some(r)) => {
-                run_conversational_turn(employee_id, &task, tool, r, ctx, store).await?
-            }
-            _ => {
-                let output = tool
-                    .invoke(
-                        ToolInput {
-                            query: task.input.clone(),
-                            anchor: None,
-                        },
-                        ctx,
-                    )
-                    .await?;
-                let aid = Some(commit_artifact(
-                    store,
-                    &workspace_id,
-                    employee_id,
-                    &task.input,
-                    &output.text,
-                    Some(&task.id),
-                    task.commitment_id.as_deref(),
-                    task.project_id.as_deref(),
-                )?);
-                // 訊息 task 但無 Reasoner → 仍寫 Out Message（gbrain 證據作為回覆），讓對話不斷線。
-                if task.objective == "Human message" {
-                    let _ = store.put_message(&Message {
-                        id: fresh_id("msg-out"),
-                        workspace_id: workspace_id.clone(),
-                        employee_id: employee_id.to_string(),
-                        direction: MessageDirection::Out,
-                        text: output.text,
-                        source_commitment_id: task.commitment_id.clone(),
-                        proposed_commitment_id: None,
-                        artifact_id: aid.clone(),
-                        created_at: now_rfc3339(),
-                    });
-                    record_event(
-                        store,
-                        &workspace_id,
-                        employee_id,
-                        "reply",
-                        "gbrain fallback (no reasoner)",
-                    );
-                }
-                aid
-            }
-        };
-        // 原任務完成、連結產出。
-        task.status = TaskStatus::Completed;
-        task.output_artifact_id = artifact_id.clone();
-        store.put_task(&task)?;
-        if let Some(cid) = task.commitment_id.as_deref() {
-            if let Some(mut com) = store.get_commitment(cid)? {
-                com.updated_at = now_rfc3339();
-                store.put_commitment(&com)?;
-            }
-        }
-        match artifact_id {
-            Some(aid) => {
-                memory.notes.push(if task.objective == "Human message" {
-                    format!("replied \"{}\" → {}", task.input, aid)
-                } else {
-                    format!("inbox \"{}\" → artifact {}", task.objective, aid)
-                });
-                memory.last_artifact_id = Some(aid);
-            }
-            None => memory
-                .notes
-                .push(format!("replied \"{}\" (no artifact)", task.input)),
         }
     }
 
@@ -374,7 +406,7 @@ pub async fn run_inbox(
 // ───────────────── 對話回合（Phase 7b，Ch.16 Message）─────────────────
 
 /// 時間戳為底的唯一 id（給 In/Out Message 用；奈秒精度，實務不碰撞）。
-fn fresh_id(prefix: &str) -> String {
+pub(crate) fn fresh_id(prefix: &str) -> String {
     format!("{prefix}-{}", now_rfc3339().replace(':', "-"))
 }
 
@@ -592,6 +624,27 @@ pub async fn run_autonomous(
                 cycles: cycles - 1,
             };
             break;
+        }
+
+        // 每輪先服務一個 inbox task（訊息／事件 review 優先於承諾自主推進）。
+        // 修復 doc/impl 不一致（原 doc 宣稱「每輪先清一個 inbox」但實作沒做）：承諾 session 期間
+        // 到的訊息／事件 review，在下一輪循環開頭即被處理，不再苦等 session 結束 + 30s tick。
+        if process_one_inbox_task(
+            employee_id,
+            &workspace_id,
+            &mut memory,
+            knowledge,
+            Some(reasoner),
+            ctx,
+            store,
+        )
+        .await?
+        {
+            // 本輪處理了 inbox，跳過 plan/act/eval；下輪再推進承諾。
+            // 持久化 memory（含回覆 note），確保即便隨後 Satisfied 也不遺失上下文。
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            continue;
         }
 
         // PLAN：reasoner 決定下一步（或判斷已 done）。近期 notes 提供進度脈絡，避免天真重來。
@@ -1101,20 +1154,36 @@ pub(crate) fn build_tool_ctx(
 
 /// 以 LLM（Employee Brain 的推理層）實作的 [`Reasoner`]：包 [`llm::complete`]，回結構化 JSON。
 /// 與 [`GbrainThinkTool`]（知識檢索）成對——推理 vs 檢索（Principle 1：知識≠工作者）。
+///
+/// `permits` 為全域並發節流（Phase 7c）：N 個員工同時喚醒時，`reason` 會先 `acquire().await`
+/// 排隊等 permit（預設 4），避免瞬間 N 個並發 LLM 呼叫打爆 rate limit。涵蓋全部 3 個 reasoner
+/// 呼叫點（對話 `:421`／PLAN `:607`／EVAL `:773`），因為都走此 `reason` → `llm::complete`。
 pub struct LlmReasoner {
     endpoint: gbrain_config::LlmEndpoint,
     cfg: app_config::AppConfig,
+    permits: Arc<tokio::sync::Semaphore>,
 }
 
 impl LlmReasoner {
-    pub fn new(endpoint: gbrain_config::LlmEndpoint, cfg: app_config::AppConfig) -> Self {
-        Self { endpoint, cfg }
+    pub fn new(
+        endpoint: gbrain_config::LlmEndpoint,
+        cfg: app_config::AppConfig,
+        permits: Arc<tokio::sync::Semaphore>,
+    ) -> Self {
+        Self {
+            endpoint,
+            cfg,
+            permits,
+        }
     }
 }
 
 impl Reasoner for LlmReasoner {
     fn reason<'a>(&'a self, system: &'a str, user: &'a str) -> ReasonerFuture<'a> {
+        let permits = Arc::clone(&self.permits);
         Box::pin(async move {
+            // 並發節流：permit 滿則在此自動排隊等待；完成後隨 `_permit` drop 自動歸還。
+            let _permit = permits.acquire().await.expect("llm semaphore closed");
             let raw = llm::complete(&self.endpoint, &self.cfg, system, user).await?;
             parse_json_value(&raw)
         })
@@ -1122,11 +1191,12 @@ impl Reasoner for LlmReasoner {
 }
 
 /// 為某員工解析其腦的 LLM endpoint，建構 [`LlmReasoner`]（與 [`build_tool_ctx`] 用同一個腦）。
-/// 缺 API key（且非 ollama）→ `llm.noApiKey`。
+/// 缺 API key（且非 ollama）→ `llm.noApiKey`。`permits` 為全域 LLM 並發節流（取自 `AppState`）。
 pub(crate) fn build_reasoner(
     cfg: &app_config::AppConfig,
     store: &SqliteStore,
     employee_id: &str,
+    permits: Arc<tokio::sync::Semaphore>,
 ) -> Result<LlmReasoner, AppError> {
     let emp = store
         .get_employee(employee_id)?
@@ -1142,7 +1212,7 @@ pub(crate) fn build_reasoner(
                 gbrain_config::env_key(&endpoint.provider).unwrap_or("?"),
             ));
     }
-    Ok(LlmReasoner::new(endpoint, cfg.clone()))
+    Ok(LlmReasoner::new(endpoint, cfg.clone(), permits))
 }
 
 #[derive(Serialize)]
@@ -1307,7 +1377,8 @@ pub(crate) async fn run_commitments_for_employee<R: tauri::Runtime>(
             return Ok(());
         }
     };
-    let reasoner = match build_reasoner(&cfg, &store, employee_id) {
+    let permits = state.llm_permits();
+    let reasoner = match build_reasoner(&cfg, &store, employee_id, permits) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[runtime] build_reasoner({employee_id}) failed（缺 LLM API key？）: {e}");
@@ -2376,6 +2447,76 @@ mod tests {
             CommitmentStatus::Active
         );
         assert!(store.list_artifacts("ws").unwrap().is_empty());
+        assert_eq!(
+            store.get_employee(&emp_id).unwrap().unwrap().state,
+            EmployeeState::Sleeping
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// D2 修復驗證：run_autonomous 每輪先清一個 inbox task——承諾 session 期間到的訊息／事件
+    /// review 即時被處理，不再苦等 session 結束 + 30s tick。inbox task 優先於 plan/act/eval
+    /// （消耗一個 budget cycle）。無此修復時 inbox task 會殘留 Assigned、無 Out Message、承諾 Stalled。
+    #[tokio::test]
+    async fn run_autonomous_processes_inbox_first() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "持續追蹤".into(),
+                completion_condition: "條件滿足".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        // 在 run_autonomous 啟動前就放一則訊息進 Inbox（模擬事件 review 投遞的 Assigned task）。
+        store
+            .put_task(&Task {
+                id: "msg-1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "請審閱這篇會議記錄".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let knowledge = StubTool::new("會議記錄：決議 A、待辦 B。");
+        // reasoner 回應順序：① 對話回合（inbox review）→ answer；② PLAN → done；③ EVAL → done → Satisfied。
+        let reasoner = StubReasoner::new(vec![
+            r#"{"kind":"answer","text":"已審閱，決議 A 與待辦 B 已記下。"}"#,
+            r#"{"done": true, "rationale": "已完成"}"#,
+            r#"{"done": true, "rationale": "確認滿足"}"#,
+        ]);
+        let budget = CycleBudget {
+            max_cycles: 5,
+            max_duration: Duration::from_secs(10),
+        };
+        let outcome = run_autonomous(&emp_id, "c1", &budget, &knowledge, &reasoner, &ctx(), &store)
+            .await
+            .unwrap();
+
+        // 核心斷言：inbox 訊息 task 已被處理（Completed）——session 期間即時消化（D2）。
+        let task = store.get_task("msg-1").unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Completed);
+
+        // 對話回合產出：一則 Out Message（員工回覆）。
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert!(
+            msgs.iter().any(|m| m.direction == MessageDirection::Out),
+            "應有員工回覆訊息（對話回合）"
+        );
+
+        // 承諾在 inbox 清完後仍正常推進至 Satisfied。
+        assert!(matches!(outcome, AutonomousOutcome::Satisfied { .. }));
         assert_eq!(
             store.get_employee(&emp_id).unwrap().unwrap().state,
             EmployeeState::Sleeping
