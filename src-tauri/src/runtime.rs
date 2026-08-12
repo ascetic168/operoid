@@ -65,7 +65,8 @@ pub async fn run_cycle(
     // 2. Restore Context：還原工作記憶（無則空）。Principle 8——每次重建，不假設駐留。
     let mut memory = restore_memory(store, employee_id)?;
 
-    // 3. Execute：單發——以 query 呼叫 Tool。要不要呼叫屬 Runtime，要想什麼由（Phase 1 暫固定的）query 決定。
+    // 3. Execute：單發——以 query 呼叫 Tool。要不要呼叫屬 Runtime；query 由呼叫端決定
+    //    （單發模式：人類／任務指定查什麼。自主模式的 query 則由 `run_autonomous` 的 PLAN 動態決定）。
     let output = tool
         .invoke(
             ToolInput {
@@ -564,6 +565,10 @@ pub enum AutonomousOutcome {
 /// notes 環狀緩衝上限（避免無限增長；P8 的「遺忘是錯誤」適用於未提交工作，非無限暫存）。
 const NOTE_CAP: usize = 50;
 
+/// PLAN 重複偵測上限：連續 `MAX_REPEAT` 次相同 next_query 才判 Stalled（給 LLM 換角度的機會，
+/// 而非一次重複就放棄）。首次重複時不 ACT（不浪費查詢），留 note 重新 PLAN。
+const MAX_REPEAT: u32 = 2;
+
 const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。該行動會被當作知識檢索的查詢。只回 JSON 物件，不附加其他文字。";
 
 const EVAL_SYSTEM: &str = "你是一名完成條件評估者。只根據完成條件與已產出的成果，判斷承諾是否已滿足。只回 JSON 物件，不附加其他文字。";
@@ -607,6 +612,7 @@ pub async fn run_autonomous(
     let mut produced_any = false;
     let mut cycles = 0u32;
     let mut last_query: Option<String> = None;
+    let mut repeat_count: u32 = 0;
     let outcome: AutonomousOutcome;
 
     loop {
@@ -647,14 +653,21 @@ pub async fn run_autonomous(
             continue;
         }
 
-        // PLAN：reasoner 決定下一步（或判斷已 done）。近期 notes 提供進度脈絡，避免天真重來。
+        // PLAN：reasoner 決定下一步。給近期 artifact 摘要（與 EVAL 對稱——消除「PLAN 瞎子」：
+        // 原本 PLAN 只看文字 notes、看不到成果內容 → 該停時不停）＋進度 notes，讓 LLM 能判斷
+        // 「成果是否已足夠」而非盲目繼續查。
         let recent: Vec<String> = memory.notes.iter().rev().take(5).cloned().collect();
+        let summaries = recent_artifact_summaries(store, &artifact_ids, 3, 400)?;
         let plan_user = format!(
-            "承諾：{title}\n完成條件：{cond}\n近期已做：\n{recent}\n\
-             請決定下一個要調查／執行的具體問題（一句）。只回 JSON：\
-             {{\"next_query\": \"...\", \"rationale\": \"...\"}}；若你判斷承諾已完成，回 {{\"done\": true}}。",
+            "承諾：{title}\n完成條件：{cond}\n\
+             已查得的成果（近期）：\n{arts}\n\
+             近期已做：\n{recent}\n\
+             請決定下一步：若上述成果已足以滿足完成條件，回 {{\"done\": true}}；\
+             否則給下一個該調查的具體問題（避免與已查過的重複）。只回 JSON：\
+             {{\"next_query\": \"...\", \"rationale\": \"...\"}} 或 {{\"done\": true}}。",
             title = commitment.title,
             cond = commitment.completion_condition,
+            arts = if summaries.is_empty() { "(尚無)".into() } else { summaries.join("\n") },
             recent = if recent.is_empty() { "(尚無)".into() } else { recent.join("\n") },
         );
         let plan = match reasoner.reason(PLAN_SYSTEM, &plan_user).await {
@@ -666,17 +679,50 @@ pub async fn run_autonomous(
                 break;
             }
         };
+        // 診斷軌跡：記錄 PLAN 的判斷（done 或 next_query + rationale），供事後重建 LLM 每輪行為。
+        let plan_done = plan.get("done").and_then(|v| v.as_bool()).unwrap_or(false);
+        let plan_rationale: String = plan
+            .get("rationale")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .chars()
+            .take(200)
+            .collect();
+        let plan_detail = if plan_done {
+            format!("{{\"done\": true, \"rationale\": \"{plan_rationale}\"}}")
+        } else {
+            let q = plan
+                .get("next_query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            format!("{{\"query\": \"{q}\", \"rationale\": \"{plan_rationale}\"}}")
+        };
+        record_event(store, &workspace_id, employee_id, "plan", &plan_detail);
         // 規劃器主張已完成 → 進 EVAL 確認（仍由 Brain 判斷，非 Runtime 決定）。
-        if plan.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if plan_done {
             match evaluate_done(reasoner, &commitment, &artifact_ids, store).await {
-                Ok(true) => {
+                Ok((true, rationale)) => {
+                    record_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        "eval",
+                        format!("{{\"done\": true, \"rationale\": \"{rationale}\"}}"),
+                    );
                     outcome = AutonomousOutcome::Satisfied {
                         artifact_ids,
                         cycles: cycles - 1,
                     };
                     break;
                 }
-                Ok(false) => {
+                Ok((false, rationale)) => {
+                    record_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        "eval",
+                        format!("{{\"done\": false, \"rationale\": \"{rationale}\"}}"),
+                    );
                     // 評估未過：LLM 主張完成但 Brain 認為尚未滿足完成條件。留 note 提示下一輪 PLAN
                     // 由新角度繼續推進，而非 fall through 取 plan 裡不存在的 next_query（PLAN 既回了
                     // done 就不會同時給 query）→ 否則必然 Stalled「未給出 next_query」。
@@ -708,14 +754,26 @@ pub async fn run_autonomous(
             };
             break;
         };
-        // 重複偵測：與上一輪相同 → 視為無進展。
+        // 重複偵測：與上一輪相同 query。允許 MAX_REPEAT 次重複（給 LLM 換角度的機會），超過才放棄；
+        // 首次重複時不 ACT（不浪費查詢），留 note 提示換方向，重新 PLAN。
         if last_query.as_deref() == Some(next_query.as_str()) {
-            outcome = AutonomousOutcome::Stalled {
-                reason: "規劃重複，無進展".into(),
-                cycles: cycles - 1,
-            };
-            break;
+            repeat_count += 1;
+            if repeat_count >= MAX_REPEAT {
+                outcome = AutonomousOutcome::Stalled {
+                    reason: "規劃重複，無進展".into(),
+                    cycles: cycles - 1,
+                };
+                break;
+            }
+            memory
+                .notes
+                .push(format!("（「{}」已查過且重複，請換角度）", next_query));
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            continue;
         }
+        repeat_count = 0;
         last_query = Some(next_query.clone());
 
         // ACT：知識工具檢索。
@@ -761,14 +819,29 @@ pub async fn run_autonomous(
 
         // EVALUATE：reasoner 判斷完成條件。
         match evaluate_done(reasoner, &commitment, &artifact_ids, store).await {
-            Ok(true) => {
+            Ok((true, rationale)) => {
+                record_event(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    "eval",
+                    format!("{{\"done\": true, \"rationale\": \"{rationale}\"}}"),
+                );
                 outcome = AutonomousOutcome::Satisfied {
                     artifact_ids,
                     cycles: cycles - 1,
                 };
                 break;
             }
-            Ok(false) => {}
+            Ok((false, rationale)) => {
+                record_event(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    "eval",
+                    format!("{{\"done\": false, \"rationale\": \"{rationale}\"}}"),
+                );
+            }
             Err(e) => {
                 outcome = AutonomousOutcome::Errored {
                     detail: format!("eval: {e}"),
@@ -819,22 +892,33 @@ pub async fn run_autonomous(
     Ok(outcome)
 }
 
+/// 取近期 artifact 的內容摘要（PLAN 與 EVAL 共用——兩者都需看見實質成果才能判斷）。
+/// 取最近 `take` 個、各截 `chars_each` 字，避免爆 token。
+fn recent_artifact_summaries(
+    store: &(dyn Store + Send + Sync),
+    artifact_ids: &[String],
+    take: usize,
+    chars_each: usize,
+) -> anyhow::Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for id in artifact_ids.iter().rev().take(take) {
+        if let Some(art) = store.get_artifact(id)? {
+            let snippet: String = art.content.chars().take(chars_each).collect();
+            out.push(format!("• {id}：{snippet}"));
+        }
+    }
+    Ok(out)
+}
+
 /// 諮詢 Brain 判斷 completion_condition 是否已滿足（Handbook Ch.13 §4 修訂：完成評估＝生命週期控制）。
+/// 回傳 (done, rationale 摘要)——rationale 供呼叫端寫入診斷軌跡（record_event）。
 async fn evaluate_done(
     reasoner: &dyn Reasoner,
     commitment: &Commitment,
     artifact_ids: &[String],
     store: &(dyn Store + Send + Sync),
-) -> anyhow::Result<bool> {
-    // 取出近期 artifact 的內容摘要——評估者需實質內容才能判斷成果是否滿足條件，而非只看 id
-    // （只看 id 會傾向保守回 false，使承諾難以真正 Satisfied）。取最近 3 個、各截 400 字避免爆 token。
-    let mut summaries: Vec<String> = Vec::new();
-    for id in artifact_ids.iter().rev().take(3) {
-        if let Some(art) = store.get_artifact(id)? {
-            let snippet: String = art.content.chars().take(400).collect();
-            summaries.push(format!("• {id}：{snippet}"));
-        }
-    }
+) -> anyhow::Result<(bool, String)> {
+    let summaries = recent_artifact_summaries(store, artifact_ids, 3, 400)?;
     let eval_user = format!(
         "完成條件：{cond}\n本次產出的成果（近期）：\n{arts}\n\
          判斷完成條件是否已滿足。只回 JSON：{{\"done\": true 或 false, \"rationale\": \"...\"}}。",
@@ -846,7 +930,15 @@ async fn evaluate_done(
         },
     );
     let v = reasoner.reason(EVAL_SYSTEM, &eval_user).await?;
-    Ok(v.get("done").and_then(|x| x.as_bool()).unwrap_or(false))
+    let done = v.get("done").and_then(|x| x.as_bool()).unwrap_or(false);
+    let rationale: String = v
+        .get("rationale")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect();
+    Ok((done, rationale))
 }
 
 /// notes 環狀緩衝：保留最後 NOTE_CAP 則。
@@ -2845,6 +2937,21 @@ mod tests {
         let outcome = run_autonomous(&emp_id, &c_id, &budget, &tool, &reasoner, &ctx, &store)
             .await
             .expect("run_autonomous");
+
+        // 診斷軌跡：印出每輪 PLAN／EVAL 的 LLM 判斷（record_event 記錄），讓 Stalled 時也能
+        // 看見 LLM 每輪回了什麼——這是判斷收斂品質的關鍵（outcome 本身不足以診斷卡在哪）。
+        let mut trace = store.list_events_by_employee(&emp_id, 200).unwrap_or_default();
+        trace.reverse(); // list_events_by_employee 回傳最新在前 → 反轉成時序（舊到新）
+        let plan_eval: Vec<_> = trace
+            .iter()
+            .filter(|e| e.kind == "plan" || e.kind == "eval")
+            .collect();
+        if !plan_eval.is_empty() {
+            println!("== PLAN／EVAL 軌跡（{} 筆）==", plan_eval.len());
+            for e in &plan_eval {
+                println!("[{}] {}", e.kind, e.detail);
+            }
+        }
 
         // 實證斷言：跑完不 panic、員工睡回 Sleeping、commitment 狀態與 outcome 一致。
         // 不硬斷言必然 Satisfied——真實 LLM 可能因規劃重複而 Stalled，這屬可接受結果（自主循環本身已跑通）。
