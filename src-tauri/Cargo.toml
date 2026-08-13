@@ -1,6 +1,6 @@
 [package]
 name = "operoid"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 description = "Operoid — preprocessing & operations GUI for GBrain"
 authors = ["朱國棟 (Charlie Chu)"]

@@ -3,7 +3,7 @@
 **Version:** 0.1
 **Status:** Living document — 持續更新
 **建立日期：** 2026-07-30
-**最後更新：** 2026-07-30
+**最後更新：** 2026-08-13
 
 > Handbook 是「憲法」（說明 *what* 與 *why*）；本文件是「工程日誌」（說明 *how*、*when*、*走到哪*）。
 > 兩者衝突時，以 Handbook 為準——改本文件或改提案，絕不靜默改程式碼來違背憲法。
@@ -352,5 +352,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 **目前所在：** 🎉 **Phase 7（人機協作）完成——7a 交辦＋7b 聊天＋7c 員工提案核可全數落地。** 人機介面從單發 Q&A 升級為完整協作：雙向多次聊天（Reasoner 驅動回覆、可反問）、交辦承諾（立即喚醒自主跑）、員工在對話中主動提案承諾（Proposed）待人類核可（Active）。Handbook 新增 Message 一級概念（Ch.16，Part IV 重編）＋修訂 Ch.11（Proposed/Rejected）＋Ch.20 §5（提案-核可通用化）。**Phase 6＋7 全部完成**——員工生命週期＋人機協作的完整願景已兌現。
 
 **Event 匯流排（2026-08-12）**：實作 Handbook Ch.12 第四種 Trigger——**Event-driven**。factory 寫入（會議記錄/people/companies）完成後，具備對應腦的員工自動被喚醒 review，產生回應或提案承諾（待人類核可）。附帶 LLM 全域並發節流（Semaphore）＋ inbox 佇列延遲修復。webhook 進氣口（Email/IM 將來的統一 API）為 Phase 2 待辦。
+
+**自主循環真實環境打通（2026-08-12～13，E2＋E9）**：E2 加 PLAN／EVAL 診斷軌跡（`record_event` 每輪記 plan/eval）＋ PLAN prompt 強化（看見 artifact、鬆綁重複偵測）；軌跡揭露真根因——gbrain think synthesis 因 DB-plane model fallback 到 anthropic 而缺 LLM（E9）。修法：`GbrainThinkTool` 顯式 `--model`（零副作用）。**承諾驅動自主循環在真實環境首度 Satisfied**（`real_run_autonomous`：從 Stalled 9-10 cycles → 1 cycle Satisfied）。v1 核心能力的最後阻斷清除。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。
