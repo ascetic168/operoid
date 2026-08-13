@@ -976,6 +976,13 @@ impl Tool for GbrainThinkTool {
         Box::pin(async move {
             let env = crate::gbrain_cli::env_for_brain(ctx.gbrain_home.as_deref());
             let mut args: Vec<String> = vec!["think".into(), input.query.clone()];
+            // E9：顯式指定 model，跳過 gbrain 的解析鏈 fallback（models.think→default→$GBRAIN_MODEL→opus）。
+            // 否則 DB-plane models.* 未設時 fallback 到 opus（anthropic）→ synthesis 找 ANTHROPIC_API_KEY
+            // 失敗 → "no LLM available; synthesis skipped"，自主循環 EVAL 恆判 false 無法 Satisfied。
+            if let Some(m) = &ctx.chat_model {
+                args.push("--model".into());
+                args.push(m.clone());
+            }
             if let Some(a) = &input.anchor {
                 args.push("--anchor".into());
                 args.push(a.clone());
@@ -1255,11 +1262,15 @@ pub(crate) fn build_tool_ctx(
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
     let entry = crate::brains::brain_entry(cfg, &emp.brain.brain_id)?;
+    let chat_model = gbrain_config::load_for(entry.env_home())
+        .ok()
+        .and_then(|l| l.config.chat_model);
     Ok((
         GbrainThinkTool::new(),
         ToolCtx {
             gbrain_exe: cfg.gbrain_exe_path.clone(),
             gbrain_home: entry.env_home().map(|s| s.to_string()),
+            chat_model,
         },
     ))
 }
@@ -1853,9 +1864,13 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             .get_employee(&a.employee_id)?
             .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &a.employee_id))?;
         let entry = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)?;
+        let chat_model = gbrain_config::load_for(entry.env_home())
+            .ok()
+            .and_then(|l| l.config.chat_model);
         ctxs.push(ToolCtx {
             gbrain_exe: cfg.gbrain_exe_path.clone(),
             gbrain_home: entry.env_home().map(|s| s.to_string()),
+            chat_model,
         });
     }
 
@@ -2347,6 +2362,7 @@ mod tests {
         ToolCtx {
             gbrain_exe: String::new(),
             gbrain_home: None,
+            chat_model: None,
         }
     }
 
@@ -2739,6 +2755,9 @@ mod tests {
 
         let tool = GbrainThinkTool::new();
         let ctx = ToolCtx {
+            chat_model: gbrain_config::load_for(home.as_deref())
+                .ok()
+                .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
         };
@@ -2844,6 +2863,9 @@ mod tests {
 
         let tool = GbrainThinkTool::new();
         let ctx = ToolCtx {
+            chat_model: gbrain_config::load_for(home.as_deref())
+                .ok()
+                .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
         };
@@ -2867,7 +2889,7 @@ mod tests {
     /// 這是**第一個需要真實 LLM API key** 的 ignored 測試（既有 `real_*` 測試只走 gbrain think，不碰 LLM）。
     ///
     /// 前提：本機 demo 腦已 sync（Graph>0）＋作用中腦的 chat_model 對應 provider 之 API key 環境變數已設
-    /// （如 `zhipu:glm-5.2` → `ZHIPU_API_KEY`；ollama 免 key）。缺 key 時 `build_reasoner` 會回 `llm.noApiKey`。
+    /// （如 `zhipu:glm-5.2` → `ZHIPUAI_API_KEY`；ollama 免 key）。缺 key 時 `build_reasoner` 會回 `llm.noApiKey`。
     ///
     /// 跑法：`cargo test --manifest-path src-tauri/Cargo.toml runtime::tests::real_run_autonomous -- --ignored --nocapture`
     #[tokio::test]
@@ -3266,6 +3288,9 @@ mod tests {
             .and_then(|v| v.as_str())
             .map(str::to_string);
         let ctx = ToolCtx {
+            chat_model: gbrain_config::load_for(home.as_deref())
+                .ok()
+                .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
         };
@@ -3576,6 +3601,9 @@ mod tests {
             .and_then(|v| v.as_str())
             .map(str::to_string);
         let ctx = ToolCtx {
+            chat_model: gbrain_config::load_for(home.as_deref())
+                .ok()
+                .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
         };

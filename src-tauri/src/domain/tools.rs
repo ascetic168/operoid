@@ -43,6 +43,10 @@ pub struct ToolCtx {
     pub gbrain_exe: String,
     /// GBRAIN_HOME 值；`None` = 預設腦（~/.gbrain）。
     pub gbrain_home: Option<String>,
+    /// 腦的 chat_model（如 `zhipu:glm-5.2`）。`Some` 時 think 子行程加 `--model` 顯式指定，
+    /// 避免 gbrain 的 model 解析鏈（`models.think → models.default → $GBRAIN_MODEL → opus`）
+    /// fallback 到 anthropic——DB-plane models.* 未設時 synthesis 會找 ANTHROPIC_API_KEY 失敗（E9）。
+    pub chat_model: Option<String>,
 }
 
 /// `Tool::invoke` 的回傳 future（boxed、Send）。
