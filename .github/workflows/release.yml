@@ -1,11 +1,12 @@
 # 發布工作流程：推送版本標籤（v*）即自動在 Windows / macOS / Linux 三平台編譯，
 # 並把安裝包上傳到對應的 GitHub Release（草稿狀態，供你審閱後發布）。
 #
-# 使用方式：
-#   git tag v0.1.0
-#   git push origin v0.1.0
-# → 觸發本流程；完成後在 Releases 頁會出現 "Operoid v0.1.0" 草稿，
-#   附帶各平台安裝包（Windows .msi/.exe、macOS .dmg、Linux .deb/.rpm/.AppImage）。
+# 發布前（在本地）：
+#   1. 在 CHANGELOG.md 加該版本段落（`## [vX.Y.Z] - YYYY-MM-DD` 開頭，新版本在上方）。
+#   2. 同步版本號（package.json / Cargo.toml / tauri.conf.json / Cargo.lock）。
+#   3. commit + git tag -a vX.Y.Z + push（main 與 tag）。
+# → 觸發本流程：CHANGELOG 對應段落自動成為 Release 說明（見 extract-changelog.cjs）、
+#   三平台編譯、建立 draft release。完成後到 Releases 頁審閱，確認後 publish。
 #
 # 前置（一次性）：repo Settings → Actions → General → Workflow permissions
 #   需勾選「Read and write permissions」，GITHUB_TOKEN 才能建立 Release。
@@ -75,6 +76,18 @@ jobs:
       - name: install frontend dependencies
         run: npm ci
 
+      - name: 從 CHANGELOG.md 抽出本版本發布說明
+        id: changelog
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          {
+            echo "body<<CHANGELOG_EOF"
+            node .github/scripts/extract-changelog.cjs
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: build & publish（tauri build 會自動先跑前端建置 npm run build）
         uses: tauri-apps/tauri-action@v0
         env:
@@ -82,13 +95,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Operoid ${{ github.ref_name }}'
-          releaseBody: |
-            各平台安裝包已自動產生，請依作業系統下載對應檔案：
-            - **Windows**：`.msi`（或 `.exe` NSIS 安裝包）
-            - **macOS**：`.dmg`（Apple Silicon 選 `aarch64`，Intel 選 `x86_64`）
-            - **Linux**：`.deb` / `.rpm` / `.AppImage`
-
-            完整說明見 [README](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/README.md)。
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
