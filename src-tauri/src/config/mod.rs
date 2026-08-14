@@ -320,16 +320,15 @@ fn validate_model_key(key: &str) -> Result<(), AppError> {
 
 /// 直寫整份 config.json（file-plane；raw 進階編輯器用）。
 /// 注意：model/tier 鍵寫此處會被 DB plane 蓋過——設定頁改用 set_gbrain_model 等指令。
+/// 故此處如實存使用者輸入的 raw JSON，**不**再偷偷同步 models.default/think（E3 退役：
+/// v0.42 file-plane 的 models.* 是殘值，同步它無意義；真正生效靠 DB plane）。
 #[tauri::command]
 pub async fn save_gbrain_config_raw<R: Runtime>(
     app: AppHandle<R>,
-    mut raw_json: serde_json::Value,
+    raw_json: serde_json::Value,
 ) -> Result<(), AppError> {
     let home = active_home(&app);
     let path = gbrain_config::config_path_for(home.as_deref())?;
-    // 存檔前同步 models.default/think = chat_model（file-plane 殘值；v0.42 真正生效靠 DB plane）。
-    #[allow(deprecated)]
-    gbrain_config::sync_models_to_chat(&mut raw_json);
     gbrain_config::save_raw(&path, &raw_json)?;
     Ok(())
 }

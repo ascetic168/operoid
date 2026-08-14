@@ -135,14 +135,15 @@ fn default_models(c: &AppConfig) -> (String, i64, String) {
 /// `models.tier.*`（無則 fallback 到 anthropic claude-*）。若不補，新腦 think/subagent
 /// 會跑到 anthropic（跟你要 ANTHROPIC_API_KEY）。故 init 後用 `gbrain config set` 寫 DB plane。
 ///
-/// 同時也寫 file-plane 的 models.default/think（保留舊行為相容）。
+/// 僅寫 DB plane（v0.42 權威層）。E3 退役：不再寫 file-plane 的 models.default/think 殘值——
+/// runtime 以 DB plane 為準，file-plane 殘值無作用，寫它只會誤導（似有設、實被蓋過）。
 async fn sync_new_brain_models<R: Runtime>(
     app: &AppHandle<R>,
     exe: &str,
     home: &str,
     chat_model: &str,
 ) -> Result<(), String> {
-    // 1. DB plane：chat_model + 四 tier + models.default/think（v0.42 權威層）
+    // DB plane：chat_model + models.default/think + 四 tier（v0.42 權威層，runtime 以此為準）。
     let keys = [
         "chat_model",
         "models.default",
@@ -157,24 +158,7 @@ async fn sync_new_brain_models<R: Runtime>(
             .await
             .map_err(|e| e.to_string())?;
     }
-    // 2. file-plane 殘值同步（向後相容；deprecated 但無害）
-    let loaded = gbrain_config::load_for(Some(home)).map_err(|e| e.to_string())?;
-    let mut raw = loaded.raw;
-    {
-        use serde_json::Value;
-        if !raw.is_object() {
-            raw = Value::Object(serde_json::Map::new());
-        }
-        if !raw.get("models").map(|v| v.is_object()).unwrap_or(false) {
-            raw["models"] = Value::Object(serde_json::Map::new());
-        }
-        let target = Value::String(chat_model.to_string());
-        if let Some(models) = raw.get_mut("models").and_then(|v| v.as_object_mut()) {
-            models.insert("default".into(), target.clone());
-            models.insert("think".into(), target);
-        }
-    }
-    gbrain_config::save_raw(&loaded.path, &raw).map_err(|e| e.to_string())
+    Ok(())
 }
 
 // ── 指令 ───────────────────────────────────────────────────────────────
