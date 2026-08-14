@@ -224,6 +224,34 @@ fn commit_artifact(
     source_commitment_id: Option<&str>,
     project_id: Option<&str>,
 ) -> anyhow::Result<String> {
+    commit_artifact_with_status(
+        store,
+        workspace_id,
+        producer,
+        query_for_title,
+        content,
+        source_task_id,
+        source_commitment_id,
+        project_id,
+        ArtifactStatus::Committed,
+    )
+}
+
+/// 帶生命週期狀態的 commit 核心。單發路徑（run_cycle／對話）用 [`commit_artifact`]（Committed）；
+/// 自主循環的**探索期**產出用 `Draft`——唯承諾 Satisfied 才由 [`promote_artifacts_to_committed`]
+/// 晉升為 Committed（Handbook Ch.06「Draft→Committed 是工作成真的一刻」）。Stalled／Errored 的
+/// 探索產出維持 Draft（不曾成真，與已完成工作可區別）。
+fn commit_artifact_with_status(
+    store: &dyn Store,
+    workspace_id: &str,
+    producer: &str,
+    query_for_title: &str,
+    content: &str,
+    source_task_id: Option<&str>,
+    source_commitment_id: Option<&str>,
+    project_id: Option<&str>,
+    status: ArtifactStatus,
+) -> anyhow::Result<String> {
     let existing: Vec<String> = store
         .list_artifacts(workspace_id)?
         .into_iter()
@@ -242,7 +270,7 @@ fn commit_artifact(
         revised_from_id: None,
         project_id: project_id.map(str::to_string),
         version: 1,
-        status: ArtifactStatus::Committed,
+        status,
         created_at: now_rfc3339(),
     };
     store.put_artifact(&artifact)?;
@@ -251,9 +279,26 @@ fn commit_artifact(
         workspace_id,
         producer,
         "artifact",
-        format!("committed: {artifact_id}"),
+        format!("{status:?}: {artifact_id}").to_lowercase(),
     );
     Ok(artifact_id)
+}
+
+/// 將一個自主 session 的探索期 artifact（Draft）晉升為 Committed。唯 Satisfied 呼叫；
+/// 已是 Committed（或其它狀態）者不動。
+fn promote_artifacts_to_committed(
+    store: &dyn Store,
+    artifact_ids: &[String],
+) -> anyhow::Result<()> {
+    for id in artifact_ids {
+        if let Some(mut art) = store.get_artifact(id)? {
+            if art.status == ArtifactStatus::Draft {
+                art.status = ArtifactStatus::Committed;
+                store.put_artifact(&art)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 處理至多一個 inbox task（訊息／交接／事件 review）；回傳 `true` 表有處理（inbox 非空），
@@ -569,6 +614,14 @@ const NOTE_CAP: usize = 50;
 /// 而非一次重複就放棄）。首次重複時不 ACT（不浪費查詢），留 note 重新 PLAN。
 const MAX_REPEAT: u32 = 2;
 
+/// 貧瘠檢索（barren retrieval）判定閾值：gbrain think 輸出去掉標題行與頁尾後，主體非空白字元
+/// 少於此數視為「未取回實質內容」。真實 synthesis 動輒數百字；空檢索主體為 0～3 字元（僅 `---`）。
+/// 取 30 兼顧極短負向答案（如「無相關紀錄」）——此類確屬「找不到」訊號，重 PLAN 換詞是正確行為。
+const BARREN_MIN_CHARS: usize = 30;
+
+/// 連續貧瘠檢索上限：超過即判 Stalled（知識庫確實缺相關內容時，避免無意義反覆重試）。
+const MAX_BARREN: u32 = 3;
+
 const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。該行動會被當作知識檢索的查詢。只回 JSON 物件，不附加其他文字。";
 
 const EVAL_SYSTEM: &str = "你是一名完成條件評估者。只根據完成條件與已產出的成果，判斷承諾是否已滿足。只回 JSON 物件，不附加其他文字。";
@@ -613,6 +666,7 @@ pub async fn run_autonomous(
     let mut cycles = 0u32;
     let mut last_query: Option<String> = None;
     let mut repeat_count: u32 = 0;
+    let mut barren_streak: u32 = 0; // 連續貧瘠檢索計數（A：自主循環魯棒性）
     let outcome: AutonomousOutcome;
 
     loop {
@@ -795,7 +849,37 @@ pub async fn run_autonomous(
                 break;
             }
         };
-        let artifact_id = commit_artifact(
+        // A：貧瘠檢索偵測——think 主體實質內容過少（gbrain 找不到東西、synthesis 空）。
+        // 不 commit（不入庫污染）、不浪費 EVAL；記 barren 事件、留 note 換角度，重新 PLAN。
+        // 連續 MAX_BARREN 次才 Stalled（知識庫確實缺內容時止損，避免無意義反覆）。
+        if is_barren_think_output(&output.text) {
+            barren_streak += 1;
+            record_event(
+                store,
+                &workspace_id,
+                employee_id,
+                "barren",
+                format!("query: {next_query}（檢索未取回實質內容）"),
+            );
+            if barren_streak >= MAX_BARREN {
+                outcome = AutonomousOutcome::Stalled {
+                    reason: format!("連續 {barren_streak} 次檢索未取回實質內容"),
+                    cycles: cycles - 1,
+                };
+                break;
+            }
+            memory.notes.push(format!(
+                "（查「{}」未取回實質內容——換更具體或不同角度的搜尋詞）",
+                next_query
+            ));
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            continue;
+        }
+        barren_streak = 0;
+        // B：探索期產出先 commit 為 Draft——唯承諾 Satisfied 才晉升 Committed（工作成真的一刻）。
+        let artifact_id = commit_artifact_with_status(
             store,
             &workspace_id,
             employee_id,
@@ -804,6 +888,7 @@ pub async fn run_autonomous(
             None,
             Some(commitment_id),
             None,
+            ArtifactStatus::Draft,
         )?;
         artifact_ids.push(artifact_id.clone());
         produced_any = true;
@@ -854,7 +939,9 @@ pub async fn run_autonomous(
     // 軟失敗策略（Phase 7b 修訂）：Stalled／Errored 一律睡、承諾維持 Active、下次喚醒重試。
     // 不自動 Suspended——暫時性失敗（如 LLM rate limit）不該凍結承諾；用戶可手動 Satisfied/Suspended。
     match &outcome {
-        AutonomousOutcome::Satisfied { .. } => {
+        AutonomousOutcome::Satisfied { artifact_ids, .. } => {
+            // B：承諾滿足——探索期 Draft 產出晉升 Committed（Handbook Ch.06：工作成真的一刻）。
+            promote_artifacts_to_committed(store, artifact_ids)?;
             commitment.status = CommitmentStatus::Satisfied;
             store.put_commitment(&commitment)?;
         }
@@ -1033,6 +1120,27 @@ fn parse_think_meta(stdout: &str) -> serde_json::Value {
         }
     }
     serde_json::Value::Object(m)
+}
+
+/// 判定一次 gbrain think 檢索是否「貧瘠」（未取回實質內容）。
+///
+/// gbrain think 輸出格式：`# <標題>\n<synthesis 主體>\n---\nModel: ... | Pages: ...`。
+/// 以頁尾的 `\nModel:` 為 signature 確認是 think 輸出；**缺此 signature（stub／其他工具）→ 回 false**
+/// （fail-safe：避免把短但有效的產出誤判為貧瘠——既有 stub 測試的短字串因此不受影響）。
+/// 確認為 think 輸出後，去首行標題，量主體非空白字元；少於 [`BARREN_MIN_CHARS`] 即貧瘠。
+///
+/// 不靠 `Pages/Graph/Citations` meta——實測（T1, 2026-08-14）即使有內容也恆 `Graph:0/Citations:0`
+/// （gbrain v0.42 計數器瑕疵），meta 不可靠。主體實質長度才是可信訊號。
+fn is_barren_think_output(text: &str) -> bool {
+    let model_at = match text.find("\nModel:") {
+        Some(i) => i,
+        None => return false, // 非 think 格式 → 不判（fail-safe）
+    };
+    // 標題行＋synthesis 主體（含其後的 `---` 分隔線——3 字元，不影響判定）。
+    let head = &text[..model_at];
+    let body = head.find('\n').map(|i| &head[i + 1..]).unwrap_or("");
+    let non_ws = body.chars().filter(|c| !c.is_whitespace()).count();
+    non_ws < BARREN_MIN_CHARS
 }
 
 // ───────────────── Tauri 指令（執行期以 agent_os_enabled 把關）─────────────────
@@ -2535,6 +2643,9 @@ mod tests {
             CommitmentStatus::Satisfied
         );
         assert_eq!(store.list_artifacts("ws").unwrap().len(), 1);
+        // B：探索期以 Draft commit，唯 Satisfied 才晉升 Committed。
+        let art = store.list_artifacts("ws").unwrap().pop().unwrap();
+        assert_eq!(art.status, ArtifactStatus::Committed, "Satisfied 應將 artifact 晉升 Committed");
         assert_eq!(
             store.get_employee(&emp_id).unwrap().unwrap().state,
             EmployeeState::Sleeping
@@ -2582,6 +2693,208 @@ mod tests {
         assert_eq!(
             store.get_employee(&emp_id).unwrap().unwrap().state,
             EmployeeState::Sleeping
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// [`is_barren_think_output`] 分類正確：空主體→貧瘠；實質主體→非貧瘠；
+    /// 缺 `\nModel:` 頁尾（stub／其他工具）→ 永遠非貧瘠（fail-safe）。
+    #[test]
+    fn is_barren_think_output_classifies_correctly() {
+        // gbrain 空檢索：標題＋空主體＋頁尾（T1 觀察到的失敗樣態）。
+        let barren = "# 晶瀚半導體 會議 記錄 重點\n\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Takes: 0 | Graph: 0 | Citations: 0";
+        assert!(is_barren_think_output(barren), "空主體應判貧瘠");
+
+        // gbrain 實質 synthesis。
+        let rich = "# 晶瀚半導體 會議\n\n## 會議總覽\n這是一份結構完整、包含多個段落與分析的會議摘要，長度遠超過閾值。\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Graph: 0 | Citations: 0";
+        assert!(!is_barren_think_output(rich), "實質主體不應判貧瘠");
+
+        // 缺頁尾 signature → fail-safe 不判（stub／其他工具的短產出不誤殺）。
+        assert!(!is_barren_think_output("答案是 42"), "無頁尾不應判貧瘠");
+        assert!(!is_barren_think_output("x"), "無頁尾不應判貧瘠");
+
+        // 極短負向答案（有頁尾）→ 判貧瘠（確屬「找不到」訊號，重 PLAN 換詞為正確行為）。
+        let short_neg = "# 查詢\n無相關紀錄。\n---\nModel: zhipu:glm-5.2 | Pages: 0 | Graph: 0 | Citations: 0";
+        assert!(is_barren_think_output(short_neg), "極短負向答案應判貧瘠");
+    }
+
+    /// 帶 call 計數的可切換 stub：前 `switch_after` 次回 `barren`，之後回 `good`。
+    /// 供「貧瘠後恢復」測試——證明循環偵測貧瘠、換詞重 PLAN，最終取回實質內容並 Satisfied。
+    struct SwitchingStub {
+        spec: ToolSpec,
+        barren: String,
+        good: String,
+        switch_after: u32,
+        calls: AtomicU32,
+    }
+    impl SwitchingStub {
+        fn new(barren: impl Into<String>, good: impl Into<String>, switch_after: u32) -> Self {
+            Self {
+                spec: ToolSpec { id: "switch".into(), description: "switching stub".into() },
+                barren: barren.into(),
+                good: good.into(),
+                switch_after,
+                calls: AtomicU32::new(0),
+            }
+        }
+    }
+    impl Tool for SwitchingStub {
+        fn spec(&self) -> &ToolSpec { &self.spec }
+        fn invoke<'a>(&'a self, _input: ToolInput, _ctx: &'a ToolCtx) -> ToolFuture<'a> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            let text = if n < self.switch_after { self.barren.clone() } else { self.good.clone() };
+            Box::pin(async move { Ok(ToolOutput { text, meta: serde_json::json!({}) }) })
+        }
+    }
+
+    /// A：貧瘠檢索連續發生 → 不 commit 任何 artifact、記 barren 事件、Stalled。
+    /// 模擬知識庫確實缺相關內容——循環換詞重試 MAX_BARREN 次後止損，而非 commit 垃圾產出。
+    #[tokio::test]
+    async fn run_autonomous_barren_retrieval_stalls_without_committing() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查不存在的東西".into(),
+                completion_condition: "找到 X".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        let barren = "# 查詢結果\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Graph: 0 | Citations: 0";
+        let knowledge = StubTool::new(barren);
+        // 每輪給不同 next_query（避免重複偵測先 Stalled），讓貧瘠偵測主導。
+        let reasoner = StubReasoner::new(vec![
+            r#"{"next_query": "q1", "rationale": "1"}"#,
+            r#"{"next_query": "q2", "rationale": "2"}"#,
+            r#"{"next_query": "q3", "rationale": "3"}"#,
+        ]);
+        let budget = CycleBudget { max_cycles: 8, max_duration: Duration::from_secs(10) };
+        let outcome = run_autonomous(&emp_id, "c1", &budget, &knowledge, &reasoner, &ctx(), &store)
+            .await
+            .unwrap();
+        match outcome {
+            AutonomousOutcome::Stalled { reason, .. } => {
+                assert!(reason.contains("未取回實質內容"), "Stalled 原因應提及貧瘠：{reason}");
+            }
+            other => panic!("應 Stalled，實為 {other:?}"),
+        }
+        assert_eq!(knowledge.call_count(), 3, "應 ACT 三次（MAX_BARREN）才止損");
+        assert!(store.list_artifacts("ws").unwrap().is_empty(), "貧瘠產出不應入庫");
+        assert_eq!(
+            store.get_commitment("c1").unwrap().unwrap().status,
+            CommitmentStatus::Active,
+            "Stalled 維持 Active 待下次喚醒"
+        );
+        // barren 事件應被記錄（診斷軌跡）。
+        let barren_events = store
+            .list_events_by_employee(&emp_id, 100)
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "barren")
+            .count();
+        assert_eq!(barren_events, 3, "每次貧瘠檢索應記一筆 barren 事件");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A：貧瘠後恢復——前兩次 think 回空（貧瘠），第三次取回實質內容 → Satisfied。
+    /// 證明循環偵測貧瘠、換詞重 PLAN 後能收斂，且只有實質產出入庫（貧瘠的不入庫）。
+    #[tokio::test]
+    async fn run_autonomous_recovers_from_barren_then_satisfies() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查會議".into(),
+                completion_condition: "找到會議記錄".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        let barren = "# 查詢\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Graph: 0 | Citations: 0";
+        let rich = "# 查詢\n\n## 會議總覽\n這是一份完整的會議摘要，詳列決議、與會者與行動項目，內容充分滿足完成條件。\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Graph: 0 | Citations: 0";
+        // 前 2 次貧瘠、第 3 次實質。
+        let knowledge = SwitchingStub::new(barren, rich, 2);
+        let reasoner = StubReasoner::new(vec![
+            r#"{"next_query": "q1", "rationale": "1"}"#,
+            r#"{"next_query": "q2", "rationale": "2"}"#,
+            r#"{"next_query": "q3", "rationale": "3"}"#,
+            r#"{"done": true, "rationale": "已找到"}"#,
+        ]);
+        let budget = CycleBudget { max_cycles: 8, max_duration: Duration::from_secs(10) };
+        let outcome = run_autonomous(&emp_id, "c1", &budget, &knowledge, &reasoner, &ctx(), &store)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, AutonomousOutcome::Satisfied { .. }), "貧瘠後應恢復並 Satisfied");
+        // 只有 1 個 artifact（第 3 次的實質產出）；前 2 次貧瘠不入庫。
+        let arts = store.list_artifacts("ws").unwrap();
+        assert_eq!(arts.len(), 1, "僅實質產出入庫");
+        assert_eq!(arts[0].status, ArtifactStatus::Committed, "Satisfied 應晉升 Committed");
+        assert_eq!(
+            store.get_commitment("c1").unwrap().unwrap().status,
+            CommitmentStatus::Satisfied
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// B：Stalled session 的探索期產出維持 Draft（不曾成真）——與已完成工作可區別。
+    /// 場景：think 取回實質內容（非貧瘠，會入庫），但規劃器重複同一 query 達 MAX_REPEAT → Stalled。
+    /// 此時已入庫的探索 artifact 應為 Draft，而非 Committed。
+    #[tokio::test]
+    async fn run_autonomous_stalled_keeps_artifacts_draft() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查會議".into(),
+                completion_condition: "找到會議".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        // think 恆回實質內容（非貧瘠）。
+        let rich = "# 查詢\n\n## 會議總覽\n這是一份完整的會議摘要，詳列決議、與會者與行動項目，內容充分。\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Graph: 0 | Citations: 0";
+        let knowledge = StubTool::new(rich);
+        // cycle1：PLAN q1 → ACT（入庫 Draft）→ EVAL false。
+        // cycle2：PLAN q1（重複 1）→ 不 ACT、換角度。
+        // cycle3：PLAN q1（重複 2 ≥ MAX_REPEAT）→ Stalled「規劃重複」。
+        let reasoner = StubReasoner::new(vec![
+            r#"{"next_query": "q1", "rationale": "1"}"#,
+            r#"{"done": false, "rationale": "尚未滿足"}"#,
+            r#"{"next_query": "q1", "rationale": "再試"}"#,
+            r#"{"next_query": "q1", "rationale": "再試"}"#,
+        ]);
+        let budget = CycleBudget { max_cycles: 8, max_duration: Duration::from_secs(10) };
+        let outcome = run_autonomous(&emp_id, "c1", &budget, &knowledge, &reasoner, &ctx(), &store)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, AutonomousOutcome::Stalled { .. }), "應 Stalled");
+        let arts = store.list_artifacts("ws").unwrap();
+        assert_eq!(arts.len(), 1, "探索期有一個實質產出入庫");
+        assert_eq!(
+            arts[0].status,
+            ArtifactStatus::Draft,
+            "Stalled 的探索產出應維持 Draft（不曾成真）"
+        );
+        assert_eq!(
+            store.get_commitment("c1").unwrap().unwrap().status,
+            CommitmentStatus::Active,
+            "Stalled 維持 Active"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2997,7 +3310,7 @@ mod tests {
                 );
                 for aid in artifact_ids {
                     if let Some(art) = store.get_artifact(aid).unwrap() {
-                        println!("--- artifact {aid} ---\n{}\n", art.content);
+                        println!("--- artifact {aid} [{:?}] ---\n{}\n", art.status, art.content);
                     }
                 }
             }
