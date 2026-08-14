@@ -110,6 +110,15 @@ pub struct AppConfig {
     /// 工廠寫檔後是否觸發員工 review（Event 匯流排開關；Phase 7c）。
     #[serde(default = "default_true")]
     pub event_review_enabled: bool,
+    /// 外部事件 ingress HTTP port（E7 進氣口）。`None` → 不啟動 ingress server（預設、最安全）。
+    /// 設為某 port → 啟動 `POST /event`（127.0.0.1:port），供外部 bridge（Email/IM/…）投遞事件。
+    /// 見 `docs/Operoid-設計-統一事件ingress契約.md`。
+    #[serde(default)]
+    pub event_ingress_port: Option<u16>,
+    /// ingress server 共用密鑰（`Authorization: Bearer <secret>`）。port 有設但此為 None →
+    /// server 不啟動（避免無認證暴露）。bridge 端需知道此密鑰。
+    #[serde(default)]
+    pub event_ingress_secret: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -241,6 +250,8 @@ impl Default for AppConfig {
             agent_os_enabled: false,
             llm_concurrency: default_llm_concurrency(),
             event_review_enabled: true,
+            event_ingress_port: None,
+            event_ingress_secret: None,
         };
         cfg.normalize();
         cfg

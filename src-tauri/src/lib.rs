@@ -13,6 +13,7 @@ mod domain;
 mod event_bus;
 mod factories;
 mod gbrain_cli;
+mod ingress_server;
 mod i18n;
 mod llm;
 mod note_server;
@@ -195,6 +196,11 @@ pub fn run() {
             app.manage(note_server::NoteServer { port });
             // Phase 6：啟動 Runtime 排程器（常駐 task，依 Trigger 喚醒員工）。
             scheduler::start(app.handle().clone());
+            // E7：外部事件 ingress server（opt-in；port＋secret 皆有設才啟動）。
+            // 供外部 bridge（Email／IM／…）以 `POST /event` 投遞事件 → dispatch_event 喚醒員工。
+            if let Some(p) = ingress_server::start(app.handle().clone()) {
+                eprintln!("[ingress] 進氣口就緒：127.0.0.1:{p}/event");
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

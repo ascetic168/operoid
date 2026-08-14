@@ -176,12 +176,14 @@ pub async fn factory_save_authored<R: Runtime>(
     if cfg.event_review_enabled {
         app.state::<AppState>().emit(InboundEvent {
             kind: EventKind::FactoryWritten,
+            source: "factory".into(),
             brain_id: cfg.active_brain_id.clone(),
             employee_id: None,
-            category: Some(target_dir.clone()),
             title: slug.clone(),
-            summary: to_write.chars().take(800).collect(),
-            source: "factory".into(),
+            content: to_write.chars().take(800).collect(),
+            external_ref: None,
+            occurred_at: None,
+            category: Some(target_dir.clone()),
         });
     }
     Ok(AuthoredResult {
@@ -612,12 +614,14 @@ pub fn factory_write_pages<R: Runtime>(
             for pg in &pages {
                 state.emit(InboundEvent {
                     kind: EventKind::FactoryWritten,
+                    source: "factory".into(),
                     brain_id: cfg.active_brain_id.clone(),
                     employee_id: None,
-                    category: Some(pg.target_dir.clone()),
                     title: pg.slug.clone(),
-                    summary: pg.markdown.chars().take(800).collect(),
-                    source: "factory".into(),
+                    content: pg.markdown.chars().take(800).collect(),
+                    external_ref: None,
+                    occurred_at: None,
+                    category: Some(pg.target_dir.clone()),
                 });
             }
         }
