@@ -705,6 +705,8 @@ mod tests {
             output_artifact_id: Some("a1".into()),
             commitment_id: None,
             project_id: None,
+            external_reply_to: None,
+            external_source: None,
             created_at: "t".into(),
         };
         s.put_task(&task).unwrap();

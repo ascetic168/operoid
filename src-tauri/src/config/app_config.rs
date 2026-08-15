@@ -119,6 +119,14 @@ pub struct AppConfig {
     /// server 不啟動（避免無認證暴露）。bridge 端需知道此密鑰。
     #[serde(default)]
     pub event_ingress_secret: Option<String>,
+    /// outbound（E7 外發）bridge 的 send endpoint URL（如 `http://127.0.0.1:7342/send`）。
+    /// `None` → 不外發（回覆僅留在 Operoid 對話歷史；預設）。設置後，源自外部事件的
+    /// 對話回合回覆會自動 POST 給 bridge（免人類核可——見待處理清單 E7 決策紀錄）。
+    #[serde(default)]
+    pub event_outbound_url: Option<String>,
+    /// outbound bridge 共用密鑰（`Authorization: Bearer <secret>`）；有設才帶。
+    #[serde(default)]
+    pub event_outbound_secret: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -252,6 +260,8 @@ impl Default for AppConfig {
             event_review_enabled: true,
             event_ingress_port: None,
             event_ingress_secret: None,
+            event_outbound_url: None,
+            event_outbound_secret: None,
         };
         cfg.normalize();
         cfg

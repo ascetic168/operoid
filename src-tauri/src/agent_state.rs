@@ -58,6 +58,13 @@ pub struct InboundEvent {
     /// RFC3339：事件在來源系統發生的時間（≠ Operoid 收到時間）。
     #[serde(default)]
     pub occurred_at: Option<String>,
+    /// ★ 回覆錨點（outbound 路由）：bridge 自訂的不透明字串（如 `email:msg-123`／
+    /// `slack:C123:T456`），Operoid 原樣保存、回覆時原樣帶回——bridge 以此定位回覆目標
+    /// （Email thread／IM channel+thread），並配合 `source`/`employee_id` 選擇寄件身分。
+    /// 純機讀路由欄位，不進 `review_prompt`（content 已持全文，LLM 不需處理路由）。
+    /// 缺失則回覆不外發（僅留在 Operoid 對話歷史）。
+    #[serde(default)]
+    pub reply_to: Option<String>,
     /// factory 分類（meetings/people/companies）。外部來源通常不用（歷史欄位，保留）。
     #[serde(default)]
     pub category: Option<String>,
@@ -212,6 +219,7 @@ mod tests {
             content: "決議 A、待辦 B。".into(),
             external_ref: None,
             occurred_at: None,
+            reply_to: None,
             category: Some("meetings".into()),
         };
         let p = ev.review_prompt();
@@ -234,6 +242,7 @@ mod tests {
             content: "From: 張雅婷\nTo: 趙建宏\nSubject: RE: E-07\n\n本體...".into(),
             external_ref: Some("<CAB123@mailer>#v1".into()),
             occurred_at: Some("2026-08-14T09:30:00+08:00".into()),
+            reply_to: Some("email:msg-CAB123".into()),
             category: None,
         };
         let p = ev.review_prompt();
@@ -263,6 +272,7 @@ mod tests {
         assert!(ev.content.contains("E-07"));
         assert_eq!(ev.brain_id, None, "缺欄應 default 為 None");
         assert_eq!(ev.external_ref, None);
+        assert_eq!(ev.reply_to, None, "缺欄應 default 為 None（不外發）");
         assert_eq!(ev.category, None);
     }
 }

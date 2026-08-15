@@ -236,6 +236,15 @@ pub struct Task {
     /// 所屬 Project（Ch.09）；獨立 task 為 None。
     #[serde(default)]
     pub project_id: Option<String>,
+    /// 回覆錨點（E7 outbound）：此 task 源自外部事件時，保存事件的 `reply_to`（bridge 自訂
+    /// 不透明字串）。對話回合產生 Out message 後，runtime 以此經 outbound 模組外發給 bridge。
+    /// None（人類訊息／factory 事件／舊資料）→ 不外發。
+    #[serde(default)]
+    pub external_reply_to: Option<String>,
+    /// 進站事件的來源標籤（"email"／"slack"…），隨 `external_reply_to` 成對出現——
+    /// bridge 以此選擇通道與寄件身分。None → 不外發。
+    #[serde(default)]
+    pub external_source: Option<String>,
     pub created_at: Timestamp,
 }
 

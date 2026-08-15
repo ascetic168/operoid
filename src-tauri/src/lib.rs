@@ -17,6 +17,7 @@ mod ingress_server;
 mod i18n;
 mod llm;
 mod note_server;
+pub mod outbound;
 mod note_view;
 mod prereq;
 mod runtime;

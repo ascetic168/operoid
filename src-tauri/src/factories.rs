@@ -183,6 +183,7 @@ pub async fn factory_save_authored<R: Runtime>(
             content: to_write.chars().take(800).collect(),
             external_ref: None,
             occurred_at: None,
+            reply_to: None,
             category: Some(target_dir.clone()),
         });
     }
@@ -621,6 +622,7 @@ pub fn factory_write_pages<R: Runtime>(
                     content: pg.markdown.chars().take(800).collect(),
                     external_ref: None,
                     occurred_at: None,
+                    reply_to: None,
                     category: Some(pg.target_dir.clone()),
                 });
             }

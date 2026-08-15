@@ -78,6 +78,8 @@ pub async fn dispatch_event<R: Runtime>(app: &AppHandle<R>, ev: InboundEvent) ->
             output_artifact_id: None,
             commitment_id: None,
             project_id: None,
+            external_reply_to: ev.reply_to.clone(),
+            external_source: Some(ev.source.clone()),
             created_at: now.clone(),
         })?;
         state.wake(WakeSignal {
