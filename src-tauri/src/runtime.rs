@@ -17,7 +17,7 @@ use crate::config::app_config;
 use crate::config::gbrain_config;
 use crate::config::DEFAULT_BRAIN_ID;
 use crate::domain::tools::ToolFuture;
-use crate::outbound::{send_reply, OutboundConfig, SendOutcome};
+use crate::outbound::{send_external, OutboundConfig, SendOutcome, SendTool};
 use crate::domain::{
     id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, BrainRef, Commitment,
     CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Event, Memory, Message,
@@ -73,6 +73,7 @@ pub async fn run_cycle(
             ToolInput {
                 query: query.clone(),
                 anchor: anchor.clone(),
+                params: None,
             },
             ctx,
         )
@@ -306,10 +307,11 @@ fn promote_artifacts_to_committed(
     Ok(())
 }
 
-/// E7 outbound（回覆式自動觸發）：task 源自外部事件（帶 `external_reply_to`）時，把回覆
-/// POST 給 bridge 的 send endpoint。**免人類核可**（通用通道逐一核可失去自動化效益——
-/// 使用者決策 2026-08-15，見待處理清單 E7）。結果記事件；失敗不阻斷、不重試
-/// （Out message 已存 Operoid，watch 可見）。
+/// **退化路徑專用**的自動回覆外發（E12 後 v1 自動外發的唯一殘留）：無 Reasoner 的訊息
+/// task（runtime 代員工以 gbrain 證據回覆）時，把回覆 POST 給 bridge。有 Reasoner 的正常
+/// 路徑一律由員工透過 [`SendTool`] 決定外發（tool-choice，見 `run_conversational_turn`）。
+/// **免人類核可**（通用通道逐一核可失去自動化效益——使用者決策 2026-08-15，見待處理清單 E7）。
+/// 結果記事件；失敗不阻斷、不重試（Out message 已存 Operoid，watch 可見）。
 async fn try_outbound(
     store: &(dyn Store + Send + Sync),
     workspace_id: &str,
@@ -321,7 +323,7 @@ async fn try_outbound(
     let (Some(source), Some(reply_to)) = (&task.external_source, &task.external_reply_to) else {
         return; // 非外部事件來源（人類訊息／factory）→ 不外發。
     };
-    match send_reply(outbound, source, reply_to, employee_id, text).await {
+    match send_external(outbound, source, reply_to, employee_id, text).await {
         SendOutcome::Sent => record_event(
             store,
             workspace_id,
@@ -376,6 +378,7 @@ async fn process_one_inbox_task(
                     ToolInput {
                         query: task.input.clone(),
                         anchor: None,
+                        params: None,
                     },
                     ctx,
                 )
@@ -496,8 +499,24 @@ pub(crate) fn fresh_id(prefix: &str) -> String {
     format!("{prefix}-{}", now_rfc3339().replace(':', "-"))
 }
 
-/// 處理一則人類訊息（Inbox task）：知識檢索→Reasoner 回覆（答案或反問）→寫 Out Message。
-/// 回傳附帶的 artifact_id（知識證據產出）。**不**標記 task 完成——由呼叫端（`run_inbox`）統一收尾。
+/// 對話回合 tool-loop 的步數上限（E12）：防 LLM 失控循環。簡單回覆 1～2 步即收斂
+/// （think→finish 或直接 finish）；複雜訊息可查多寄多＋順帶提案。用盡 → best-effort 視同 finish。
+const MAX_TURN_STEPS: u32 = 6;
+
+const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外部訊息。你可以連續多步行動，每步只回一個 JSON 動作，不附加其他文字：\n\
+  {\"action\": \"think\", \"query\": \"...\"} —— 查詢知識圖譜取得證據（需要依據才回答時使用）。\n\
+  {\"action\": \"send\", \"to\": \"...\"（可省，預設回覆喚醒你的這則訊息）, \"text\": \"要外發的訊息全文\"} —— 把訊息寄給外部對象（經 bridge；內部對話也會留紀錄）。\n\
+  {\"action\": \"propose\", \"title\": \"承諾標題\", \"condition\": \"完成條件\"} —— 提案一個長期承諾，待人類核可。\n\
+  {\"action\": \"finish\", \"text\": \"給人類的最終回覆\"（可省）} —— 結束本回合。\n\
+  判斷準則：需要證據就先 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
+  純通知、與你職責無關、或你無可補充——直接 finish 且不帶 text（不回覆）。";
+
+/// 處理一則人類／外部訊息（Inbox task）：**回合內 tool-loop**（E12 tool-choice）——員工每步
+/// 選一個動作（`think` 查知識／`send` 外發／`propose` 提案承諾／`finish` 結束），最多
+/// [`MAX_TURN_STEPS`] 步。所有外發都是員工的行動（經 [`SendTool`]）——v1 的「寫完 Out
+/// message 自動外發」已移除。「要不要回」「寄給誰」是內容判斷（Principle 10），由員工決定。
+/// 回傳最後一次 think 的 artifact_id（知識證據產出）。**不**標記 task 完成——由呼叫端
+/// （`run_inbox`）統一收尾。
 async fn run_conversational_turn(
     employee_id: &str,
     task: &Task,
@@ -511,120 +530,184 @@ async fn run_conversational_turn(
         .get_employee(employee_id)?
         .ok_or_else(|| anyhow::anyhow!("employee not found: {employee_id}"))?;
     let workspace_id = emp.workspace_id.clone();
-
-    // 1. 知識檢索（證據）。
-    let output = knowledge
-        .invoke(
-            ToolInput {
-                query: task.input.clone(),
-                anchor: None,
-            },
-            ctx,
-        )
-        .await?;
-    let artifact_id = commit_artifact(
-        store,
-        &workspace_id,
+    let send_tool = SendTool::new(
+        outbound.clone(),
+        task.external_source.clone(),
+        task.external_reply_to.clone(),
         employee_id,
-        &task.input,
-        &output.text,
-        Some(&task.id),
-        task.commitment_id.as_deref(),
-        task.project_id.as_deref(),
-    )?;
+    );
 
-    // 2. Reasoner 產生回覆（答案／反問／提案）——內容判斷是員工的（Principle 10）。
-    let sys = "你是一名員工，正在回覆人類的訊息。依知識證據回答；若訊息不清或需更多資訊，反問釐清；若你判斷這件事值得長期追蹤（成為承諾），可以提案。若此訊息不需要你的回應——純通知、與你職責無關、或你無可補充——請選 none（不回覆）。只回 JSON：{\"kind\": \"answer\"|\"ask\"|\"propose\"|\"none\", \"text\": \"給人類的回覆\", \"proposal\": {\"title\": \"承諾標題\", \"condition\": \"完成條件\"}}。kind=propose 時才需 proposal；kind=none 時 text/proposal 皆免。";
-    let user = format!("人類訊息：{}\n\n知識證據：\n{}", task.input, output.text);
-    // Reasoner 失敗（如 LLM rate limit）→ 退化為知識檢索回覆，不讓對話回合失敗。
-    let (kind, text, proposal) = match reasoner.reason(sys, &user).await {
-        Ok(v) => {
-            let kind = v
-                .get("kind")
-                .and_then(|x| x.as_str())
-                .unwrap_or("answer")
-                .to_string();
-            let text = v
-                .get("text")
-                .and_then(|x| x.as_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| output.text.clone());
-            let proposal = if kind == "propose" {
-                v.get("proposal").and_then(|p| {
-                    let title = p.get("title")?.as_str()?.to_string();
-                    let condition = p.get("condition")?.as_str()?.to_string();
-                    Some((title, condition))
-                })
+    let mut artifact_id: Option<String> = None;
+    let mut proposed_commitment_id: Option<String> = None;
+    let mut sent_any = false;
+    let mut steps: Vec<String> = Vec::new(); // 已完成步驟的結果（進每步的 user prompt）
+
+    for _ in 0..MAX_TURN_STEPS {
+        let user = format!(
+            "訊息：{}\n\n{}\n請決定下一步動作（只回 JSON）。",
+            task.input,
+            if steps.is_empty() {
+                "（尚未行動）".into()
             } else {
-                None
-            };
-            (kind, text, proposal)
+                format!("已完成步驟結果：\n{}", steps.join("\n"))
+            },
+        );
+        let action = match reasoner.reason(TURN_SYSTEM, &user).await {
+            Ok(v) => v,
+            Err(e) => {
+                // Reasoner 失敗（如 LLM rate limit）：若已有 think 證據，退化以最後證據回覆；
+                // 否則不回覆——不讓對話回合硬失敗（沿用 v1 的退化精神）。
+                eprintln!("[runtime] 對話 Reasoner 失敗（提前結束回合）: {e}");
+                record_event(store, &workspace_id, employee_id, "turn_error", &format!("{e}"));
+                break;
+            }
+        };
+        let act = action
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("finish")
+            .to_string();
+        match act.as_str() {
+            "think" => {
+                let query = action
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(task.input.as_str());
+                let output = knowledge
+                    .invoke(
+                        ToolInput {
+                            query: query.to_string(),
+                            anchor: None,
+                            params: None,
+                        },
+                        ctx,
+                    )
+                    .await?;
+                artifact_id = Some(commit_artifact(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    query,
+                    &output.text,
+                    Some(&task.id),
+                    task.commitment_id.as_deref(),
+                    task.project_id.as_deref(),
+                )?);
+                let snippet: String = output.text.chars().take(1200).collect();
+                steps.push(format!("[think「{query}」] 證據（節錄）：{snippet}"));
+            }
+            "send" => {
+                let text = action
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    steps.push("[send] 失敗：text 不可為空。".into());
+                    continue;
+                }
+                let mut params = serde_json::Map::new();
+                params.insert("text".into(), serde_json::Value::String(text.clone()));
+                if let Some(to) = action.get("to").and_then(|v| v.as_str()) {
+                    params.insert("to".into(), serde_json::Value::String(to.into()));
+                }
+                let out = send_tool
+                    .invoke(
+                        ToolInput {
+                            query: String::new(),
+                            anchor: None,
+                            params: Some(params),
+                        },
+                        ctx,
+                    )
+                    .await?;
+                // 內部對話歷史如實記錄外發內容（Ch.16）＋事件（成功／失敗；skipped 不記）。
+                store.put_message(&Message {
+                    id: fresh_id("msg-out"),
+                    workspace_id: workspace_id.clone(),
+                    employee_id: employee_id.to_string(),
+                    direction: MessageDirection::Out,
+                    text: text.clone(),
+                    proposed_commitment_id: None,
+                    source_commitment_id: task.commitment_id.clone(),
+                    artifact_id: artifact_id.clone(),
+                    created_at: now_rfc3339(),
+                })?;
+                match out.meta.get("outcome").and_then(|v| v.as_str()) {
+                    Some("sent") => {
+                        sent_any = true;
+                        record_event(
+                            store,
+                            &workspace_id,
+                            employee_id,
+                            "outbound_sent",
+                            out.meta.get("to").and_then(|v| v.as_str()).unwrap_or("?"),
+                        );
+                    }
+                    Some("failed") => record_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        "outbound_failed",
+                        &out.text,
+                    ),
+                    _ => {}
+                }
+                steps.push(format!("[send] {}", out.text));
+            }
+            "propose" => {
+                let title = action.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let condition = action
+                    .get("condition")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if title.is_empty() || condition.is_empty() {
+                    steps.push("[propose] 失敗：title 與 condition 皆必填。".into());
+                    continue;
+                }
+                let cid = create_proposed_commitment(
+                    store, &workspace_id, employee_id, title, condition,
+                )?;
+                proposed_commitment_id = Some(cid.clone());
+                steps.push(format!("[propose] 已提案承諾（待核可）：{title}"));
+            }
+            _ => {
+                // finish（含未知 action 的 fail-safe）：有 text → 寫最終 Out Message。
+                if let Some(text) = action.get("text").and_then(|v| v.as_str()) {
+                    if !text.trim().is_empty() {
+                        store.put_message(&Message {
+                            id: fresh_id("msg-out"),
+                            workspace_id: workspace_id.clone(),
+                            employee_id: employee_id.to_string(),
+                            direction: MessageDirection::Out,
+                            text: text.to_string(),
+                            // 提案 id 掛在最終回覆（聊天頁核可鈕比對用，v1 相容）。
+                            proposed_commitment_id: proposed_commitment_id.clone(),
+                            source_commitment_id: task.commitment_id.clone(),
+                            artifact_id: artifact_id.clone(),
+                            created_at: now_rfc3339(),
+                        })?;
+                        record_event(store, &workspace_id, employee_id, "reply", "conversational turn");
+                        return Ok(artifact_id);
+                    }
+                }
+                break; // finish 無 text（或空）→ silent 語意。
+            }
         }
-        Err(e) => {
-            eprintln!("[runtime] 對話 Reasoner 失敗（退化為知識檢索回覆）: {e}");
-            (
-                "answer".to_string(),
-                format!("（推理暫時不可用，以下為知識檢索結果）\n\n{}", output.text),
-                None,
-            )
-        }
-    };
+    }
 
-    // 若 Reasoner 提案 → 建 Proposed 承諾（Ch.11/Ch.20 §5）。
-    let proposed_commitment_id = if let Some((title, condition)) = &proposal {
-        Some(create_proposed_commitment(
+    // 回合結束（finish 無 text／步數用盡／Reasoner 中途失敗）：若全程未 send 也未回覆 → silent
+    // （員工判斷無需回應，kind=none 的等價物——「要不要回」是員工的內容判斷，Principle 10）。
+    if !sent_any {
+        record_event(
             store,
             &workspace_id,
             employee_id,
-            title,
-            condition,
-        )?)
-    } else {
-        None
-    };
-
-    // 3. kind=none：員工判斷無需回應（純通知／與職責無關）——不寫 Out message、不外發。
-    //    「要不要回」是內容判斷（Principle 10），由員工決定而非 runtime 無條件回。
-    //    知識證據 artifact 保留、task 照常由呼叫端收尾完成。
-    if kind == "none" {
-        record_event(
-            store,
-            &emp.workspace_id,
-            employee_id,
             "silent",
-            &format!("依判斷不回覆：{}", text.chars().take(60).collect::<String>()),
+            "依判斷不回覆（回合內未 send、無最終回覆）",
         );
-        return Ok(Some(artifact_id));
     }
-
-    // 寫 Out Message（Ch.16）；拆分語義：proposed 指向新提案（核可鈕）、source 標記來源責任。
-    store.put_message(&Message {
-        id: fresh_id("msg-out"),
-        workspace_id,
-        employee_id: employee_id.to_string(),
-        direction: MessageDirection::Out,
-        text: text.clone(),
-        proposed_commitment_id: proposed_commitment_id.clone(),
-        source_commitment_id: task.commitment_id.clone(),
-        artifact_id: Some(artifact_id.clone()),
-        created_at: now_rfc3339(),
-    })?;
-    record_event(
-        store,
-        &emp.workspace_id,
-        employee_id,
-        if kind == "ask" {
-            "ask"
-        } else if kind == "propose" {
-            "propose"
-        } else {
-            "reply"
-        },
-        "conversational turn",
-    );
-    // E7 outbound：外部事件來源的回覆自動外發給 bridge（免核可）。
-    try_outbound(store, &emp.workspace_id, employee_id, task, &text, outbound).await;
-    Ok(Some(artifact_id))
+    Ok(artifact_id)
 }
 
 // ───────────────── 承諾驅動自主循環（Phase 6b）─────────────────
@@ -679,7 +762,7 @@ const BARREN_MIN_CHARS: usize = 30;
 /// 連續貧瘠檢索上限：超過即判 Stalled（知識庫確實缺相關內容時，避免無意義反覆重試）。
 const MAX_BARREN: u32 = 3;
 
-const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。該行動會被當作知識檢索的查詢。只回 JSON 物件，不附加其他文字。";
+const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。只回 JSON 物件，不附加其他文字。";
 
 const EVAL_SYSTEM: &str = "你是一名完成條件評估者。只根據完成條件與已產出的成果，判斷承諾是否已滿足。只回 JSON 物件，不附加其他文字。";
 
@@ -776,8 +859,10 @@ pub async fn run_autonomous(
              已查得的成果（近期）：\n{arts}\n\
              近期已做：\n{recent}\n\
              請決定下一步：若上述成果已足以滿足完成條件，回 {{\"done\": true}}；\
-             否則給下一個該調查的具體問題（避免與已查過的重複）。只回 JSON：\
-             {{\"next_query\": \"...\", \"rationale\": \"...\"}} 或 {{\"done\": true}}。",
+             若應主動通知人類（如重大進展／需要決策），回 send 動作；\
+             否則給下一個該調查的具體問題（避免與已查過的重複）。只回 JSON，三選一：\
+             {{\"done\": true}} 或 {{\"next_query\": \"...\", \"rationale\": \"...\"}} 或\
+             {{\"tool\": \"send\", \"to\": \"送達目標\", \"text\": \"訊息全文\", \"source\": \"通道標籤如 email\", \"rationale\": \"...\"}}。",
             title = commitment.title,
             cond = commitment.completion_condition,
             arts = if summaries.is_empty() { "(尚無)".into() } else { summaries.join("\n") },
@@ -803,6 +888,9 @@ pub async fn run_autonomous(
             .collect();
         let plan_detail = if plan_done {
             format!("{{\"done\": true, \"rationale\": \"{plan_rationale}\"}}")
+        } else if plan.get("tool").and_then(|v| v.as_str()) == Some("send") {
+            let to = plan.get("to").and_then(|v| v.as_str()).unwrap_or("?");
+            format!("{{\"tool\": \"send\", \"to\": \"{to}\", \"rationale\": \"{plan_rationale}\"}}")
         } else {
             let q = plan
                 .get("next_query")
@@ -856,6 +944,66 @@ pub async fn run_autonomous(
                 }
             }
         }
+        // E12 tool-choice：PLAN 選了 send（主動通知人類——重大進展／需要決策）→ ACT 走
+        // SendTool（無進站錨點，故 to/source 由 PLAN 明示）。結果記 note 進上下文（下一輪
+        // PLAN 可見），不計入 artifact、不影響 EVAL。send 後不結束循環——繼續推進承諾。
+        if plan.get("tool").and_then(|v| v.as_str()) == Some("send") {
+            let text = plan
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mut params = serde_json::Map::new();
+            params.insert("text".into(), serde_json::Value::String(text));
+            for key in ["to", "source"] {
+                if let Some(v) = plan.get(key).and_then(|v| v.as_str()) {
+                    params.insert(key.into(), serde_json::Value::String(v.into()));
+                }
+            }
+            let send_tool = SendTool::new(
+                outbound.clone(),
+                None, // 自主循環無進站事件——來源由 PLAN 明示
+                None,
+                employee_id,
+            );
+            let out = match send_tool
+                .invoke(
+                    ToolInput {
+                        query: String::new(),
+                        anchor: None,
+                        params: Some(params),
+                    },
+                    ctx,
+                )
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    outcome = AutonomousOutcome::Errored {
+                        detail: format!("send: {e}"),
+                    };
+                    break;
+                }
+            };
+            match out.meta.get("outcome").and_then(|v| v.as_str()) {
+                Some("sent") => record_event(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    "outbound_sent",
+                    out.meta.get("to").and_then(|v| v.as_str()).unwrap_or("?"),
+                ),
+                Some("failed") => {
+                    record_event(store, &workspace_id, employee_id, "outbound_failed", &out.text)
+                }
+                _ => {}
+            }
+            memory.notes.push(format!("（已主動外發：{}）", out.text));
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            continue;
+        }
         let Some(next_query) = plan
             .get("next_query")
             .and_then(|v| v.as_str())
@@ -895,6 +1043,7 @@ pub async fn run_autonomous(
                 ToolInput {
                     query: next_query.clone(),
                     anchor: None,
+                    params: None,
                 },
                 ctx,
             )
@@ -2662,7 +2811,10 @@ mod tests {
             })
             .unwrap();
         let tool = StubTool::new("良率因 RF matching 接點氧化下降");
-        let reasoner = StubReasoner::new(vec![r#"{"kind":"answer","text":"主因是接點氧化，已換件。"}"#]);
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"think","query":"蝕刻良率"}"#,
+            r#"{"action":"finish","text":"主因是接點氧化，已換件。"}"#,
+        ]);
         run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
             .await
             .unwrap();
@@ -2748,18 +2900,19 @@ mod tests {
                 })
                 .unwrap();
         }
-        // 兩員工各自跑 inbox（不同回覆內容，便於驗配對）。
+        // 兩員工各自跑 inbox（不同回覆內容，便於驗配對）。E12：外發由員工的 send 動作發起
+        // （to 缺省回退各自 task 的錨點——多員工並發不交叉的保證不變）。
         let tool = StubTool::new("證據");
-        let r1 = StubReasoner::new(vec![r#"{"kind":"answer","text":"回覆甲"}"#]);
+        let r1 = StubReasoner::new(vec![r#"{"action":"send","text":"回覆甲"}"#]);
         run_inbox(&emp1, &tool, Some(&r1), &ctx(), &store, &outbound).await.unwrap();
-        let r2 = StubReasoner::new(vec![r#"{"kind":"answer","text":"回覆乙"}"#]);
+        let r2 = StubReasoner::new(vec![r#"{"action":"send","text":"回覆乙"}"#]);
         run_inbox(&emp2, &tool, Some(&r2), &ctx(), &store, &outbound).await.unwrap();
 
         let got = received.lock().unwrap().clone();
         assert_eq!(got.len(), 2, "應外發兩則：{got:?}");
         let by_reply = |anchor: &str| {
             got.iter()
-                .find(|v| v["reply_to"] == anchor)
+                .find(|v| v["to"] == anchor)
                 .unwrap_or_else(|| panic!("缺 {anchor}：{got:?}"))
                 .clone()
         };
@@ -2799,7 +2952,7 @@ mod tests {
             })
             .unwrap();
         let tool = StubTool::new("證據");
-        let reasoner = StubReasoner::new(vec![r#"{"kind":"answer","text":"本地回覆"}"#]);
+        let reasoner = StubReasoner::new(vec![r#"{"action":"send","text":"本地回覆"}"#]);
         run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
             .await
             .unwrap();
@@ -2838,7 +2991,10 @@ mod tests {
             })
             .unwrap();
         let tool = StubTool::new("證據");
-        let reasoner = StubReasoner::new(vec![r#"{"kind":"none"}"#]);
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"think","query":"系統維護"}"#,
+            r#"{"action":"finish"}"#,
+        ]);
         // outbound 指向一個會記錄的 stub endpoint——none 時應完全收不到 POST。
         let received: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -2874,6 +3030,220 @@ mod tests {
         assert_eq!(store.list_artifacts("ws").unwrap().len(), 1, "知識證據保留");
         let evs = store.list_events_by_employee(&emp_id, 20).unwrap();
         assert!(evs.iter().any(|e| e.kind == "silent"), "{evs:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// E12：員工明示 `to`（新目標，非原 thread）→ payload 帶明示 to（bridge 解讀路由）。
+    #[tokio::test]
+    async fn conversational_send_to_new_target_uses_to() {
+        use axum::{http::StatusCode, routing::post, Json, Router};
+
+        let received: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rx = std::sync::Arc::clone(&received);
+        let router = Router::new().route(
+            "/send",
+            post(move |Json(v): Json<serde_json::Value>| {
+                let rx = std::sync::Arc::clone(&rx);
+                async move {
+                    rx.lock().unwrap().push(v);
+                    StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let outbound = crate::outbound::OutboundConfig {
+            url: Some(format!("http://{addr}/send")),
+            secret: None,
+        };
+
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "請把結論轉寄給老闆".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: Some("email:msg-A".into()),
+                external_source: Some("email".into()),
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("證據");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"think","query":"結論"}"#,
+            r#"{"action":"send","to":"boss@corp.com","text":"老闆好，以下是結論。"}"#,
+            r#"{"action":"finish"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound)
+            .await
+            .unwrap();
+
+        let got = received.lock().unwrap().clone();
+        assert_eq!(got.len(), 1, "應外發一則：{got:?}");
+        assert_eq!(got[0]["to"], "boss@corp.com", "明示 to 應覆蓋錨點");
+        assert_eq!(got[0]["source"], "email");
+        // 外發內容也留在內部對話歷史（Ch.16）。
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].text.contains("老闆好"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// E12：propose → finish——提案成立（Proposed），最終 Out Message 掛 proposed_commitment_id
+    /// （聊天頁核可鈕比對用，v1 相容）。
+    #[tokio::test]
+    async fn conversational_propose_then_finish_links_commitment() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "這問題一直重複，能長期追蹤嗎？".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("證據");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"propose","title":"追蹤蝕刻良率","condition":"連續四週良率 ≥ 95%"}"#,
+            r#"{"action":"finish","text":"已提案長期追蹤，請核可。"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+            .await
+            .unwrap();
+
+        let coms = store.list_commitments("ws").unwrap();
+        assert_eq!(coms.len(), 1);
+        assert_eq!(coms[0].status, CommitmentStatus::Proposed);
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(
+            msgs[0].proposed_commitment_id.as_deref(),
+            Some(coms[0].id.as_str()),
+            "最終回覆應掛提案 id（核可鈕）"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// E12：外發未啟用 → SendTool 回報「外發未啟用」進上下文，員工改以 finish 留內部回覆；
+    /// 不記 outbound 事件、不寫 send 的 Out message。
+    #[tokio::test]
+    async fn conversational_send_disabled_reports_to_employee() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "回我信".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: Some("email:msg-A".into()),
+                external_source: Some("email".into()),
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("證據");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"send","text":"回覆"}"#,
+            r#"{"action":"finish","text":"（外部回覆不可用）改留內部回覆。"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+            .await
+            .unwrap();
+
+        // send 的 Out message 照寫（歷史如實記錄外發意圖）＋ finish 的最終回覆。
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        let evs = store.list_events_by_employee(&emp_id, 20).unwrap();
+        assert!(
+            !evs.iter().any(|e| e.kind.starts_with("outbound")),
+            "停用時不應記 outbound 事件：{evs:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// E12：自主循環 PLAN 選 send（主動通知）→ SendTool 執行、記 note、循環繼續到 Satisfied。
+    /// 未啟用 → skipped 回報進 note（不中斷、不外發）。
+    #[tokio::test]
+    async fn run_autonomous_send_action_notifies_and_continues() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查答案".into(),
+                completion_condition: "找到答案".into(),
+                status: CommitmentStatus::Active,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("答案：42");
+        // PLAN(send) → PLAN(done) → EVAL(done)。
+        let reasoner = StubReasoner::new(vec![
+            r#"{"tool":"send","to":"boss@corp.com","text":"找到答案了","source":"email"}"#,
+            r#"{"done": true}"#,
+            r#"{"done": true}"#,
+        ]);
+        let out = run_autonomous(
+            &emp_id,
+            "c1",
+            &CycleBudget::default_session(),
+            &tool,
+            &reasoner,
+            &ctx(),
+            &store,
+            &outbound_disabled(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(out, AutonomousOutcome::Satisfied { .. }), "{out:?}");
+        // send 的回報（skipped 說明）留在 memory notes——下一輪 PLAN 與事後稽核可見。
+        let mem = store.get_memory(&emp_id).unwrap().unwrap();
+        assert!(
+            mem.notes.iter().any(|n| n.contains("已主動外發")),
+            "{:?}",
+            mem.notes
+        );
+        // skipped 不記 outbound 事件；plan 事件記 send 動作。
+        let evs = store.list_events_by_employee(&emp_id, 30).unwrap();
+        assert!(
+            !evs.iter().any(|e| e.kind.starts_with("outbound")),
+            "停用時不應記 outbound 事件：{evs:?}"
+        );
+        assert!(
+            evs.iter()
+                .any(|e| e.kind == "plan" && e.detail.contains("send")),
+            "{evs:?}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

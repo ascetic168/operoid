@@ -27,6 +27,10 @@ pub struct ToolInput {
     pub query: String,
     /// 可選的錨點（gbrain think `--anchor <slug>`）。
     pub anchor: Option<String>,
+    /// 工具特有參數（E12 tool-choice）：`query/anchor` 是檢索類工具的同義語意，裝不下
+    /// 「寄給誰、寄什麼」這類工具專屬輸入——由各 Tool 自行解讀（如 send-external-message
+    /// 讀 `to`/`text`）。檢索類工具忽略之。
+    pub params: Option<serde_json::Map<String, Value>>,
 }
 
 /// 一次 Tool 呼叫的輸出。`text` 為合成本體，`meta` 為 best-effort 解析的量化指標。
