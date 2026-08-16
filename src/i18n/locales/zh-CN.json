@@ -164,13 +164,44 @@
     "editorEnriching": "LLM 补全中…",
     "editorSaveAndSync": "保存并 Sync",
     "defs": {
-      "people": { "title": "people 工厂", "accept": "CSV（Google 通讯录）", "target": "people/" },
-      "companies": { "title": "companies 工厂", "accept": "txt / md / pdf", "target": "companies/" },
-      "meeting": { "title": "meeting 工厂", "accept": "txt / md / pdf", "target": "meetings/" },
-      "projects": { "title": "projects 工厂", "accept": "txt / md / pdf", "target": "projects/" },
-      "concepts": { "title": "concepts 工厂", "accept": "txt / md / pdf", "target": "concepts/" },
-      "inbox": { "title": "inbox（速记）", "accept": "txt / md", "target": "inbox/（gbrain capture）", "noGraph": "不进图谱", "noGraphHint": "inbox 走 gbrain capture 当 note 速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。" },
-      "auto": { "title": "自动（丢进来我帮你分）", "accept": "csv / txt / md / pdf", "target": "依判断分派 → people/companies/meeting/inbox", "hint": "拖放任何文件，或点此选择" }
+      "people": {
+        "title": "people 工厂",
+        "accept": "CSV（Google 通讯录）",
+        "target": "people/"
+      },
+      "companies": {
+        "title": "companies 工厂",
+        "accept": "txt / md / pdf",
+        "target": "companies/"
+      },
+      "meeting": {
+        "title": "meeting 工厂",
+        "accept": "txt / md / pdf",
+        "target": "meetings/"
+      },
+      "projects": {
+        "title": "projects 工厂",
+        "accept": "txt / md / pdf",
+        "target": "projects/"
+      },
+      "concepts": {
+        "title": "concepts 工厂",
+        "accept": "txt / md / pdf",
+        "target": "concepts/"
+      },
+      "inbox": {
+        "title": "inbox（速记）",
+        "accept": "txt / md",
+        "target": "inbox/（gbrain capture）",
+        "noGraph": "不进图谱",
+        "noGraphHint": "inbox 走 gbrain capture 当 note 速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。"
+      },
+      "auto": {
+        "title": "自动（丢进来我帮你分）",
+        "accept": "csv / txt / md / pdf",
+        "target": "依判断分派 → people/companies/meeting/inbox",
+        "hint": "拖放任何文件，或点此选择"
+      }
     },
     "classify": {
       "confirmTitle": "确认文件分类",
@@ -303,9 +334,13 @@
     "obridgeDesc": "直接编辑 obridge.toml 原始内容（Email／IM 通道账号、路由映射）。Operoid 只当编辑器，不解读内容。",
     "obridgeNeedPath": "尚未设置 Obridge 设置文件路径——请在 app-settings.json 的 app_config 加 \"obridge_config_path\": \"<obridge.toml 路径>\" 后重启。",
     "obridgeReload": "重新加载",
-    "obridgeRestartNote": "（变更需重启 obridge 才生效）",
+    "obridgeRestartNote": "（通道设置会热重载；listen/operoid 变更由自动重启套用）",
     "languageLabel": "界面语言",
-    "languageAuto": "自动侦测（系统语言）"
+    "languageAuto": "自动侦测（系统语言）",
+    "obridgeAutostartLabel": "Operoid 启动时自动带起 Obridge 子进程（关闭时带走；保存后自动重启）",
+    "obridgeExeLabel": "obridge 可执行文件路径（autostart 用）",
+    "obridgePathLabel": "obridge.toml 设置文件路径（设置页托管用）",
+    "obridgeExePlaceholder": "例：C:\\tools\\obridge.exe"
   },
   "brainsView": {
     "title": "脑",
@@ -413,9 +448,15 @@
     "configBadKey": "未知的 config 键：{key}"
   },
   "prereq": {
-    "git": { "hint": "版本控制；工厂写入后 sync 前需要 git commit。" },
-    "bun": { "hint": "JS 运行环境；gbrain 透过 bun 安装与执行。" },
-    "gbrain": { "hint": "GBrain CLI（知识图谱引擎）；用 bun 安装，详见连结〈CLI standalone〉段落。" }
+    "git": {
+      "hint": "版本控制；工厂写入后 sync 前需要 git commit。"
+    },
+    "bun": {
+      "hint": "JS 运行环境；gbrain 透过 bun 安装与执行。"
+    },
+    "gbrain": {
+      "hint": "GBrain CLI（知识图谱引擎）；用 bun 安装，详见连结〈CLI standalone〉段落。"
+    }
   },
   "agent_os": {
     "disabled": "Agent-OS 未开启。请于设置中启用。",

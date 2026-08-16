@@ -13,7 +13,13 @@ use ocontract::SendPayload;
 use super::channel::Registry;
 
 /// 啟動 send endpoint（綁 127.0.0.1，常駐 serve）。
-pub async fn serve(port: u16, secret: String, registry: std::sync::Arc<Registry>) {
+///
+/// `registry` 為 RwLock 共享——熱重載時 run() 會整組替換註冊表內容，這裡每次請求重讀。
+pub async fn serve(
+    port: u16,
+    secret: String,
+    registry: std::sync::Arc<std::sync::RwLock<Registry>>,
+) {
     let app = Router::new()
         .route("/send", post(send_handler))
         .with_state((secret, registry));
@@ -31,14 +37,21 @@ pub async fn serve(port: u16, secret: String, registry: std::sync::Arc<Registry>
 }
 
 async fn send_handler(
-    State((secret, registry)): State<(String, std::sync::Arc<Registry>)>,
+    State((secret, registry)): State<(
+        String,
+        std::sync::Arc<std::sync::RwLock<Registry>>,
+    )>,
     headers: HeaderMap,
     Json(p): Json<SendPayload>,
 ) -> Response {
     if !check_auth(&headers, &secret) {
         return (StatusCode::UNAUTHORIZED, "bad credentials").into_response();
     }
-    let Some(ch) = registry.get(&p.source) else {
+    let ch = registry
+        .read()
+        .ok()
+        .and_then(|r| r.get(&p.source));
+    let Some(ch) = ch else {
         return (
             StatusCode::NOT_FOUND,
             format!("unknown source: {}", p.source),
@@ -110,7 +123,11 @@ mod tests {
         });
         let mut reg = Registry::new();
         reg.register(echo.clone()).unwrap();
-        tokio::spawn(serve(41041, "s3cret".into(), Arc::new(reg)));
+        tokio::spawn(serve(
+            41041,
+            "s3cret".into(),
+            Arc::new(std::sync::RwLock::new(reg)),
+        ));
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         let client = reqwest::Client::new();

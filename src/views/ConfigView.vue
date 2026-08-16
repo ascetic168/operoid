@@ -190,6 +190,9 @@ const form = reactive<AppConfig>({
   claude_terminal: null,
   claude_terminal_template: null,
   agent_os_enabled: false,
+  obridge_config_path: null,
+  obridge_autostart: false,
+  obridge_executable: null,
 });
 
 watchEffect(() => {
@@ -518,6 +521,28 @@ async function onLocaleChange(v: string) {
           <label class="flex items-center gap-2">
             <input v-model="form.agent_os_enabled" type="checkbox" />
             <span>{{ $t("configView.agentOsLabel") }}</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input v-model="form.obridge_autostart" type="checkbox" />
+            <span>{{ $t("configView.obridgeAutostartLabel") }}</span>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-muted-foreground">{{ $t("configView.obridgeExeLabel") }}</span>
+            <input
+              v-model="form.obridge_executable"
+              type="text"
+              class="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              :placeholder="$t('configView.obridgeExePlaceholder')"
+            />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-muted-foreground">{{ $t("configView.obridgePathLabel") }}</span>
+            <input
+              v-model="form.obridge_config_path"
+              type="text"
+              class="rounded-md border border-border bg-background px-2 py-1 text-xs"
+              :placeholder="$t('configView.obridgeExePlaceholder')"
+            />
           </label>
         </div>
       </div>

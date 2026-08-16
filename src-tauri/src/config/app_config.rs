@@ -129,9 +129,18 @@ pub struct AppConfig {
     pub event_outbound_secret: Option<String>,
     /// Obridge（Operoid Bridge）設定檔 `obridge.toml` 的路徑。`None`（預設）→ 設定頁
     /// 不顯示 Obridge 區塊。設定後，設定頁可讀寫該檔（原始文字——Operoid 只當編輯器，
-    /// 不解讀內容；通道帳密屬 bridge 職責，契約「抉擇二」）。obridge 需重啟才套用變更。
+    /// 不解讀內容；通道帳密屬 bridge 職責，契約「抉擇二」）。obridge 會 watch 此檔並熱重載
+    /// 通道設定。
     #[serde(default)]
     pub obridge_config_path: Option<String>,
+    /// Operoid 啟動時自動把 obridge 帶起為子進程（關閉時帶走；設定頁存檔後自動重啟它）。
+    /// 需 `obridge_config_path`＋`obridge_executable` 皆有設才生效。`false`（預設）→
+    /// obridge 由使用者自行管理（手動啟動）。
+    #[serde(default)]
+    pub obridge_autostart: bool,
+    /// obridge 執行檔路徑（autostart 用）。
+    #[serde(default)]
+    pub obridge_executable: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -268,6 +277,8 @@ impl Default for AppConfig {
             event_outbound_url: None,
             event_outbound_secret: None,
             obridge_config_path: None,
+            obridge_autostart: false,
+            obridge_executable: None,
         };
         cfg.normalize();
         cfg

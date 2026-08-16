@@ -45,3 +45,15 @@ OBRIDGE_SMTP_HOST=... OBRIDGE_SMTP_USER=... OBRIDGE_SMTP_PASS=... OBRIDGE_SMTP_T
 - 佈署：複製 `.wasm` 到 obridge 設定檔同目錄的 `plugins/`，檔名慣例 `<name>-<poll_secs>.wasm`。
 - 往返測試：先建置範例外掛後
   `cargo test -p obridge example_plugin -- --ignored --nocapture`。
+
+## 設定熱重載與啟動方式
+
+- **熱重載（內建）**：obridge 每 2s 檢查 `obridge.toml` mtime——變更即**熱重建全部通道**
+  （舊 poll task 中止、依新設定重建；解析失敗沿用舊設定）。`[[channels]]`／外掛設定即改即生效。
+  `[listen]`／`[operoid]` 區段變更需重啟（send endpoint 與進氣目的地位址不熱換）。
+- **手動啟動**：`cargo run -p obridge` 或直接跑執行檔（`--config <path>`）。
+- **Operoid 代管（opt-in）**：app-settings.json 的 app_config 設
+  `"obridge_autostart": true`＋`"obridge_executable": "<obridge.exe 路徑>"`＋
+  `"obridge_config_path": "<obridge.toml 路徑>"` → Operoid 啟動時帶起 obridge 子進程、
+  退出時帶走；設定頁存檔後自動重啟子進程（讓 listen/operoid 變更也生效）。
+  未開 autostart → obridge 由使用者自行管理。

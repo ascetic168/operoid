@@ -205,8 +205,17 @@ pub fn run() {
             if let Some(p) = ingress_server::start(app.handle().clone()) {
                 eprintln!("[ingress] 進氣口就緒：127.0.0.1:{p}/event");
             }
+            // Obridge 子進程代管（opt-in：obridge_autostart＋路徑/執行檔皆設）。
+            // Operoid 啟動帶起、退出帶走；設定頁存檔後自動重啟（見 obridge_cfg）。
+            obridge_cfg::autostart(app.handle());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Operoid");
+        .build(tauri::generate_context!())
+        .expect("error while building Operoid")
+        .run(|_app, event| {
+            // 退出時帶走代管的 obridge 子進程（best-effort）。
+            if matches!(event, tauri::RunEvent::Exit) {
+                obridge_cfg::kill_managed();
+            }
+        });
 }

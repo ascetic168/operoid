@@ -133,6 +133,8 @@ export interface AppConfig {
   claude_terminal_template: string | null;
   agent_os_enabled: boolean;
   obridge_config_path?: string | null;
+  obridge_autostart?: boolean;
+  obridge_executable?: string | null;
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>

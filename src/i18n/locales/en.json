@@ -164,13 +164,44 @@
     "editorEnriching": "LLM enriching…",
     "editorSaveAndSync": "Save & Sync",
     "defs": {
-      "people": { "title": "people factory", "accept": "CSV (Google Contacts)", "target": "people/" },
-      "companies": { "title": "companies factory", "accept": "txt / md / pdf", "target": "companies/" },
-      "meeting": { "title": "meeting factory", "accept": "txt / md / pdf", "target": "meetings/" },
-      "projects": { "title": "projects factory", "accept": "txt / md / pdf", "target": "projects/" },
-      "concepts": { "title": "concepts factory", "accept": "txt / md / pdf", "target": "concepts/" },
-      "inbox": { "title": "inbox (quick note)", "accept": "txt / md", "target": "inbox/ (gbrain capture)", "noGraph": "not in graph", "noGraphHint": "inbox uses gbrain capture as notes; it's outside the knowledge-graph link whitelist (DIR_PATTERN), so it forms no edges with other pages." },
-      "auto": { "title": "Auto (drop it, I'll sort it)", "accept": "csv / txt / md / pdf", "target": "routed by content → people/companies/meeting/inbox", "hint": "Drop any file, or click to choose" }
+      "people": {
+        "title": "people factory",
+        "accept": "CSV (Google Contacts)",
+        "target": "people/"
+      },
+      "companies": {
+        "title": "companies factory",
+        "accept": "txt / md / pdf",
+        "target": "companies/"
+      },
+      "meeting": {
+        "title": "meeting factory",
+        "accept": "txt / md / pdf",
+        "target": "meetings/"
+      },
+      "projects": {
+        "title": "projects factory",
+        "accept": "txt / md / pdf",
+        "target": "projects/"
+      },
+      "concepts": {
+        "title": "concepts factory",
+        "accept": "txt / md / pdf",
+        "target": "concepts/"
+      },
+      "inbox": {
+        "title": "inbox (quick note)",
+        "accept": "txt / md",
+        "target": "inbox/ (gbrain capture)",
+        "noGraph": "not in graph",
+        "noGraphHint": "inbox uses gbrain capture as notes; it's outside the knowledge-graph link whitelist (DIR_PATTERN), so it forms no edges with other pages."
+      },
+      "auto": {
+        "title": "Auto (drop it, I'll sort it)",
+        "accept": "csv / txt / md / pdf",
+        "target": "routed by content → people/companies/meeting/inbox",
+        "hint": "Drop any file, or click to choose"
+      }
     },
     "classify": {
       "confirmTitle": "Confirm file classification",
@@ -303,9 +334,13 @@
     "obridgeDesc": "Edit the raw obridge.toml (Email/IM channel credentials, routing). Operoid acts only as an editor and does not interpret the content.",
     "obridgeNeedPath": "Obridge config path not set — add \"obridge_config_path\": \"<path to obridge.toml>\" to app_config in app-settings.json, then restart.",
     "obridgeReload": "Reload",
-    "obridgeRestartNote": "(restart obridge to apply changes)",
+    "obridgeRestartNote": "(channel settings hot-reload; listen/operoid changes apply via auto-restart)",
     "languageLabel": "Interface language",
-    "languageAuto": "Auto-detect (system language)"
+    "languageAuto": "Auto-detect (system language)",
+    "obridgeAutostartLabel": "Start Obridge as a child process with Operoid (killed on exit; auto-restarted after save)",
+    "obridgeExeLabel": "obridge executable path (for autostart)",
+    "obridgePathLabel": "obridge.toml path (for the settings panel)",
+    "obridgeExePlaceholder": "e.g. C:\\tools\\obridge.exe"
   },
   "brainsView": {
     "title": "Brains",
@@ -413,9 +448,15 @@
     "configBadKey": "Unknown config key: {key}"
   },
   "prereq": {
-    "git": { "hint": "Version control; needed to git commit before sync after a factory write." },
-    "bun": { "hint": "JS runtime; gbrain is installed and run via bun." },
-    "gbrain": { "hint": "GBrain CLI (knowledge-graph engine); install via bun, see the ‘CLI standalone’ section." }
+    "git": {
+      "hint": "Version control; needed to git commit before sync after a factory write."
+    },
+    "bun": {
+      "hint": "JS runtime; gbrain is installed and run via bun."
+    },
+    "gbrain": {
+      "hint": "GBrain CLI (knowledge-graph engine); install via bun, see the ‘CLI standalone’ section."
+    }
   },
   "agent_os": {
     "disabled": "Agent-OS is disabled. Turn it on in Settings.",
