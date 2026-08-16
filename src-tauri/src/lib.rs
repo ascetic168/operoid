@@ -17,6 +17,7 @@ mod ingress_server;
 mod i18n;
 mod llm;
 mod note_server;
+mod obridge_cfg;
 pub mod outbound;
 mod note_view;
 mod prereq;
@@ -178,6 +179,8 @@ pub fn run() {
             runtime::agent_send_message,
             runtime::agent_clear_messages,
             runtime::agent_watch,
+            obridge_cfg::obridge_config_load,
+            obridge_cfg::obridge_config_save,
             runtime::agent_inbox_summary,
             runtime::agent_recent_events,
         ])

@@ -132,6 +132,7 @@ export interface AppConfig {
   claude_terminal: string | null;
   claude_terminal_template: string | null;
   agent_os_enabled: boolean;
+  obridge_config_path?: string | null;
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>
@@ -583,3 +584,9 @@ export const agentInboxSummary = (): Promise<InboxSummary> =>
   invoke<InboxSummary>("agent_inbox_summary");
 export const agentRecentEvents = (limit?: number): Promise<EventWithMeta[]> =>
   invoke<EventWithMeta[]>("agent_recent_events", { limit: limit ?? 50 });
+
+// ---- Obridge 設定代管（GUI 編輯 obridge.toml 原始文字；路徑由 AppConfig.obridge_config_path 決定）----
+export const obridgeConfigLoad = (): Promise<string> =>
+  invoke<string>("obridge_config_load");
+export const obridgeConfigSave = (content: string): Promise<void> =>
+  invoke<void>("obridge_config_save", { content });

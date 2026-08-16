@@ -50,3 +50,18 @@ employee = "Steve-TW"
 employee = "Steve-TW"
 address = "steve@corp.com"
 name = "Steve（Operoid）"
+
+# ── WASM 外掛通道（type = "wasm"）範例 ─────────────────────────────
+# plugin 路徑（相對此設定檔）＋poll 間隔＋任意設定區塊（序列化成 JSON 經
+# init(config) 傳入外掛——結構由外掛自訂，obridge 不解讀）。
+# （另一種佈署方式：把 .wasm 放 plugins/ 目錄掃描載入——但那種方式無法帶設定。）
+#
+# [[channels]]
+# type = "wasm"
+# source = "slack"
+# [channels.wasm]
+# plugin = "plugins/slack.wasm"
+# poll_secs = 30
+# [channels.wasm.config]
+# token = "xoxb-..."
+# channel-map = { ops = "Steve-TW" }

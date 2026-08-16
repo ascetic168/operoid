@@ -298,7 +298,12 @@
     "maxTokensLabel": "LLM max_tokens",
     "autoSyncLabel": "工廠寫檔後自動 commit + sync",
     "noPullLabel": "sync 加 --no-pull（無 remote 的腦建議開）",
-    "agentOsLabel": "啟用 Agent-OS（員工模板／實體管理）",
+    "agentOsLabel": "啟用 Agent-OS（員工模板/實體管理）",
+    "obridgeTitle": "Obridge（Operoid Bridge）設定",
+    "obridgeDesc": "直接編輯 obridge.toml 原始內容（Email/IM 通道帳號、路由對映）。Operoid 只當編輯器，不解讀內容。",
+    "obridgeNeedPath": "尚未設定 Obridge 設定檔路徑——請在 app-settings.json 的 app_config 加 \"obridge_config_path\": \"<obridge.toml 路徑>\" 後重啟。",
+    "obridgeReload": "重新載入",
+    "obridgeRestartNote": "（變更需重啟 obridge 才生效）",
     "languageLabel": "介面語言",
     "languageAuto": "自動偵測（系統語言）"
   },

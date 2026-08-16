@@ -41,6 +41,23 @@ pub struct ChannelCfg {
     /// email-imap 專屬設定。
     #[serde(default)]
     pub email_imap: Option<EmailImapCfg>,
+    /// wasm 外掛專屬設定。
+    #[serde(default)]
+    pub wasm: Option<WasmCfg>,
+}
+
+/// wasm 外掛通道設定（`type = "wasm"`）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct WasmCfg {
+    /// 外掛 .wasm 檔路徑（相對設定檔或絕對）。
+    pub plugin: String,
+    /// poll 間隔（秒），預設 60。
+    #[serde(default = "default_poll")]
+    pub poll_secs: u64,
+    /// 外掛設定區塊（**任意 TOML 內容**——薄外殼：結構由外掛自訂，obridge 不解讀，
+    /// 序列化成 JSON 字串經 `init(config)` 傳入外掛）。
+    #[serde(default)]
+    pub config: Option<toml::Value>,
 }
 
 fn default_source() -> String {
@@ -136,6 +153,9 @@ pub fn parse(toml_str: &str) -> anyhow::Result<Config> {
         if ch.channel_type == "email-imap" && ch.email_imap.is_none() {
             anyhow::bail!("通道 {}（email-imap）缺少 [channels.email_imap] 設定", ch.source);
         }
+        if ch.channel_type == "wasm" && ch.wasm.is_none() {
+            anyhow::bail!("通道 {}（wasm）缺少 [channels.wasm] 設定", ch.source);
+        }
     }
     Ok(cfg)
 }
@@ -196,6 +216,38 @@ pub(crate) mod tests {
              [channels.email_imap.smtp]\nhost = \"h\"\nusername = \"u\"\npassword = \"p\"\n"
         );
         assert!(parse(&dup).is_err(), "重複 source 應被拒");
+    }
+
+    /// wasm 通道：plugin＋任意設定區塊可解析；缺 [channels.wasm] 被拒。
+    #[test]
+    fn wasm_channel_parses_with_config_block() {
+        let cfg = parse(
+            r#"
+            [operoid]
+            ingress_url = "http://127.0.0.1:1/event"
+            ingress_secret = "s"
+            [listen]
+            port = 1
+            secret = "s"
+            [[channels]]
+            type = "wasm"
+            source = "slack"
+            [channels.wasm]
+            plugin = "plugins/slack-30.wasm"
+            [channels.wasm.config]
+            token = "xoxb-..."
+            channel-map = { ops = "Steve-TW" }
+            "#,
+        )
+        .unwrap();
+        let w = cfg.channels[0].wasm.as_ref().unwrap();
+        assert_eq!(w.plugin, "plugins/slack-30.wasm");
+        assert_eq!(w.poll_secs, 60);
+        assert_eq!(w.config.as_ref().unwrap()["token"].as_str(), Some("xoxb-..."));
+        // 缺 [channels.wasm] → 拒。
+        let bad = SAMPLE.replace(".email_imap", ".unused2");
+        let bad = bad.replace(".unused2.imap", ".email_imap.imap");
+        assert!(parse(&format!("{bad}\n[[channels]]\ntype = \"wasm\"\nsource = \"w\"\n")).is_err());
     }
 
     #[test]

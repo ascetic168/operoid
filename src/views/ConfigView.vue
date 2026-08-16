@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watchEffect } from "vue";
+import { computed, onMounted, reactive, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { Save, AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
-import { formatError, tL10n, type AppConfig } from "@/lib/tauri";
+import { formatError, tL10n, type AppConfig, obridgeConfigLoad, obridgeConfigSave } from "@/lib/tauri";
 import { LANGUAGE_OPTIONS } from "@/i18n/languageConfig";
 
 const config = useConfigStore();
@@ -210,10 +210,43 @@ async function saveApp() {
   }
 }
 
+// ---- Obridge 設定代管（原始文字編輯；路徑未設定時顯示提示而非區塊內容）----
+const obridgeText = ref("");
+const obridgeAvailable = ref(false);
+const obridgeNeedPath = ref(false);
+const obridgeError = ref<string | null>(null);
+const obridgeSaved = ref(false);
+
+async function loadObridge() {
+  obridgeError.value = null;
+  obridgeSaved.value = false;
+  try {
+    obridgeText.value = await obridgeConfigLoad();
+    obridgeAvailable.value = true;
+    obridgeNeedPath.value = false;
+  } catch (e) {
+    obridgeAvailable.value = false;
+    obridgeNeedPath.value = String(e).includes("obridge.noConfigPath");
+    if (!obridgeNeedPath.value) obridgeError.value = formatError(e);
+  }
+}
+
+async function saveObridge() {
+  obridgeError.value = null;
+  obridgeSaved.value = false;
+  try {
+    await obridgeConfigSave(obridgeText.value);
+    obridgeSaved.value = true;
+  } catch (e) {
+    obridgeError.value = formatError(e);
+  }
+}
+
+onMounted(loadObridge);
+
 async function onLocaleChange(v: string) {
   try {
-    await config.setLocale(v || null);
-  } catch (e) {
+    await config.setLocale(v || null);  } catch (e) {
     appError.value = formatError(e);
   }
 }
@@ -500,6 +533,42 @@ async function onLocaleChange(v: string) {
           <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
         </span>
       </div>
+    </section>
+
+    <!-- Obridge 設定代管（原始文字編輯——Operoid 只當編輯器，不解讀內容） -->
+    <section class="mt-6 rounded-xl border border-border bg-card/40 p-5">
+      <h2 class="mb-2 text-sm font-semibold">{{ $t("configView.obridgeTitle") }}</h2>
+      <p class="mb-3 text-xs text-muted-foreground">{{ $t("configView.obridgeDesc") }}</p>
+      <p v-if="obridgeNeedPath" class="text-xs text-muted-foreground">
+        {{ $t("configView.obridgeNeedPath") }}
+      </p>
+      <template v-else-if="obridgeAvailable">
+        <textarea
+          v-model="obridgeText"
+          class="h-72 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
+          spellcheck="false"
+        />
+        <div class="mt-3 flex items-center gap-3">
+          <button
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            @click="saveObridge"
+          >
+            <Save :size="14" /> {{ $t("common.save") }}
+          </button>
+          <button
+            class="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:opacity-80"
+            @click="loadObridge"
+          >
+            <RefreshCw :size="13" /> {{ $t("configView.obridgeReload") }}
+          </button>
+          <span v-if="obridgeError" class="text-xs text-destructive">{{ obridgeError }}</span>
+          <span v-else-if="obridgeSaved" class="flex items-center gap-1 text-xs text-green-500">
+            <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
+            {{ $t("configView.obridgeRestartNote") }}
+          </span>
+        </div>
+      </template>
+      <p v-else-if="obridgeError" class="text-xs text-destructive">{{ obridgeError }}</p>
     </section>
   </div>
 </template>

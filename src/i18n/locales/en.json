@@ -299,6 +299,11 @@
     "autoSyncLabel": "Auto commit + sync after factory write",
     "noPullLabel": "Add --no-pull to sync (recommended for brains with no remote)",
     "agentOsLabel": "Enable Agent-OS (employee templates/instances)",
+    "obridgeTitle": "Obridge (Operoid Bridge) settings",
+    "obridgeDesc": "Edit the raw obridge.toml (Email/IM channel credentials, routing). Operoid acts only as an editor and does not interpret the content.",
+    "obridgeNeedPath": "Obridge config path not set — add \"obridge_config_path\": \"<path to obridge.toml>\" to app_config in app-settings.json, then restart.",
+    "obridgeReload": "Reload",
+    "obridgeRestartNote": "(restart obridge to apply changes)",
     "languageLabel": "Interface language",
     "languageAuto": "Auto-detect (system language)"
   },

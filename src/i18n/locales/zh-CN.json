@@ -299,6 +299,11 @@
     "autoSyncLabel": "工厂写档后自动 commit + sync",
     "noPullLabel": "sync 加 --no-pull（无 remote 的脑建议开）",
     "agentOsLabel": "启用 Agent-OS（员工模板／实体管理）",
+    "obridgeTitle": "Obridge（Operoid Bridge）设置",
+    "obridgeDesc": "直接编辑 obridge.toml 原始内容（Email／IM 通道账号、路由映射）。Operoid 只当编辑器，不解读内容。",
+    "obridgeNeedPath": "尚未设置 Obridge 设置文件路径——请在 app-settings.json 的 app_config 加 \"obridge_config_path\": \"<obridge.toml 路径>\" 后重启。",
+    "obridgeReload": "重新加载",
+    "obridgeRestartNote": "（变更需重启 obridge 才生效）",
     "languageLabel": "界面语言",
     "languageAuto": "自动侦测（系统语言）"
   },

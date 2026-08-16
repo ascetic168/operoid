@@ -113,33 +113,64 @@ pub struct WasmChannel {
     component: wasmtime::component::Component,
     /// KV 持久化檔（每外掛一個：<plugin-name>-kv.json）。
     kv_path: std::path::PathBuf,
-    /// poll 間隔（秒，由外掛目錄慣例：檔名 `<source>-<poll_secs>.wasm`？否則預設 60）。
+    /// poll 間隔（秒）。
     poll_secs: u64,
     source: String,
+    /// 外掛設定（JSON 字串——`obridge.toml` 的 [[channels]] 設定區塊序列化；
+    /// 每次實例化經 `init(config)` 傳入。薄外殼：結構由外掛自訂）。
+    config_json: String,
 }
 
 impl WasmChannel {
-    /// 載入單一 .wasm。
-    pub async fn load(wasm_path: &Path, poll_secs: u64, kv_dir: &Path) -> anyhow::Result<Self> {
+    /// 載入單一 .wasm。`config_json`：外掛設定（無 → "{}"）。
+    pub async fn load(
+        wasm_path: &Path,
+        poll_secs: u64,
+        kv_dir: &Path,
+        config_json: Option<String>,
+    ) -> anyhow::Result<Self> {
         let engine = wasmtime::Engine::default();
         let component = wasmtime::component::Component::from_file(&engine, wasm_path)?;
         let name = wasm_path.file_stem().unwrap_or_default().to_string_lossy();
         let kv_path = kv_dir.join(format!("{name}-kv.json"));
-        // 讀 source 標籤（呼叫一次 source()）。
-        let (source, component) = {
-            let mut store = wasmtime::Store::new(&engine, PluginHost::new(Some(kv_path.clone())));
-            let mut linker = wasmtime::component::Linker::new(&engine);
-            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        operoid::obridge::host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |h| h)?;
-            let bindings = ChannelPlugin::instantiate_async(&mut store, &component, &linker)
-                .await?;
-            let s = bindings
-                .operoid_obridge_channel()
-                .call_source(&mut store)
-                .await?;
-            (s, component)
+        let config_json = config_json.unwrap_or_else(|| "{}".into());
+        let mut ch = Self {
+            engine,
+            component,
+            kv_path,
+            poll_secs,
+            source: String::new(),
+            config_json,
         };
-        Ok(Self { engine, component, kv_path, poll_secs, source })
+        // 讀 source 標籤（呼叫一次 source()——驗證外掛可用）。
+        let (mut store, bindings) = ch.instantiate().await?;
+        ch.source = bindings
+            .operoid_obridge_channel()
+            .call_source(&mut store)
+            .await?;
+        Ok(ch)
+    }
+
+    /// 實例化（新 store＋linker）並以 `init(config)` 注入設定。
+    /// 外掛實例是短命的（每次 poll/send 新建）——init 必須冪等，設定經 kv 持久化由外掛自理。
+    async fn instantiate(
+        &self,
+    ) -> anyhow::Result<(
+        wasmtime::Store<PluginHost>,
+        ChannelPlugin,
+    )> {
+        let mut store =
+            wasmtime::Store::new(&self.engine, PluginHost::new(Some(self.kv_path.clone())));
+        let mut linker = wasmtime::component::Linker::new(&self.engine);
+        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+        operoid::obridge::host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |h| h)?;
+        let bindings =
+            ChannelPlugin::instantiate_async(&mut store, &self.component, &linker).await?;
+        bindings
+            .operoid_obridge_channel()
+            .call_init(&mut store, &self.config_json)
+            .await?;
+        Ok((store, bindings))
     }
 }
 
@@ -159,12 +190,7 @@ impl Channel for WasmChannel {
     }
 
     async fn send(&self, to: &str, employee_id: &str, text: &str) -> anyhow::Result<()> {
-        let mut store = wasmtime::Store::new(&self.engine, PluginHost::new(Some(self.kv_path.clone())));
-        let mut linker = wasmtime::component::Linker::new(&self.engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        operoid::obridge::host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |h| h)?;
-        let bindings =
-            ChannelPlugin::instantiate_async(&mut store, &self.component, &linker).await?;
+        let (mut store, bindings) = self.instantiate().await?;
         bindings
             .operoid_obridge_channel()
             .call_send(&mut store, to, employee_id, text)
@@ -176,12 +202,7 @@ impl Channel for WasmChannel {
 impl WasmChannel {
     /// 一輪 poll（獨立方法供測試）。
     pub async fn poll_once(&self, tx: &mpsc::Sender<InboundEvent>) -> anyhow::Result<usize> {
-        let mut store = wasmtime::Store::new(&self.engine, PluginHost::new(Some(self.kv_path.clone())));
-        let mut linker = wasmtime::component::Linker::new(&self.engine);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        operoid::obridge::host::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |h| h)?;
-        let bindings =
-            ChannelPlugin::instantiate_async(&mut store, &self.component, &linker).await?;
+        let (mut store, bindings) = self.instantiate().await?;
         let events = bindings
             .operoid_obridge_channel()
             .call_poll(&mut store)
@@ -231,7 +252,7 @@ pub async fn load_all(
             .and_then(|(_, secs)| secs.parse().ok())
             .filter(|&s| s > 0 && s <= 3600)
             .unwrap_or(60);
-        match WasmChannel::load(&path, poll_secs, plugins_dir).await {
+        match WasmChannel::load(&path, poll_secs, plugins_dir, None).await {
             Ok(ch) => {
                 eprintln!(
                     "[obridge] 外掛載入：{}（source={}，poll={poll_secs}s）",
@@ -258,15 +279,30 @@ mod tests {
     async fn example_plugin_roundtrip() {
         let wasm = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/wasm32-wasip2/debug/obridge_plugin_example.wasm");
-        let kv_dir = std::env::temp_dir();
-        let ch = WasmChannel::load(&wasm, 60, &kv_dir).await.expect("載入範例外掛");
+        let kv_dir = std::env::temp_dir().join(format!(
+            "obridge-plugin-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&kv_dir).unwrap();
+        let ch = WasmChannel::load(
+            &wasm,
+            60,
+            &kv_dir,
+            Some(r#"{"greet-name":"測試員"}"#.into()),
+        )
+        .await
+        .expect("載入範例外掛");
         assert_eq!(ch.source(), "echo");
         let (tx, mut rx) = mpsc::channel(10);
         let n = ch.poll_once(&tx).await.unwrap();
         assert_eq!(n, 1, "echo 外掛首輪 poll 應產一則事件");
         let ev = rx.recv().await.unwrap();
         assert_eq!(ev.source, "echo");
-        assert!(!ev.title.is_empty());
+        assert!(ev.content.contains("測試員"), "init 傳入的設定應生效：{}", ev.content);
         // send 往返（echo 外掛回 Ok）。
         ch.send("echo:msg:x", "Steve-TW", "測試").await.unwrap();
     }

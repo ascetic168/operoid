@@ -127,6 +127,11 @@ pub struct AppConfig {
     /// outbound bridge 共用密鑰（`Authorization: Bearer <secret>`）；有設才帶。
     #[serde(default)]
     pub event_outbound_secret: Option<String>,
+    /// Obridge（Operoid Bridge）設定檔 `obridge.toml` 的路徑。`None`（預設）→ 設定頁
+    /// 不顯示 Obridge 區塊。設定後，設定頁可讀寫該檔（原始文字——Operoid 只當編輯器，
+    /// 不解讀內容；通道帳密屬 bridge 職責，契約「抉擇二」）。obridge 需重啟才套用變更。
+    #[serde(default)]
+    pub obridge_config_path: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -262,6 +267,7 @@ impl Default for AppConfig {
             event_ingress_secret: None,
             event_outbound_url: None,
             event_outbound_secret: None,
+            obridge_config_path: None,
         };
         cfg.normalize();
         cfg

@@ -43,6 +43,11 @@ interface channel {
 
     /// source 標籤（註冊鍵——send 分派依 SendPayload.source 反查）。
     source: func() -> string;
+    /// 初始化：host 於每次實例化後、任何其他呼叫前，傳入該通道實例的設定
+    /// （`obridge.toml` 的 `[[channels]]` 設定區塊序列化成的 JSON 字串——薄外殼：
+    /// 設定結構由外掛自訂，obridge 不解讀內容）。未設定的外掛收到 "{}"。
+    /// 應冪等（每次實例化都會呼叫）。
+    init: func(config: string);
     /// 取一批新事件（host 以 poll 間隔呼叫；空清單＝無新事）。
     poll: func() -> result<list<inbound-event>, string>;
     /// 外發一則訊息（`to` 為外掛自訂錨點或明示目標）。

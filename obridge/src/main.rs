@@ -89,6 +89,42 @@ async fn run(cfg: config::Config, state_dir: std::path::PathBuf) {
                 );
                 registry.register(ch).expect("source 標籤唯一（啟動已檢查）");
             }
+            "wasm" => {
+                let w = ch_cfg
+                    .wasm
+                    .as_ref()
+                    .expect("wasm 通道設定（啟動已檢查）");
+                // plugin 路徑：絕對路徑照用；相對路徑相對於設定檔目錄。
+                let plugin_path = std::path::Path::new(&w.plugin);
+                let plugin_path = if plugin_path.is_absolute() {
+                    plugin_path.to_path_buf()
+                } else {
+                    state_dir.join(plugin_path)
+                };
+                let config_json: Option<String> = match w.config.as_ref().map(serde_json::to_string)
+                {
+                    Some(Ok(s)) => Some(s),
+                    Some(Err(e)) => {
+                        eprintln!(
+                            "[obridge] 通道 {} 設定序列化失敗（以空設定載入）：{e}",
+                            ch_cfg.source
+                        );
+                        None
+                    }
+                    None => None,
+                };
+                let ch: Arc<dyn Channel> = Arc::new(
+                    core::plugins::WasmChannel::load(
+                        &plugin_path,
+                        w.poll_secs,
+                        &state_dir,
+                        config_json,
+                    )
+                    .await
+                    .expect("wasm 外掛載入"),
+                );
+                registry.register(ch).expect("source 標籤唯一（啟動已檢查）");
+            }
             other => eprintln!("[obridge] 未知通道類型 {other}（source={}）——跳過", ch_cfg.source),
         }
     }
