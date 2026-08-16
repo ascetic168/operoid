@@ -1,0 +1,33 @@
+[package]
+name = "obridge"
+version = "0.1.0"
+edition = "2021"
+description = "Obridge — Operoid Bridge: channel modules (email now, IM via WASM plugins) bridging external messaging into Operoid's event ingress"
+license = "MIT"
+
+[[bin]]
+name = "obridge"
+path = "src/main.rs"
+
+[dependencies]
+ocontract = { path = "../ocontract" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+axum = "0.8"
+reqwest = { version = "0.12", features = ["json"] }
+toml = "0.8"
+percent-encoding = "2"
+async-trait = "0.1"
+chrono = "0.4"
+# email channel（內建 native）
+imap = { version = "3.0.0-alpha.15", default-features = false, features = ["rustls-tls"] }
+
+mail-parser = "0.9"
+lettre = { version = "0.11", default-features = false, features = ["tokio1", "tokio1-rustls-tls", "smtp-transport", "builder"] }
+wasmtime = { version = "47.0.3", features = ["component-model"] }
+wasmtime-wasi = "47.0.3"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,10 @@
+[package]
+name = "ocontract"
+version = "0.1.0"
+edition = "2021"
+description = "Operoid shared event/bridge contract types (no Tauri, no tokio)"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

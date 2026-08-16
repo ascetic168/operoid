@@ -1,0 +1,12 @@
+[package]
+name = "obridge-plugin-example"
+version = "0.1.0"
+edition = "2021"
+description = "Example WASM channel plugin for Obridge (echo channel) — build with --target wasm32-wasip2"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.46"

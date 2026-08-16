@@ -1,0 +1,52 @@
+# Obridge 設定範本——複製為 obridge.toml 後填入值。
+# 啟動：obridge（自動找 cwd／exe 目錄的 obridge.toml）或 obridge --config <path>
+
+# ── 進氣：Operoid 的 POST /event 進氣口 ─────────────────────────────
+# 對應 Operoid app-settings.json 的 event_ingress_port / event_ingress_secret
+[operoid]
+ingress_url = "http://127.0.0.1:17341/event"
+ingress_secret = "operoid-ingress-secret"
+
+# ── 出氣：Obridge 的 send endpoint（Operoid 的 event_outbound_url 指向這裡）──
+# 僅綁 127.0.0.1。Operoid 端設 event_outbound_url = "http://127.0.0.1:17401/send"、
+# event_outbound_secret = 下面的 secret。
+[listen]
+port = 17401
+secret = "obridge-send-secret"
+
+# ── 通道實例（可多個；source 標籤需唯一）─────────────────────────────
+[[channels]]
+type = "email-imap"
+source = "email"             # 契約的 source 標籤（錨點前綴也用它）
+[channels.email_imap]
+poll_secs = 60               # poll 間隔（秒）
+# state_file = "email-state.json"  # 去重狀態檔（預設與設定檔同目錄）
+
+[channels.email_imap.imap]
+host = "imap.corp.com"
+port = 993                   # 預設 993（implicit TLS）
+username = "bot@corp.com"
+password = "app-password"    # 建議用 app password（v1 不支援 OAuth）
+folder = "INBOX"
+
+[channels.email_imap.smtp]
+host = "smtp.corp.com"
+port = 465                   # 465=implicit TLS；587=STARTTLS
+username = "bot@corp.com"
+password = "app-password"
+subject = "Operoid"          # 外寄預設主旨（thread 靠 In-Reply-To 維持）
+
+# 路由：收件地址（比對 To/Cc）→ 員工。一信可命中多員工（各投一事件）。
+[[channels.email_imap.routes]]
+address = "steve@corp.com"
+employee = "Steve-TW"
+# 或路由到腦（喚醒共用此腦的全部員工）：
+# [[channels.email_imap.routes]]
+# address = "team@corp.com"
+# brain = "demo"
+
+# 寄件身分：員工 → From 地址（缺此條目的員工以 smtp.username 寄出）。
+[[channels.email_imap.senders]]
+employee = "Steve-TW"
+address = "steve@corp.com"
+name = "Steve（Operoid）"

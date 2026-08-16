@@ -31,3 +31,4 @@ src-tauri/target/
 # Docs（情境劇本、圖片、內部待處理清單——不共享）
 docs/
 
+/target/

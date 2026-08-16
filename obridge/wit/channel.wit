@@ -1,0 +1,55 @@
+package operoid:obridge@0.1.0;
+
+/// Obridge 通道外掛介面（WASM component model）。
+///
+/// 分工原則（Hybrid 架構）：HTTP API 類通道（Slack/Teams/LINE、Microsoft Graph、Gmail API）
+/// 用 host 的泛用 `http-request` 即可完整實作——這是外掛體系的甜蜜點；**刻意不提供
+/// TCP/TLS 原語**（IMAP/SMTP 這類原始協定走 obridge 內建 native 模組）。
+
+/// host 提供的能力（沙箱邊界——外掛只能經這些觸碰外界）。
+interface host {
+    record http-request {
+        method: string,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<string>,
+    }
+    record http-response {
+        status: u16,
+        body: string,
+    }
+    /// 泛用 HTTP 請求（10s timeout）。body 以 UTF-8 傳遞（JSON API 通道夠用）。
+    make-request: func(req: http-request) -> result<http-response, string>;
+    /// 簡單 KV（外掛的持久化——去重鍵、游標等；host 落地為 JSON 檔）。
+    kv-get: func(key: string) -> option<string>;
+    kv-set: func(key: string, value: string);
+    /// 現在時間（epoch seconds）。
+    clock-now: func() -> u64;
+}
+
+/// 外掛需實作的通道行為。
+interface channel {
+    /// 進氣事件（與 ocontract::InboundEvent 欄位對映——薄外殼）。
+    record inbound-event {
+        source: string,
+        brain-id: option<string>,
+        employee-id: option<string>,
+        title: string,
+        content: string,
+        external-ref: option<string>,
+        occurred-at: option<string>,
+        reply-to: option<string>,
+    }
+
+    /// source 標籤（註冊鍵——send 分派依 SendPayload.source 反查）。
+    source: func() -> string;
+    /// 取一批新事件（host 以 poll 間隔呼叫；空清單＝無新事）。
+    poll: func() -> result<list<inbound-event>, string>;
+    /// 外發一則訊息（`to` 為外掛自訂錨點或明示目標）。
+    send: func(to: string, employee-id: string, text: string) -> result<_, string>;
+}
+
+world channel-plugin {
+    import host;
+    export channel;
+}
