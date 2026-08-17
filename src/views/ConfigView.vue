@@ -229,7 +229,9 @@ async function loadObridge() {
     obridgeNeedPath.value = false;
   } catch (e) {
     obridgeAvailable.value = false;
-    obridgeNeedPath.value = String(e).includes("obridge.noConfigPath");
+    // AppError 是物件（{code, params}）——以 code 判別「未設定路徑」的指引情境。
+    const code = e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
+    obridgeNeedPath.value = code.includes("obridge.noConfigPath");
     if (!obridgeNeedPath.value) obridgeError.value = formatError(e);
   }
 }
