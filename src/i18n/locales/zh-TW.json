@@ -337,9 +337,9 @@
     "obridgeRestartNote": "（通道設定會熱重載；listen/operoid 變更由自動重啟套用）",
     "languageLabel": "介面語言",
     "languageAuto": "自動偵測（系統語言）",
-    "obridgeAutostartLabel": "Operoid 啟動時自動帶起 Obridge 子進程（關閉時帶走；存檔後自動重啟）",
-    "obridgeExeLabel": "obridge 執行檔路徑（autostart 用）",
-    "obridgePathLabel": "obridge.toml 設定檔路徑（設定頁代管用）",
+    "obridgeAutostartLabel": "Operoid 啟動時自動帶起 Obridge 子進程（找不到執行檔請在下方填路徑）",
+    "obridgeExeLabel": "obridge 執行檔路徑（留空＝自動偵測 Operoid 執行檔同目錄）",
+    "obridgePathLabel": "obridge.toml 路徑（留空＝預設 app-data/obridge/obridge.toml）",
     "obridgeExePlaceholder": "例：C:\\tools\\obridge.exe"
   },
   "brainsView": {

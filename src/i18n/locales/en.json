@@ -337,9 +337,9 @@
     "obridgeRestartNote": "(channel settings hot-reload; listen/operoid changes apply via auto-restart)",
     "languageLabel": "Interface language",
     "languageAuto": "Auto-detect (system language)",
-    "obridgeAutostartLabel": "Start Obridge as a child process with Operoid (killed on exit; auto-restarted after save)",
-    "obridgeExeLabel": "obridge executable path (for autostart)",
-    "obridgePathLabel": "obridge.toml path (for the settings panel)",
+    "obridgeAutostartLabel": "Start Obridge as a child process with Operoid (fill the path below if the executable isn't found)",
+    "obridgeExeLabel": "obridge executable path (empty = auto-detect next to the Operoid executable)",
+    "obridgePathLabel": "obridge.toml path (empty = default app-data/obridge/obridge.toml)",
     "obridgeExePlaceholder": "e.g. C:\\tools\\obridge.exe"
   },
   "brainsView": {
