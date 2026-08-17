@@ -17,8 +17,31 @@ use tokio::sync::mpsc;
 use core::channel::{Channel, Registry};
 use core::config;
 
+/// 預設範本（單一來源：與 src-tauri 的 obridge_cfg 共享同一份檔案）。
+const TEMPLATE: &str = include_str!("../config.example.toml");
+
 fn main() {
     let cfg_path = find_config_path();
+    // 首次使用：檔案不存在 → 產生範本並提示編輯（範本是可跑的骨架，但帳號是佔位值，
+    // 直接跑只會 poll 失敗重試——提示使用者先填比較友善）。
+    if !cfg_path.exists() {
+        if let Some(dir) = cfg_path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(&cfg_path, TEMPLATE) {
+            Ok(()) => {
+                eprintln!(
+                    "未找到設定檔——已產生範本：{}。請編輯（帳號／路由）後重新啟動。",
+                    cfg_path.display()
+                );
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("產生範本失敗（{}）：{e}", cfg_path.display());
+                std::process::exit(1);
+            }
+        }
+    }
     let toml_str = match std::fs::read_to_string(&cfg_path) {
         Ok(s) => s,
         Err(e) => {

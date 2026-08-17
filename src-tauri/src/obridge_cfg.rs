@@ -25,10 +25,32 @@ fn resolve_path(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
         .ok_or_else(|| AppError::new("obridge.noConfigPath"))
 }
 
-/// 讀 obridge.toml 原始內容。
+/// 預設範本（單一來源：obridge crate 的 config.example.toml——兩 crate 共享同一份）。
+const TEMPLATE: &str = include_str!("../../obridge/config.example.toml");
+
+/// 設定檔不存在或**空** → 複製範本到該路徑（含父目錄建立）。回傳是否已產生。
+fn ensure_config_file(path: &std::path::Path) -> std::io::Result<bool> {
+    let empty = std::fs::read_to_string(path)
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true); // 讀不到（不存在）視同空
+    if !empty {
+        return Ok(false);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, TEMPLATE)?;
+    Ok(true)
+}
+
+/// 讀 obridge.toml 原始內容。檔案不存在或空 → 先自動複製範本到該路徑（使用者設完
+/// `obridge_config_path` 重啟後，設定頁直接看到可編輯的範本，不必手動建立檔案）。
 #[tauri::command]
 pub fn obridge_config_load(app: AppHandle) -> Result<String, AppError> {
     let path = resolve_path(&app)?;
+    ensure_config_file(&path).map_err(|e| {
+        AppError::new(format!("obridge.writeFailed: {} ({e})", path.display()))
+    })?;
     std::fs::read_to_string(&path)
         .map_err(|e| AppError::new(format!("obridge.readFailed: {} ({e})", path.display())))
 }
@@ -108,6 +130,8 @@ fn spawn(app: &AppHandle) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// 原子寫往返：save → load 讀回一致；暫存檔不留。
     #[test]
     fn save_then_load_roundtrip() {
@@ -123,6 +147,34 @@ mod tests {
             .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
         assert!(!tmp.exists(), "暫存檔應已改名消失");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ensure_config_file：不存在／空 → 複製範本（含父目錄）；有內容 → 不動。
+    #[test]
+    fn ensure_config_file_seeds_template() {
+        let dir = std::env::temp_dir().join(format!(
+            "operoid-obridge-seed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        let path = dir.join("nested").join("obridge.toml"); // 父目錄也不存在
+        // 不存在 → 產生範本（含父目錄）。
+        assert!(ensure_config_file(&path).unwrap());
+        let seeded = std::fs::read_to_string(&path).unwrap();
+        assert!(seeded.contains("[operoid]"), "應為範本內容");
+        assert!(seeded.contains("[channels.email_imap.imap]"));
+        // 空檔 → 也重灌範本。
+        std::fs::write(&path, "   \n").unwrap();
+        assert!(ensure_config_file(&path).unwrap());
+        assert!(std::fs::read_to_string(&path).unwrap().contains("[operoid]"));
+        // 有內容 → 不覆蓋。
+        std::fs::write(&path, "[operoid]\ningress_url = \"x\"\n").unwrap();
+        assert!(!ensure_config_file(&path).unwrap());
+        assert!(std::fs::read_to_string(&path).unwrap().contains("x"));
         std::fs::remove_dir_all(&dir).ok();
     }
 }
