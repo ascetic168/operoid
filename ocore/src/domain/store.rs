@@ -444,9 +444,9 @@ pub fn next_id(base: &str, existing: &[String]) -> String {
     }
 }
 
-/// 由名稱 slug 衍生唯一 id（重用 [`crate::converters::slug::slugify`]；保留 CJK）。
+/// 由名稱 slug 衍生唯一 id（重用 [`crate::slug::slugify`]；保留 CJK）。
 pub fn id_from_name(name: &str, existing: &[String]) -> String {
-    let base = crate::converters::slug::slugify(name, "entity");
+    let base = crate::slug::slugify(name, "entity");
     next_id(&base, existing)
 }
 

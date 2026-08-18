@@ -180,7 +180,7 @@ pub async fn text_to_page(
         raw.to_string()
     };
     let user = format!("來源類型：{factory}\n\n文件內容：\n{trimmed}\n\n請只回傳 JSON 物件。");
-    let resp = llm::complete(endpoint, cfg, &system, &user).await?;
+    let resp = llm::complete(endpoint, &cfg.llm_sampling(), &system, &user).await?;
     let json = strip_fence(&resp);
     let sp: StructuredPage =
         serde_json::from_str(&json).context(format!("LLM JSON 解析失敗；原始回應：{resp}"))?;
@@ -207,7 +207,7 @@ async fn extract_names(body: &str, cfg: &AppConfig, endpoint: &LlmEndpoint) -> R
 只列專有名詞（可作為實體的人名/公司名）；不要職稱、一般名詞、代名詞、日期、數字。\
 不要修改原文。沒有就給空陣列。";
     let user = format!("文字：\n{body}\n\n請只回傳 JSON 物件。");
-    let resp = llm::complete(endpoint, cfg, system, &user).await?;
+    let resp = llm::complete(endpoint, &cfg.llm_sampling(), system, &user).await?;
     let json = strip_fence(&resp);
     let names: NameLists =
         serde_json::from_str(&json).context(format!("名字 JSON 解析失敗；原始：{resp}"))?;

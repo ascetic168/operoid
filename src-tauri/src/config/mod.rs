@@ -6,7 +6,9 @@
 //! 設定頁的 model 編輯指令（set_gbrain_model 等）走 CLI，provider_base_url 編輯走檔案。
 
 pub mod app_config;
-pub mod gbrain_config;
+// gbrain_config 已搬入 `ocore`（P1a，2026-08-18）；re-export 保持
+// `crate::config::gbrain_config::…` 與下方 `pub use` 路徑零改動。
+pub use ocore::gbrain_config;
 
 pub use app_config::{AppConfig, BrainEntry, DEFAULT_BRAIN_ID, SUPPORTED_LOCALES};
 pub use gbrain_config::{LlmEndpoint, LoadedConfig};

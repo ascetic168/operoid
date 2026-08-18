@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "src-tauri",
+    "ocore",
     "ocontract",
     "obridge",
     "obridge-plugin-example",

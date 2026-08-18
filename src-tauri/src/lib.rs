@@ -2,27 +2,29 @@
 //!
 //! Domain modules: config (Phase 1), converters (Phase 2), gbrain_cli (Phase 3),
 //! llm + factories (Phase 4).
+//!
+//! 前後端分離 P1a（2026-08-18）：`domain`／`agent_state`／`llm`／`i18n` 已搬入
+//! `ocore`（純 Rust 核心 crate），此處以 re-export 保持 `crate::<mod>::…` 路徑零改動。
+//! `outbound` 同搬入，殼側留 `load_config(app)`（AppConfig 依賴）。
 
-mod agent_state;
 mod brains;
 mod classifier;
 mod claude_code;
 mod config;
 mod converters;
-mod domain;
 mod event_bus;
 mod factories;
 mod gbrain_cli;
 mod ingress_server;
-mod i18n;
-mod llm;
 mod note_server;
 mod obridge_cfg;
-pub mod outbound;
 mod note_view;
 mod prereq;
 mod runtime;
 mod scheduler;
+
+pub use ocore::{agent_state, domain, i18n, llm};
+pub mod outbound;
 
 use serde::Serialize;
 use tauri::Manager;

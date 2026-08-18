@@ -246,7 +246,7 @@ async fn classify_llm(
         只回傳一個 JSON 物件：{\"factory\":\"people|companies|meeting|projects|concepts|inbox\",\"confidence\":\"high|low\",\"reason\":\"一句話理由\"}。\n\
         規則：非常有把握才回 confidence=high，否則給 low。不要任何說明文字。";
     let user = format!("文件內容：\n{content}\n\n請只回傳 JSON 物件。");
-    match llm::complete(ep, cfg, system, &user).await {
+    match llm::complete(ep, &cfg.llm_sampling(), system, &user).await {
         Ok(resp) => match serde_json::from_str::<LlmVerdict>(&text_to_md::strip_fence(&resp)) {
             Ok(v) => FileClassification {
                 path: p.into(),

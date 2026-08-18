@@ -1625,7 +1625,7 @@ impl Reasoner for LlmReasoner {
         Box::pin(async move {
             // 並發節流：permit 滿則在此自動排隊等待；完成後隨 `_permit` drop 自動歸還。
             let _permit = permits.acquire().await.expect("llm semaphore closed");
-            let raw = llm::complete(&self.endpoint, &self.cfg, system, user).await?;
+            let raw = llm::complete(&self.endpoint, &self.cfg.llm_sampling(), system, user).await?;
             parse_json_value(&raw)
         })
     }
@@ -1827,7 +1827,7 @@ pub(crate) async fn run_commitments_for_employee<R: tauri::Runtime>(
         }
     };
     // 先清 Inbox（訊息／交接），再對每個 Active commitment 自主運行。
-    let outbound = OutboundConfig::load(app);
+    let outbound = crate::outbound::load_config(app);
     let _ = run_inbox(employee_id, &knowledge, Some(&reasoner), &ctx, &store, &outbound).await;
     let commitments = store.list_active_commitments_by_owner(employee_id)?;
     let budget = CycleBudget::default_session();

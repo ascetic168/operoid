@@ -3154,6 +3154,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocore"
+version = "0.2.7"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs 5.0.1",
+ "ocontract",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3232,6 +3247,7 @@ dependencies = [
  "futures",
  "log",
  "ocontract",
+ "ocore",
  "open",
  "pdf-extract",
  "percent-encoding",

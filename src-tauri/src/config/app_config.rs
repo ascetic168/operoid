@@ -180,6 +180,14 @@ fn brain_id_from_home(home: &str) -> String {
 }
 
 impl AppConfig {
+    /// LLM 採樣參數切片（P1a：`ocore::llm::complete` 不收 AppConfig，由此轉換）。
+    pub fn llm_sampling(&self) -> crate::llm::SamplingParams {
+        crate::llm::SamplingParams {
+            temperature: self.llm_temperature,
+            max_tokens: self.llm_max_tokens,
+        }
+    }
+
     /// 作用中腦。
     pub fn active_brain(&self) -> Option<&BrainEntry> {
         let id = self.active_brain_id.as_deref()?;

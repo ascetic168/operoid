@@ -6,7 +6,16 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{self, gbrain_config::LlmEndpoint, AppConfig};
+use crate::gbrain_config::{self, LlmEndpoint};
+
+/// LLM 採樣參數（`AppConfig` 的 `llm_temperature`／`llm_max_tokens` 切片，由呼叫端
+/// 組好傳入——ocore 不依賴 Tauri 側的 `AppConfig`；桌面殼以 `AppConfig::llm_sampling()`
+/// 轉換）。P1a 前的簽名直接收 `&AppConfig`。
+#[derive(Debug, Clone, Copy)]
+pub struct SamplingParams {
+    pub temperature: f64,
+    pub max_tokens: u32,
+}
 
 #[derive(Serialize)]
 struct ChatRequest<'a> {
@@ -39,14 +48,14 @@ struct ResponseMessage {
 
 /// 從環境變數取該 provider 的 API key（ollama 等回 None → 不帶 Authorization）。
 fn env_key_for(endpoint: &LlmEndpoint) -> Option<String> {
-    config::gbrain_config::env_key(&endpoint.provider)
+    gbrain_config::env_key(&endpoint.provider)
         .and_then(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
 }
 
 /// 呼叫一次 chat completion，回傳純文字回應。
 pub async fn complete(
     endpoint: &LlmEndpoint,
-    cfg: &AppConfig,
+    sampling: &SamplingParams,
     system: &str,
     user: &str,
 ) -> Result<String> {
@@ -60,8 +69,8 @@ pub async fn complete(
             Message { role: "system", content: system },
             Message { role: "user", content: user },
         ],
-        temperature: cfg.llm_temperature,
-        max_tokens: cfg.llm_max_tokens,
+        temperature: sampling.temperature,
+        max_tokens: sampling.max_tokens,
     };
 
     let client = reqwest::Client::builder()

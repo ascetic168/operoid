@@ -130,7 +130,7 @@ async fn scan_inbox<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
                     Some(r) => Some(r),
                     None => None,
                 };
-                let outbound = crate::outbound::OutboundConfig::load(app);
+                let outbound = crate::outbound::load_config(app);
                 if let Err(e) = run_inbox(&id, &tool, rref, &ctx, store, &outbound).await {
                     eprintln!("[scheduler] run_inbox({id}) failed: {e}");
                 }
