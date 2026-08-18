@@ -32,3 +32,4 @@ src-tauri/target/
 docs/
 
 /target/
+src-tauri/binaries/

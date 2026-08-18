@@ -57,3 +57,10 @@ OBRIDGE_SMTP_HOST=... OBRIDGE_SMTP_USER=... OBRIDGE_SMTP_PASS=... OBRIDGE_SMTP_T
   `"obridge_config_path": "<obridge.toml 路徑>"` → Operoid 啟動時帶起 obridge 子進程、
   退出時帶走；設定頁存檔後自動重啟子進程（讓 listen/operoid 變更也生效）。
   未開 autostart → obridge 由使用者自行管理。
+
+## 正式安裝檔
+
+`npm run tauri build` 會自動把 obridge 打包進安裝檔（`tauri.conf.json` 的
+`externalBin`＋`beforeBundleCommand` → `scripts/prepare-obridge.mjs` 建置 release 並
+複製為 `src-tauri/binaries/obridge-<triple>.exe`）。安裝後 obridge.exe 與 Operoid
+執行檔同目錄——autostart 的執行檔自動偵測直接命中（零設定）。
