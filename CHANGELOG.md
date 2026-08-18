@@ -13,6 +13,40 @@
 
 ---
 
+## [v0.2.7] - 2026-08-18
+
+### 前後端分離首步（ocore）＋ think 修復＋預設模型改正
+
+#### 主要變動
+
+- **P1a 抽取 `ocore` 核心 crate**（前後端分離計畫首片，`docs/Operoid-計畫-前後端分離.md`）
+  - 新 workspace member `ocore`：`domain/`、`agent_state`、`llm`、`outbound`、`i18n`＋`slug`／`gbrain_config`——**零 Tauri 依賴**，桌面殼與未來服務 binary（`oserver`）共用
+  - `src-tauri` 以 re-export 保持既有程式碼路徑零改動；介面微調三處（行為零變）
+  - 驗證：workspace 測試 137 全綠、0 warning、前端 build 0 error
+
+- **E9 補遺——OperationsView 手動 think 顯式傳 `--model`**
+  - E9 原修復只蓋 agent 路徑；手動 think 在 DB-plane models 未設時同樣 fallback 到 anthropic opus → synthesis skipped
+  - 比照修復：以作用中腦的 `chat_model` 顯式指定
+
+- **預設 chat model 改 `zhipu:glm-4-flash`**
+  - glm-5.x 全系為推理模型（回應含 `reasoning_content`），gbrain think synthesis 解析不相容（`LLM_OUTPUT_NOT_JSON` → 隨機空輸出；coding 端點還會把 5.2 映射成 5.3）
+  - glm-4-flash 非推理模型，標準與 coding 端點皆實證可用——新使用者開箱即用
+
+- **obridge 打包**：安裝檔內建 obridge（externalBin＋beforeBundleCommand 自動建置）＋ CI 修復
+
+## [v0.2.6] - 2026-08-17
+
+### Obridge（Email bridge）落地
+
+#### 主要變動
+
+- **E7 步驟 3——Obridge（Operoid Bridge）**：Email 雙向通道（IMAP 收＋SMTP 寄）＋WASM 外掛體系（wasmtime＋component model；HTTP 類通道如 Slack/Teams 未來走外掛）
+- **outbound v2（E12）**：完整 send Tool（tool-choice 編排）——外發統一為員工行動；對話回合 tool-loop（think/send/propose/finish）＋自主循環可主動通知
+- **obridge 生命週期**：設定檔熱重載（watch toml mtime）＋Operoid 子進程代管（opt-in autostart）；外掛設定傳遞（WIT `init(config)`）
+- **零設定**：路徑預設值＋執行檔自動偵測；設定檔為空時自動複製預設範本
+
+---
+
 ## [v0.2.5] - 2026-08-13
 
 ### 自主循環真實環境打通
