@@ -48,25 +48,7 @@ pub(crate) fn env_for_child(cfg: &config::AppConfig) -> Vec<(&'static str, std::
     env_for_brain(cfg.active_env_home())
 }
 
-/// 由顯式 home（GBRAIN_HOME 值；None=預設腦）組子行程環境。
-pub(crate) fn env_for_brain(home: Option<&str>) -> Vec<(&'static str, std::ffi::OsString)> {
-    let mut env: Vec<(&'static str, std::ffi::OsString)> = vec![("PYTHONUTF8", "1".into())];
-    if let Some(h) = home.map(str::trim).filter(|h| !h.is_empty()) {
-        env.push(("GBRAIN_HOME", h.into()));
-    }
-    env
-}
 
-/// 寬容解碼整段 buffer：UTF-8 優先，失敗退 BIG5(cp950)。
-pub(crate) fn decode_buf(bytes: &[u8]) -> String {
-    match std::str::from_utf8(bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            let (cow, _, _) = encoding_rs::BIG5.decode(bytes);
-            cow.into_owned()
-        }
-    }
-}
 
 /// 壓制 Windows console 子視窗。release build 為 GUI 子系統（見 `main.rs` 的
 /// `windows_subsystem = "windows"`），spawn 子行程時 Windows 會為其配置一個新 console，
@@ -74,25 +56,18 @@ pub(crate) fn decode_buf(bytes: &[u8]) -> String {
 ///
 /// `std::process::Command` 的 `creation_flags` 來自 std 的 `CommandExt` trait；
 /// `tokio::process::Command` 則是自帶 inherent method（且未實作 std 的 `CommandExt`），
-/// 故分兩個函式，無法用單一泛型涵蓋。
-#[cfg(windows)]
-pub(crate) fn no_console(cmd: &mut std::process::Command) {
-    use std::os::windows::process::CommandExt as _;
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-}
 
 #[cfg(not(windows))]
 #[allow(unused_variables)]
 pub(crate) fn no_console(cmd: &mut std::process::Command) {}
 
-/// 同上，給 `tokio::process::Command`（串流/捕獲子行程用）。
-#[cfg(windows)]
-pub(crate) fn no_console_async(cmd: &mut Command) {
-    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-}
 
 #[cfg(not(windows))]
 pub(crate) fn no_console_async(_cmd: &mut Command) {}
+
+// env_for_brain／decode_buf／no_console／no_console_async 已上移 ocore::proc（P1b），
+// 此處 re-export 保持 crate::gbrain_cli::* 呼叫端路徑零改動。
+pub(crate) use ocore::proc::{decode_buf, env_for_brain, no_console, no_console_async};
 
 /// 跑一個子行程並**捕獲**整段 stdout（不串流），回傳 (exit_code, stdout)。
 /// 給需要解析 JSON 輸出的指令（如 `sources list --json`）用。

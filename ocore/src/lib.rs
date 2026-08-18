@@ -9,9 +9,14 @@
 //! 路徑零改動。
 
 pub mod agent_state;
+pub mod runtime;
+pub mod scheduler;
+pub mod app_config;
 pub mod domain;
+pub mod event_bus;
 pub mod gbrain_config;
 pub mod i18n;
 pub mod llm;
 pub mod outbound;
+pub mod proc;
 pub mod slug;

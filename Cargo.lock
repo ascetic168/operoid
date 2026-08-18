@@ -3158,8 +3158,11 @@ name = "ocore"
 version = "0.2.7"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "dirs 5.0.1",
+ "encoding_rs",
+ "futures",
  "ocontract",
  "reqwest 0.12.28",
  "rusqlite",
