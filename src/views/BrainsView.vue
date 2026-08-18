@@ -32,7 +32,7 @@ const addName = ref("");
 const addHome = ref("");
 const addEm = ref("ollama:embeddinggemma");
 const addDim = ref(768);
-const addCm = ref("zhipu:glm-5.2");
+const addCm = ref("zhipu:glm-4-flash");
 const addNotesRepo = ref("");
 const addBusy = ref(false);
 const addError = ref<string | null>(null);
@@ -43,7 +43,7 @@ function openAdd() {
   addHome.value = "";
   addEm.value = "ollama:embeddinggemma";
   addDim.value = 768;
-  addCm.value = "zhipu:glm-5.2";
+  addCm.value = "zhipu:glm-4-flash";
   addNotesRepo.value = "";
   addError.value = null;
   addOpen.value = true;

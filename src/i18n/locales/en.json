@@ -297,7 +297,7 @@
     "unifyModelHint": "Apply a single model to chat + all four tiers (utility/reasoning/deep/subagent).",
     "mainModelTitle": "Main model (applies to all tiers)",
     "mainModelHint": "Writes chat_model + models.default/think + all four tiers to the DB plane via gbrain config set.",
-    "mainModelPh": "provider:model (e.g. zhipu:glm-5.2)",
+    "mainModelPh": "provider:model (e.g. zhipu:glm-4-flash)",
     "apply": "Apply",
     "tierUtility": "Utility (haiku-class: drift, synopsis)",
     "tierReasoning": "Reasoning (sonnet-class: think, chat, extraction)",

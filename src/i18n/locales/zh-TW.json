@@ -297,7 +297,7 @@
     "unifyModelHint": "把單一模型套用到 chat + 四個 tier（utility/reasoning/deep/subagent）。",
     "mainModelTitle": "主模型（套用至全部 tier）",
     "mainModelHint": "經 gbrain config set 寫入 chat_model + models.default/think + 四個 tier 到 DB plane。",
-    "mainModelPh": "provider:model（例如 zhipu:glm-5.2）",
+    "mainModelPh": "provider:model（例如 zhipu:glm-4-flash）",
     "apply": "套用",
     "tierUtility": "Utility（haiku 級：drift、摘要）",
     "tierReasoning": "Reasoning（sonnet 級：think、chat、抽取）",
