@@ -13,6 +13,35 @@
 
 ---
 
+## [v0.3.0] - 2026-08-19
+
+### 前後端分離完成——Operoid 成為常駐服務＋多前端架構
+
+P1–P5 五階段（計畫 `docs/Operoid-計畫-前後端分離.md`）全部落地。
+
+#### 主要變動
+
+- **`ocore` 核心 crate（P1）**：全部領域邏輯（domain／runtime／scheduler／event bus／
+  GBrain 能力域）脫離 Tauri——零 Tauri 依賴；`Channel<CliLine>` 串流改 `LineSink` 回呼
+- **`oserver` 服務 binary（P2–P4）**：axum HTTP API（agent-os 讀寫面＋GBrain 全域＋
+  ring buffer 主控台輪詢）；`AuthProvider` trait（token 首個實作——企業版帳號插座）；
+  bind-first＋healthz；SQLite 全走 spawn_blocking；per-brain 序列化待寫入面後續
+- **桌面前端切換 HTTP（P3–P4）**：agent-os 與 GBrain 全頁面經 `127.0.0.1:7340`（Bearer
+  token；CORS； wrappers 簽名不變、stores 零改動）——GUI 正式成為「諸多前端之一」
+- **服務註冊（P5）**：Windows SCM（UAC 自我提權；實機驗證）／Linux systemd user unit／
+  macOS launchd agent（後兩者 CI 編譯覆蓋、未實機驗證）；設定頁「開機自動啟動」開關
+- **生命週期雙語意**：服務已裝→開機自啟、GUI 關閉不影響（A1）；未裝→GUI 帶起帶走（A2）
+- **ingress 併入 oserver（P5）**：`POST /event`（token＋去重）——GUI 不開，obridge
+  投件不再掉；`ingress_server`／`event_bus` 殼層退役
+- **`src-tauri` 瘦身為殼**：視窗＋桌面專屬能力（claude_code／note_view／open dir）＋指令薄層
+
+#### 已知邊界
+
+- E13 員工封存語意、E8 fire-and-forget sync、SSE 串流——列於待處理清單
+- Linux/macOS 服務註冊未實機驗證（程式在、CI 編譯覆蓋）
+
+---
+
 ## [v0.2.7] - 2026-08-18
 
 ### 前後端分離首步（ocore）＋ think 修復＋預設模型改正

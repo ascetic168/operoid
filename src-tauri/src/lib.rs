@@ -12,10 +12,8 @@ mod classifier;
 mod claude_code;
 mod config;
 pub use ocore::converters;
-mod event_bus;
 mod factories;
 mod gbrain_cli;
-mod ingress_server;
 mod note_server;
 mod obridge_cfg;
 mod note_view;
@@ -77,6 +75,18 @@ fn server_info<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<serde_json
     server_proc::server_info(&app)
 }
 
+/// 安裝開機服務（A1：開機自啟；oserver install——帶入使用者資料目錄）。
+#[tauri::command]
+fn server_service_install<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), crate::i18n::AppError> {
+    server_proc::service_install(&app)
+}
+
+/// 移除開機服務（回到 A2：GUI 帶起／帶走）。
+#[tauri::command]
+fn server_service_uninstall() -> Result<(), crate::i18n::AppError> {
+    server_proc::service_uninstall()
+}
+
 /// 一次性 identifier 遷移（Emploid→Operoid）。
 ///
 /// Tauri 以 `tauri.conf.json` 的 `identifier` 決定 app-data 目錄名。改名後
@@ -131,6 +141,8 @@ pub fn run() {
             app_info,
             ping,
             server_info,
+            server_service_install,
+            server_service_uninstall,
             prereq::check_prerequisites,
             config::get_gbrain_config,
             config::save_gbrain_config_raw,
@@ -212,11 +224,8 @@ pub fn run() {
             // 供殘留 invoke 指令使用，並確保本地服務在跑（detached，GUI 退出不帶走）。
             scheduler::manage_state_only(app.handle().clone());
             server_proc::ensure_server(app.handle());
-            // E7：外部事件 ingress server（opt-in；port＋secret 皆有設才啟動）。
-            // 供外部 bridge（Email／IM／…）以 `POST /event` 投遞事件 → dispatch_event 喚醒員工。
-            if let Some(p) = ingress_server::start(app.handle().clone()) {
-                eprintln!("[ingress] 進氣口就緒：127.0.0.1:{p}/event");
-            }
+            // E7 ingress 已併入 oserver（P5）：`POST http://127.0.0.1:<server_port>/event`，
+            // Bearer＝server_token（obridge 的 [operoid] ingress_url/secret 指向之）。
             // Obridge 子進程代管（opt-in：obridge_autostart＋路徑/執行檔皆設）。
             // Operoid 啟動帶起、退出帶走；設定頁存檔後自動重啟（見 obridge_cfg）。
             obridge_cfg::autostart(app.handle());
@@ -228,6 +237,9 @@ pub fn run() {
             // 退出時帶走代管的 obridge 子進程（best-effort）。
             if matches!(event, tauri::RunEvent::Exit) {
                 obridge_cfg::kill_managed();
+                // A2 語意（P5）：GUI 帶起的 oserver 隨 GUI 退出帶走（服務已註冊者不在此列
+                // ——那顆不是我們 spawn 的）。未勾選服務的使用者預期「關 App 全關」。
+                server_proc::kill_spawned();
             }
         });
 }

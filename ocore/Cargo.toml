@@ -1,6 +1,6 @@
 [package]
 name = "ocore"
-version = "0.2.7"
+version = "0.3.0"
 edition = "2021"
 description = "Operoid 核心域 crate — Runtime/Store/Tools/GBrain 能力（零 Tauri 依賴）"
 authors = ["朱國棟 (Charlie Chu)"]

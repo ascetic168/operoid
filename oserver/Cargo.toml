@@ -1,12 +1,15 @@
 [package]
 name = "oserver"
-version = "0.2.7"
+version = "0.3.0"
 edition = "2021"
 description = "Operoid 服務 binary — axum HTTP API（前後端分離計畫 P2）"
 authors = ["朱國棟 (Charlie Chu)"]
 license = "MIT"
 
 [dependencies]
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+runas = "1"
 ocore = { path = "../ocore" }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }

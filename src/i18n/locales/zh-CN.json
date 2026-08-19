@@ -471,6 +471,12 @@
     "offline": "Operoid 本地服务未启动——请重新开启 App（会自动带起服务），或手动执行 oserver",
     "httpError": "本地服务通讯失败",
     "cfgFail": "读取本地服务设置失败",
-    "notReady": "本地服务初始化中，请稍后再试"
+    "notReady": "本地服务初始化中，请稍后再试",
+    "section": "本地服务（oserver）",
+    "running": "运行中",
+    "stopped": "未运行",
+    "serviceLabel": "开机自动启动 Operoid 服务",
+    "serviceOnHint": "服务已注册：开机自启，关闭 App 不影响运行（员工持续工作）。",
+    "serviceOffHint": "未注册：开启 App 时启动服务，关闭 App 时一并停止（后台不常驻）。"
   }
 }

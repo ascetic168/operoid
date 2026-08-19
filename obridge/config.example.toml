@@ -1,11 +1,12 @@
 # Obridge 設定範本——複製為 obridge.toml 後填入值。
 # 啟動：obridge（自動找 cwd／exe 目錄的 obridge.toml）或 obridge --config <path>
 
-# ── 進氣：Operoid 的 POST /event 進氣口 ─────────────────────────────
-# 對應 Operoid app-settings.json 的 event_ingress_port / event_ingress_secret
+# ── 進氣：Operoid（oserver）的 POST /event 進氣口 ────────────────────
+# P5 起 ingress 併入 oserver 主 port：url＝http://127.0.0.1:<server_port>/event、
+# secret＝app-settings.json 的 server_token（GUI 設定頁「本地服務」可見）。
 [operoid]
-ingress_url = "http://127.0.0.1:17341/event"
-ingress_secret = "operoid-ingress-secret"
+ingress_url = "http://127.0.0.1:7340/event"
+ingress_secret = "<app-settings.json 的 server_token>"
 
 # ── 出氣：Obridge 的 send endpoint（Operoid 的 event_outbound_url 指向這裡）──
 # 僅綁 127.0.0.1。Operoid 端設 event_outbound_url = "http://127.0.0.1:17401/send"、

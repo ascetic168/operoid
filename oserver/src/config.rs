@@ -16,6 +16,11 @@ pub struct DataDirs {
     pub db_dir: std::path::PathBuf,
 }
 
+/// 桌面預設兩目錄（Roaming 設定＋Local DB）。
+pub fn default_dirs() -> anyhow::Result<DataDirs> {
+    resolve_dirs(None)
+}
+
 pub fn resolve_dirs(override_dir: Option<&str>) -> anyhow::Result<DataDirs> {
     match override_dir {
         Some(d) => {

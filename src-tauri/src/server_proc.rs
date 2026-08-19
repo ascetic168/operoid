@@ -56,6 +56,20 @@ fn resolve_oserver(exe_hint: Option<&str>) -> Option<std::path::PathBuf> {
     None
 }
 
+/// GUI spawn 的 oserver 子進程（A2：GUI 退出帶走；服務模式那顆不經此——不殺）。
+static SPAWNED: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+
+/// 帶走 GUI spawn 的 oserver（RunEvent::Exit 呼叫；best-effort）。
+pub fn kill_spawned() {
+    if let Ok(mut g) = SPAWNED.lock() {
+        if let Some(mut child) = g.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("[server] 已帶走 GUI 代管的 oserver（pid {}）", child.id());
+        }
+    }
+}
+
 /// App 啟動時呼叫（lib.rs setup）：確保本地服務在跑。
 pub fn ensure_server<R: Runtime>(app: &AppHandle<R>) {
     let mut cfg = match app_config::load(app) {
@@ -101,16 +115,19 @@ pub fn ensure_server<R: Runtime>(app: &AppHandle<R>) {
     match cmd.spawn() {
         Ok(child) => {
             eprintln!(
-                "[server] 已啟動 oserver（pid {}，127.0.0.1:{port}）——GUI 退出不帶走（服務續跑）",
+                "[server] 已啟動 oserver（pid {}，127.0.0.1:{port}）——GUI 退出時帶走（A2；服務模式請用設定頁開關安裝）",
                 child.id()
             );
-            // child drop 不會 kill（detached 語意）。
+            // 記入 SPAWNED：A2 語意（GUI 退出帶走）。detached flags 使其不隨 console 關閉。
+            if let Ok(mut g) = SPAWNED.lock() {
+                *g = Some(child);
+            }
         }
         Err(e) => eprintln!("[server] 啟動 oserver 失敗：{e}"),
     }
 }
 
-/// `server_info` 指令主體：回 `{port, token, running}`（前端 HTTP 用）。
+/// `server_info` 指令主體：回 `{port, token, running, service_installed}`（前端 HTTP／設定頁用）。
 pub fn server_info<R: Runtime>(app: &AppHandle<R>) -> Result<serde_json::Value, crate::i18n::AppError> {
     let cfg = app_config::load(app).map_err(|e| {
         crate::i18n::AppError::new("server.cfgFail").p("detail", e.to_string())
@@ -121,7 +138,72 @@ pub fn server_info<R: Runtime>(app: &AppHandle<R>) -> Result<serde_json::Value, 
         "port": port,
         "token": cfg.server_token,
         "running": running,
+        "service_installed": service_installed(),
     }))
+}
+
+/// 服務是否已註冊（spawn `oserver status`——跨平台同一介面；失敗回 false）。
+pub fn service_installed() -> bool {
+    let Some(exe) = resolve_oserver(None) else { return false };
+    std::process::Command::new(exe)
+        .arg("status")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).parse::<serde_json::Value>().ok())
+        .and_then(|v| v.get("installed").and_then(|b| b.as_bool()))
+        .unwrap_or(false)
+}
+
+/// 解析桌面使用者的兩個資料目錄（install 參數用——服務行程以 LocalSystem 跑，
+/// 讀不到使用者 Roaming/Local，須明確帶入）。
+fn desktop_dirs<R: Runtime>(app: &AppHandle<R>) -> (String, String) {
+    use tauri::Manager;
+    let roaming = app
+        .path()
+        .app_config_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let local = app
+        .path()
+        .app_local_data_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    (roaming, local)
+}
+
+/// 安裝開機服務（設定頁開關 on）：spawn `oserver install --settings-dir … --db-dir …`。
+pub fn service_install<R: Runtime>(app: &AppHandle<R>) -> Result<(), crate::i18n::AppError> {
+    let Some(exe) = resolve_oserver(None) else {
+        return Err(crate::i18n::AppError::new("server.exeNotFound"));
+    };
+    let (roaming, local) = desktop_dirs(app);
+    let out = std::process::Command::new(exe)
+        .args(["install", "--settings-dir", &roaming, "--db-dir", &local])
+        .output()
+        .map_err(|e| crate::i18n::AppError::new("server.serviceFail").p("detail", e.to_string()))?;
+    if !out.status.success() {
+        return Err(crate::i18n::AppError::new("server.serviceFail")
+            .p("detail", String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    eprintln!("[server] 開機服務已安裝（A1）");
+    Ok(())
+}
+
+/// 移除開機服務（設定頁開關 off）。
+pub fn service_uninstall() -> Result<(), crate::i18n::AppError> {
+    let Some(exe) = resolve_oserver(None) else {
+        return Err(crate::i18n::AppError::new("server.exeNotFound"));
+    };
+    let out = std::process::Command::new(exe)
+        .arg("uninstall")
+        .output()
+        .map_err(|e| crate::i18n::AppError::new("server.serviceFail").p("detail", e.to_string()))?;
+    if !out.status.success() {
+        return Err(crate::i18n::AppError::new("server.serviceFail")
+            .p("detail", String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    eprintln!("[server] 開機服務已移除");
+    Ok(())
 }
 
 #[cfg(test)]

@@ -471,6 +471,12 @@
     "offline": "Operoid local service is not running — reopen the app (it auto-starts the service) or run oserver manually",
     "httpError": "Local service communication failed",
     "cfgFail": "Failed to load local service settings",
-    "notReady": "Local service is warming up, please retry"
+    "notReady": "Local service is warming up, please retry",
+    "section": "Local service (oserver)",
+    "running": "running",
+    "stopped": "stopped",
+    "serviceLabel": "Start Operoid service at boot",
+    "serviceOnHint": "Service installed: starts at boot; closing the app does not stop it (employees keep working).",
+    "serviceOffHint": "Not installed: the service starts and stops with the app (no background residence)."
   }
 }

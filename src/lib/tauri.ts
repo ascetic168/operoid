@@ -667,6 +667,21 @@ export const agentInboxSummary = (): Promise<InboxSummary> =>
 export const agentRecentEvents = (limit?: number): Promise<EventWithMeta[]> =>
   agentFetch<EventWithMeta[]>(`/api/events?limit=${limit ?? 50}`);
 
+// ---- 本地服務（oserver）狀態與服務開關（P5）----
+
+export interface ServerInfoExt {
+  port: number;
+  token: string | null;
+  running: boolean;
+  service_installed: boolean;
+}
+export const serverInfoExt = (): Promise<ServerInfoExt> =>
+  invoke<ServerInfoExt>("server_info");
+export const serverServiceInstall = (): Promise<void> =>
+  invoke<void>("server_service_install");
+export const serverServiceUninstall = (): Promise<void> =>
+  invoke<void>("server_service_uninstall");
+
 // ---- Obridge 設定代管（GUI 編輯 obridge.toml 原始文字；路徑由 AppConfig.obridge_config_path 決定）----
 export const obridgeConfigLoad = (): Promise<string> =>
   invoke<string>("obridge_config_load");

@@ -3,7 +3,16 @@ import { computed, onMounted, reactive, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { Save, AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
-import { formatError, tL10n, type AppConfig, obridgeConfigLoad, obridgeConfigSave } from "@/lib/tauri";
+import {
+  formatError,
+  tL10n,
+  type AppConfig,
+  obridgeConfigLoad,
+  obridgeConfigSave,
+  serverInfoExt,
+  serverServiceInstall,
+  serverServiceUninstall,
+} from "@/lib/tauri";
 import { LANGUAGE_OPTIONS } from "@/i18n/languageConfig";
 
 const config = useConfigStore();
@@ -198,6 +207,37 @@ const form = reactive<AppConfig>({
 watchEffect(() => {
   if (config.app) Object.assign(form, clone(config.app));
 });
+
+// 本地服務（oserver）狀態與開機服務開關（P5）。
+const server = reactive({ port: 0, running: false, installed: false, busy: false, error: null as string | null });
+async function loadServerInfo() {
+  try {
+    const info = await serverInfoExt();
+    server.port = info.port;
+    server.running = info.running;
+    server.installed = info.service_installed;
+    server.error = null;
+  } catch (e) {
+    server.error = formatError(e);
+  }
+}
+async function toggleService() {
+  server.busy = true;
+  server.error = null;
+  try {
+    if (server.installed) {
+      await serverServiceUninstall();
+    } else {
+      await serverServiceInstall();
+    }
+    await loadServerInfo();
+  } catch (e) {
+    server.error = formatError(e);
+  } finally {
+    server.busy = false;
+  }
+}
+onMounted(loadServerInfo);
 
 const appSaved = ref(false);
 const appError = ref<string | null>(null);
@@ -524,6 +564,27 @@ async function onLocaleChange(v: string) {
             <input v-model="form.agent_os_enabled" type="checkbox" />
             <span>{{ $t("configView.agentOsLabel") }}</span>
           </label>
+          <div class="rounded-md border border-border p-2 flex flex-col gap-1">
+            <div class="flex items-center gap-2 text-xs">
+              <span class="font-medium">{{ $t("server.section") }}</span>
+              <span :class="server.running ? 'text-green-600' : 'text-red-500'">
+                {{ server.running ? $t("server.running") : $t("server.stopped") }} · 127.0.0.1:{{ server.port }}
+              </span>
+            </div>
+            <label class="flex items-center gap-2">
+              <input
+                type="checkbox"
+                :checked="server.installed"
+                :disabled="server.busy"
+                @change="toggleService"
+              />
+              <span class="text-xs">{{ $t("server.serviceLabel") }}</span>
+            </label>
+            <p class="text-[11px] text-muted-foreground">
+              {{ server.installed ? $t("server.serviceOnHint") : $t("server.serviceOffHint") }}
+            </p>
+            <p v-if="server.error" class="text-[11px] text-red-500">{{ server.error }}</p>
+          </div>
           <label class="flex items-center gap-2">
             <input v-model="form.obridge_autostart" type="checkbox" />
             <span>{{ $t("configView.obridgeAutostartLabel") }}</span>

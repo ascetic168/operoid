@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::extract::{Path as AxPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use tower_http::cors::CorsLayer;
 use serde_json::json;
@@ -79,6 +79,9 @@ pub(crate) fn open_store(state: &ServerState) -> Result<SqliteStore, AppError> {
 pub fn router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        // E7 ingress（P5 併入）：外部事件投遞口——Bearer＝server token、
+        // (source, external_ref) 去重、dispatch_event 喚醒腦匹配員工。
+        .route("/event", post(api_event))
         .route("/api/state", get(api_state))
         .route("/api/employees", get(api_employees))
         .route("/api/templates", get(api_templates))
@@ -228,6 +231,51 @@ fn finish<T: serde::Serialize>(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+
+/// 外部事件投遞（原殼層 ingress_server，P5 併入）：
+/// 認證（server token）→ 去重（session 內 (source, external_ref) 首見）→ dispatch。
+/// 重複→`200 duplicate; ignored`；首見→`202 accepted`（喚醒為非同步，結果見 events）。
+async fn api_event(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    use ocore::agent_state::InboundEvent;
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let ev: InboundEvent = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"code": "ingress.badRequest", "params": {"detail": e.to_string()}})),
+            )
+                .into_response()
+        }
+    };
+    let Some(app_state) = state.agent_state.as_ref() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"code": "server.notReady"}))).into_response();
+    };
+    // 去重（session 內；重啟清空——bridge 應自追 last-seen）。
+    if let Some(ext_ref) = ev.external_ref.as_deref() {
+        if !app_state.is_new_external_ref(&ev.source, ext_ref) {
+            return (StatusCode::OK, Json(json!({"status": "duplicate; ignored"}))).into_response();
+        }
+    }
+    // dispatch（cfg 即時載——熱生效）。
+    let cfg = crate::config::load_config(&state.settings_dir);
+    let db_path = state.db_path.clone();
+    match ocore::event_bus::dispatch_event(app_state, &cfg, &db_path, ev).await {
+        Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "ingress.dispatchFail", "params": {"detail": e.to_string()}})),
         )
             .into_response(),
     }
