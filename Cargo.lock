@@ -3160,14 +3160,18 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "csv",
  "dirs 5.0.1",
  "encoding_rs",
  "futures",
  "ocontract",
+ "pdf-extract",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
 ]
 

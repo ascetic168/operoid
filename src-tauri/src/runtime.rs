@@ -567,7 +567,7 @@ pub async fn agent_run_team<R: tauri::Runtime>(
         let emp = store
             .get_employee(&a.employee_id)?
             .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &a.employee_id))?;
-        let entry = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)?;
+        let entry = app_config::brain_entry(&cfg, &emp.brain.brain_id)?;
         let chat_model = gbrain_config::load_for(entry.env_home())
             .ok()
             .and_then(|l| l.config.chat_model);
@@ -771,7 +771,7 @@ pub async fn agent_watch<R: tauri::Runtime>(
         .get_employee(&employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
     // 解析此員工腦的 chat_model（給對話頁顯示「回覆模型」用）。
-    let llm_model = crate::brains::brain_entry(&cfg, &emp.brain.brain_id)
+    let llm_model = app_config::brain_entry(&cfg, &emp.brain.brain_id)
         .ok()
         .and_then(|e| gbrain_config::load_for(e.env_home()).ok())
         .and_then(|lc| lc.config.chat_model.clone());

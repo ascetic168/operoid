@@ -18,6 +18,10 @@ reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
+pdf-extract = "0.7"
+csv = "1"
+serde_yaml = "0.9"
+regex = "1"
 
 [dev-dependencies]
 axum = "0.8"

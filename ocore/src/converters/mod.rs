@@ -10,6 +10,6 @@ pub mod csv_people;
 pub mod extract_companies;
 pub mod frontmatter;
 pub mod pdf_text;
-pub use ocore::slug;
+pub use crate::slug;
 pub mod text_to_md;
 pub mod wikilink;

@@ -11,7 +11,7 @@ mod brains;
 mod classifier;
 mod claude_code;
 mod config;
-mod converters;
+pub use ocore::converters;
 mod event_bus;
 mod factories;
 mod gbrain_cli;

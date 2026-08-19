@@ -246,9 +246,12 @@ async fn collect_roots<R: Runtime>(app: &AppHandle<R>, cfg: &config::AppConfig) 
         Some(id) if !id.is_empty() => id.to_string(),
         _ => return vec![notes_fallback],
     };
-    let sources = match brains::list_sources(app, &brain_id).await {
-        Ok(s) => s,
-        Err(_) => return vec![notes_fallback], // exe 缺/解析失敗 → 靜默退 fallback
+    let sources = match crate::config::app_config::load(app).ok() {
+        Some(c) => match brains::list_sources(&c, &brain_id).await {
+            Ok(s) => s,
+            Err(_) => return vec![notes_fallback], // exe 缺/解析失敗 → 靜默退 fallback
+        },
+        None => return vec![notes_fallback],
     };
 
     let mut roots: Vec<PathBuf> = Vec::new();

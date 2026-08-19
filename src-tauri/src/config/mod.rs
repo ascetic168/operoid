@@ -120,8 +120,7 @@ fn to_view_file_only(loaded: LoadedConfig) -> GBrainConfigView {
 /// 由 DB-plane（`gbrain config get`）補正 tier 值與來源。
 /// DB 有值 → 覆蓋 file 值，來源標 "db"，並記入 db_overrides（DB 一律視為覆寫，
 /// 因為它是權威、會蓋過 file plane——即使 file 無值，DB 有值就代表「GUI 直寫檔案無效」）。
-async fn enrich_with_db_plane<R: Runtime>(
-    app: &AppHandle<R>,
+async fn enrich_with_db_plane(
     exe: &str,
     home: Option<&str>,
     view: &mut GBrainConfigView,
@@ -129,7 +128,7 @@ async fn enrich_with_db_plane<R: Runtime>(
     let mut db_overrides = Vec::new();
     for tier in gbrain_config::TIER_NAMES {
         let key = format!("models.tier.{}", tier);
-        if let Ok(Some((value, _source))) = config_get(app, exe, home, &key).await {
+        if let Ok(Some((value, _source))) = config_get(exe, home, &key).await {
             // DB plane 有值 → 覆蓋 file-plane 殘值，來源標 db
             match *tier {
                 "utility" => {
@@ -180,7 +179,7 @@ pub async fn get_gbrain_config<R: Runtime>(
     let mut view = to_view_file_only(loaded);
     // 用 DB plane 補正 tier 有效值（gbrain runtime 優先讀 DB）
     if let Ok(exe) = exe_path_of(&app) {
-        enrich_with_db_plane(&app, &exe, home.as_deref(), &mut view).await;
+        enrich_with_db_plane( &exe, home.as_deref(), &mut view).await;
     }
     Ok(view)
 }
@@ -199,7 +198,7 @@ pub async fn set_gbrain_model<R: Runtime>(
     }
     let home = active_home(&app);
     let exe = exe_path_of(&app)?;
-    config_set(&app, &exe, home.as_deref(), &key, value.trim()).await
+    config_set(&exe, home.as_deref(), &key, value.trim()).await
 }
 
 /// 單一模型同步到全部 tier + chat_model + models.default/think（v0.42「勾選同步」用）。
@@ -225,7 +224,7 @@ pub async fn set_gbrain_models_all<R: Runtime>(
         "models.tier.subagent",
     ];
     for k in keys {
-        config_set(&app, &exe, home.as_deref(), k, model).await?;
+        config_set(&exe, home.as_deref(), k, model).await?;
     }
     Ok(())
 }
@@ -239,7 +238,7 @@ pub async fn unset_gbrain_model<R: Runtime>(
     validate_model_key(&key)?;
     let home = active_home(&app);
     let exe = exe_path_of(&app)?;
-    config_unset(&app, &exe, home.as_deref(), &key).await
+    config_unset(&exe, home.as_deref(), &key).await
 }
 
 /// 清除所有 DB-plane 的 model/tier 覆寫（`models.tier.*` + `models.default/think` + `chat_model`）。
@@ -249,10 +248,10 @@ pub async fn clear_db_overrides<R: Runtime>(app: AppHandle<R>) -> Result<(), App
     let home = active_home(&app);
     let exe = exe_path_of(&app)?;
     // 批次清 models.tier.*（pattern）
-    config_unset_pattern(&app, &exe, home.as_deref(), "models.tier").await?;
+    config_unset_pattern(&exe, home.as_deref(), "models.tier").await?;
     // chat_model / models.default / models.think 逐個 unset（冪等）
     for k in ["chat_model", "models.default", "models.think"] {
-        let _ = config_unset(&app, &exe, home.as_deref(), k).await;
+        let _ = config_unset(&exe, home.as_deref(), k).await;
     }
     Ok(())
 }
