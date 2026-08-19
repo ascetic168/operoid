@@ -11,6 +11,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, post};
 use axum::{Json, Router};
+use tower_http::cors::CorsLayer;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -39,6 +40,7 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/commitments/{id}/reject", post(api_reject))
         .route("/api/commitments/{id}/archive", post(api_archive))
         .route("/api/tasks/{id}/cancel", post(api_cancel_task))
+        .layer(CorsLayer::very_permissive())
 }
 
 /// ServerState 需要 AppState（寫入面喚醒）——routes::router 建立時注入。

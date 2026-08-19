@@ -12,6 +12,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use tower_http::cors::CorsLayer;
 use serde_json::json;
 
 use ocore::app_config::AppConfig;
@@ -68,6 +69,9 @@ pub(crate) fn open_store(state: &ServerState) -> Result<SqliteStore, AppError> {
     })
 }
 
+/// CORS：Tauri webview（tauri://localhost／http://tauri.localhost）與 vite dev
+/// （http://localhost:1420）對 127.0.0.1:7340 都是跨域——JSON POST 會發 OPTIONS
+/// 預檢。本機Only＋Bearer 認證在前，permissive 無風險（P2 計畫的 localhost 邊界）。
 pub fn router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -77,6 +81,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/employees/{id}/watch", get(api_watch))
         .route("/api/inbox", get(api_inbox))
         .route("/api/events", get(api_events))
+        .layer(CorsLayer::very_permissive())
         .with_state(state)
 }
 
