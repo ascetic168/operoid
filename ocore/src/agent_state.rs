@@ -105,6 +105,11 @@ impl AppState {
         let _ = self.event_tx.try_send(ev);
     }
 
+    /// 目前執行中的員工 id 清單（優雅關機時等 drain 用；P2）。
+    pub fn busy_ids(&self) -> Vec<String> {
+        self.busy.lock().expect("busy lock poisoned").iter().cloned().collect()
+    }
+
     /// 全域 LLM 並發 permit（節流「全部喚醒」的尖峰並發 LLM 呼叫；permit 滿則自動排隊等待）。
     pub fn llm_permits(&self) -> Arc<tokio::sync::Semaphore> {
         Arc::clone(&self.llm_permits)

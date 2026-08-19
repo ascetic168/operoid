@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "src-tauri",
     "ocore",
+    "oserver",
     "ocontract",
     "obridge",
     "obridge-plugin-example",

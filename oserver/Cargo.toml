@@ -1,0 +1,16 @@
+[package]
+name = "oserver"
+version = "0.2.7"
+edition = "2021"
+description = "Operoid 服務 binary — axum HTTP API（前後端分離計畫 P2）"
+authors = ["朱國棟 (Charlie Chu)"]
+license = "MIT"
+
+[dependencies]
+ocore = { path = "../ocore" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+dirs = "5"

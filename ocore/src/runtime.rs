@@ -3838,3 +3838,128 @@ pub async fn run_commitments_for_employee(
     }
     Ok(())
 }
+
+// ───────────────── 讀取面組裝（P2：殼 command 與 oserver handler 共用）─────────────────
+//
+// 介面只收 (&SqliteStore, &AppConfig)：不含任何 Tauri。`agent_os_enabled` 把關由
+// 呼叫端（殼 command / oserver handler）負責——組裝函式本身不檢查。
+
+/// 監看快照（`agent_watch`／`GET /api/employees/{id}/watch`）——state、Active
+/// commitments、待辦 tasks、近期 artifacts、memory、近期 events、messages。
+pub fn watch_payload(
+    cfg: &app_config::AppConfig,
+    store: &SqliteStore,
+    employee_id: &str,
+) -> Result<serde_json::Value, AppError> {
+    let emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    // 解析此員工腦的 chat_model（給對話頁顯示「回覆模型」用）。
+    let llm_model = app_config::brain_entry(cfg, &emp.brain.brain_id)
+        .ok()
+        .and_then(|e| gbrain_config::load_for(e.env_home()).ok())
+        .and_then(|lc| lc.config.chat_model.clone());
+    Ok(serde_json::json!({
+        "employee": emp,
+        "llm_model": llm_model,
+        "commitments": store.list_active_commitments_by_owner(employee_id)?,
+        "proposals": store
+            .list_commitments(&emp.workspace_id)?
+            .into_iter()
+            .filter(|c| c.owner_employee_id == employee_id && c.status == CommitmentStatus::Proposed)
+            .collect::<Vec<_>>(),
+        "tasks": store.list_assigned_tasks_by_owner(employee_id)?,
+        "resolved_commitments": store
+            .list_commitments(&emp.workspace_id)?
+            .into_iter()
+            .filter(|c| {
+                c.owner_employee_id == employee_id
+                    && matches!(c.status, CommitmentStatus::Satisfied | CommitmentStatus::Rejected)
+            })
+            .collect::<Vec<_>>(),
+        "completed_tasks": store.list_tasks_by_owner(employee_id, &[TaskStatus::Completed, TaskStatus::Cancelled])?,
+        "artifacts": store
+            .list_artifacts_by_producer(employee_id)?
+            .into_iter()
+            .rev()
+            .take(10)
+            .collect::<Vec<_>>(),
+        "memory": store.get_memory(employee_id)?,
+        "events": store.list_events_by_employee(employee_id, 20)?,
+        "messages": store.list_messages_by_employee(employee_id, 50)?,
+    }))
+}
+
+/// 收件匣摘要（`agent_inbox_summary`／`GET /api/inbox`）：跨 workspace 的 Proposed
+/// commitment（join 員工名）＋ Error/Paused 員工。
+pub fn inbox_summary_payload(store: &SqliteStore) -> Result<InboxSummary, AppError> {
+    let mut proposals = Vec::new();
+    for c in store.list_all_commitments()? {
+        if c.status == CommitmentStatus::Proposed {
+            let name = store
+                .get_employee(&c.owner_employee_id)?
+                .map(|e| e.name)
+                .unwrap_or_else(|| c.owner_employee_id.clone());
+            proposals.push(ProposedItem {
+                commitment_id: c.id,
+                title: c.title,
+                completion_condition: c.completion_condition,
+                employee_id: c.owner_employee_id,
+                employee_name: name,
+            });
+        }
+    }
+    let mut flagged_employees = Vec::new();
+    for e in store.list_all_employees()? {
+        if matches!(e.state, EmployeeState::Error | EmployeeState::Paused) {
+            flagged_employees.push(FlaggedItem {
+                employee_id: e.id.clone(),
+                employee_name: e.name,
+                state: format!("{:?}", e.state).to_lowercase(),
+            });
+        }
+    }
+    Ok(InboxSummary {
+        proposals,
+        flagged_employees,
+    })
+}
+
+/// 近期活動流（`agent_recent_events`／`GET /api/events`）：跨員工事件＋員工名。
+pub fn recent_events_payload(
+    store: &SqliteStore,
+    limit: usize,
+) -> Result<Vec<EventWithMeta>, AppError> {
+    let mut out = Vec::new();
+    for ev in store.list_recent_events(limit)? {
+        let name = store
+            .get_employee(&ev.employee_id)?
+            .map(|e| e.name)
+            .unwrap_or_else(|| ev.employee_id.clone());
+        out.push(EventWithMeta {
+            id: ev.id,
+            workspace_id: ev.workspace_id,
+            employee_id: ev.employee_id,
+            employee_name: name,
+            kind: ev.kind,
+            detail: ev.detail,
+            created_at: ev.created_at,
+        });
+    }
+    Ok(out)
+}
+
+/// Workspace 全景摘要（`agent_list_state`／`GET /api/state?workspace=`）。
+pub fn list_state_payload(
+    store: &SqliteStore,
+    workspace_id: &str,
+) -> Result<serde_json::Value, AppError> {
+    Ok(serde_json::json!({
+        "projects": store.list_projects(workspace_id)?,
+        "templates": store.list_templates(workspace_id)?,
+        "employees": store.list_employees(workspace_id)?,
+        "commitments": store.list_commitments(workspace_id)?,
+        "tasks": store.list_tasks(workspace_id)?,
+        "artifacts": store.list_artifacts(workspace_id)?,
+    }))
+}

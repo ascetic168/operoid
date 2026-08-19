@@ -3291,6 +3291,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oserver"
+version = "0.2.7"
+dependencies = [
+ "anyhow",
+ "axum",
+ "dirs 5.0.1",
+ "ocore",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ouroboros"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
