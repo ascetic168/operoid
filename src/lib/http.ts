@@ -46,19 +46,31 @@ export async function agentFetch<T>(
   if (!info.token) {
     throw { code: "server.offline" };
   }
-  let resp: Response;
-  try {
-    const { body, method } = init ?? {};
-    resp = await fetch(`http://127.0.0.1:${info.port}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${info.token}`,
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    // fetch 網路層失敗（服務未啟動／中途退出）
+  let resp: Response | null = null;
+  // 啟動競態緩解：GUI 剛帶起 oserver 時首次連線可能被拒——1s 後重試一次。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { body, method } = init ?? {};
+      resp = await fetch(`http://127.0.0.1:${info.port}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${info.token}`,
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+      break;
+    } catch {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      // 重試仍失敗：服務真的不在（未啟動／中途退出）
+      clearServerInfoCache();
+      throw { code: "server.offline" };
+    }
+  }
+  if (!resp) {
     clearServerInfoCache();
     throw { code: "server.offline" };
   }
