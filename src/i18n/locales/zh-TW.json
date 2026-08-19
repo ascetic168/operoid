@@ -466,5 +466,11 @@
   },
   "error": {
     "unexpected": "發生未預期錯誤：{detail}"
+  },
+  "server": {
+    "offline": "Operoid 本地服務未啟動——請重新開啟 App（會自動帶起服務），或手動執行 oserver",
+    "httpError": "本地服務通訊失敗",
+    "cfgFail": "讀取本地服務設定失敗",
+    "notReady": "本地服務初始化中，請稍後再試"
   }
 }

@@ -23,15 +23,17 @@ const isWindows = target.includes("windows");
 const ext = isWindows ? ".exe" : "";
 
 if (target === host) {
-  execSync("cargo build -p obridge --release", { stdio: "inherit" });
+  execSync("cargo build -p obridge -p oserver --release", { stdio: "inherit" });
 } else {
   console.log(`[obridge] cross build（host=${host} → target=${target}）`);
-  execSync(`cargo build -p obridge --release --target ${target}`, { stdio: "inherit" });
+  execSync(`cargo build -p obridge -p oserver --release --target ${target}`, { stdio: "inherit" });
 }
-const from = target === host
-  ? `target/release/obridge${ext}`
-  : `target/${target}/release/obridge${ext}`;
 mkdirSync("src-tauri/binaries", { recursive: true });
-const to = `src-tauri/binaries/obridge-${target}${ext}`;
-copyFileSync(from, to);
-console.log(`[obridge] 已準備 externalBin：${to}`);
+for (const name of ["obridge", "oserver"]) {
+  const from = target === host
+    ? `target/release/${name}${ext}`
+    : `target/${target}/release/${name}${ext}`;
+  const to = `src-tauri/binaries/${name}-${target}${ext}`;
+  copyFileSync(from, to);
+  console.log(`[${name}] 已準備 externalBin：${to}`);
+}

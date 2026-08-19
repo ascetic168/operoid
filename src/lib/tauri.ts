@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { agentFetch } from "@/lib/http";
 import i18n from "@/i18n";
 
 /** Rust `L10n`（代碼 + 具名參數；對應 src-tauri/src/i18n.rs）。 */
@@ -479,39 +480,54 @@ export interface IdResult {
 }
 
 export const agentEnsureWorkspace = (): Promise<{ workspace_id: string }> =>
-  invoke<{ workspace_id: string }>("agent_ensure_workspace");
+  agentFetch<{ workspace_id: string }>("/api/workspace/ensure", { method: "POST" });
 export const agentListTemplates = (workspaceId: string = AGENT_WS): Promise<EmployeeTemplate[]> =>
-  invoke<EmployeeTemplate[]>("agent_list_templates", { workspaceId });
+  agentFetch<EmployeeTemplate[]>(`/api/templates?workspace=${encodeURIComponent(workspaceId)}`);
 export const agentListEmployees = (workspaceId: string = AGENT_WS): Promise<Employee[]> =>
-  invoke<Employee[]>("agent_list_employees", { workspaceId });
+  agentFetch<Employee[]>(`/api/employees?workspace=${encodeURIComponent(workspaceId)}`);
 export const agentCreateTemplate = (
   name: string,
   brainId: string | null,
   role: string | null,
   workspaceId: string = AGENT_WS,
 ): Promise<{ template_id: string }> =>
-  invoke<{ template_id: string }>("agent_create_template", { workspaceId, name, brainId, role });
+  agentFetch<{ template_id: string }>("/api/templates", {
+    method: "POST",
+    body: { workspace_id: workspaceId, name, brain_id: brainId, role },
+  });
 export const agentDeployInstance = (
   templateId: string,
   instanceName: string,
 ): Promise<{ employee_id: string }> =>
-  invoke<{ employee_id: string }>("agent_deploy_instance", { templateId, instanceName });
+  agentFetch<{ employee_id: string }>("/api/employees/deploy", {
+    method: "POST",
+    body: { template_id: templateId, instance_name: instanceName },
+  });
 export const agentDeleteTemplate = (templateId: string): Promise<void> =>
-  invoke<void>("agent_delete_template", { templateId });
+  agentFetch<void>(`/api/templates/${encodeURIComponent(templateId)}`, { method: "DELETE" });
 export const agentDeleteEmployee = (employeeId: string): Promise<void> =>
-  invoke<void>("agent_delete_employee", { employeeId });
+  agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}`, { method: "DELETE" });
 export const agentRenameTemplate = (templateId: string, name: string): Promise<void> =>
-  invoke<void>("agent_rename_template", { templateId, name });
+  agentFetch<void>(`/api/templates/${encodeURIComponent(templateId)}`, {
+    method: "PATCH",
+    body: { name },
+  });
 export const agentRenameEmployee = (employeeId: string, name: string): Promise<void> =>
-  invoke<void>("agent_rename_employee", { employeeId, name });
+  agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}`, {
+    method: "PATCH",
+    body: { name },
+  });
 export const agentSendMessage = (
   employeeId: string,
   text: string,
   commitmentId: string | null = null,
 ): Promise<{ task_id: string }> =>
-  invoke<{ task_id: string }>("agent_send_message", { employeeId, text, commitmentId });
+  agentFetch<{ task_id: string }>(`/api/employees/${encodeURIComponent(employeeId)}/messages`, {
+    method: "POST",
+    body: { text, commitment_id: commitmentId },
+  });
 export const agentClearMessages = (employeeId: string): Promise<void> =>
-  invoke<void>("agent_clear_messages", { employeeId });
+  agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}/messages`, { method: "DELETE" });
 export interface WatchSnapshot {
   employee: Employee;
   llm_model: string | null;
@@ -534,27 +550,26 @@ export interface WatchSnapshot {
   }[];
 }
 export const agentWatch = (employeeId: string): Promise<WatchSnapshot> =>
-  invoke<WatchSnapshot>("agent_watch", { employeeId });
+  agentFetch<WatchSnapshot>(`/api/employees/${encodeURIComponent(employeeId)}/watch`);
 export const agentCreateCommitment = (
   employeeId: string,
   title: string,
   completionCondition: string,
 ): Promise<{ commitment_id: string }> =>
-  invoke<{ commitment_id: string }>("agent_create_commitment", {
-    employeeId,
-    title,
-    completionCondition,
+  agentFetch<{ commitment_id: string }>("/api/commitments", {
+    method: "POST",
+    body: { employee_id: employeeId, title, completion_condition: completionCondition },
   });
 export const agentSatisfyCommitment = (commitmentId: string): Promise<void> =>
   invoke<void>("agent_satisfy_commitment", { commitmentId });
 export const agentApproveCommitment = (commitmentId: string): Promise<void> =>
-  invoke<void>("agent_approve_commitment", { commitmentId });
+  agentFetch<void>(`/api/commitments/${encodeURIComponent(commitmentId)}/approve`, { method: "POST" });
 export const agentRejectCommitment = (commitmentId: string): Promise<void> =>
-  invoke<void>("agent_reject_commitment", { commitmentId });
+  agentFetch<void>(`/api/commitments/${encodeURIComponent(commitmentId)}/reject`, { method: "POST" });
 export const agentArchiveCommitment = (commitmentId: string): Promise<void> =>
-  invoke<void>("agent_archive_commitment", { commitmentId });
+  agentFetch<void>(`/api/commitments/${encodeURIComponent(commitmentId)}/archive`, { method: "POST" });
 export const agentCancelTask = (taskId: string): Promise<void> =>
-  invoke<void>("agent_cancel_task", { taskId });
+  agentFetch<void>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
 
 // ── 動詞軌：跨員工聚合（頂列鈴鐺／待辦／事件頁用）──
 export interface ProposedItem {
@@ -583,9 +598,9 @@ export interface EventWithMeta {
   created_at: string;
 }
 export const agentInboxSummary = (): Promise<InboxSummary> =>
-  invoke<InboxSummary>("agent_inbox_summary");
+  agentFetch<InboxSummary>("/api/inbox");
 export const agentRecentEvents = (limit?: number): Promise<EventWithMeta[]> =>
-  invoke<EventWithMeta[]>("agent_recent_events", { limit: limit ?? 50 });
+  agentFetch<EventWithMeta[]>(`/api/events?limit=${limit ?? 50}`);
 
 // ---- Obridge 設定代管（GUI 編輯 obridge.toml 原始文字；路徑由 AppConfig.obridge_config_path 決定）----
 export const obridgeConfigLoad = (): Promise<string> =>

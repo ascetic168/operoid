@@ -29,22 +29,27 @@ pub struct ServerState {
     pub cfg: AppConfig,
     pub db_path: PathBuf,
     pub ready: Arc<std::sync::atomic::AtomicBool>,
+    /// scheduler 的 AppState（寫入面喚醒用；初始化完成後注入——warming 期 None → 503）。
+    pub agent_state: Option<ocore::agent_state::AppState>,
 }
 
 /// 統一錯誕回應：`AppError` → JSON＋status 映射。
-fn err_response(e: &AppError) -> Response {
+pub(crate) fn err_response(e: &AppError) -> Response {
     // AppError 序列化形狀與桌面 IPC 一致（code＋params），前端錯誤鍵可直接沿用。
     let body = serde_json::to_value(e).unwrap_or_else(|_| json!({"code": "server.internal"}));
     let status = match e.code.as_str() {
-        "agent_os.employeeNotFound" | "agent_os.templateNotFound" => StatusCode::NOT_FOUND,
-        "agent_os.disabled" => StatusCode::SERVICE_UNAVAILABLE,
+        "agent_os.employeeNotFound" | "agent_os.templateNotFound" | "agent_os.commitmentNotFound"
+        | "agent_os.taskNotFound" => StatusCode::NOT_FOUND,
+        "agent_os.employeeBusy" => StatusCode::CONFLICT, // busy-lock 快速回絕（API 契約）
+        "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
+        "agent_os.invalidTransition" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, Json(body)).into_response()
 }
 
 /// 認證中介：所有 /api/* 走此處（/healthz 在 router 層免認證）。
-fn require_auth(state: &ServerState, headers: &HeaderMap) -> Result<(), Response> {
+pub(crate) fn require_auth(state: &ServerState, headers: &HeaderMap) -> Result<(), Response> {
     let h = headers.get("authorization").and_then(|v| v.to_str().ok());
     match state.auth.check(h) {
         Ok(_) => Ok(()),
@@ -57,7 +62,7 @@ fn require_auth(state: &ServerState, headers: &HeaderMap) -> Result<(), Response
 }
 
 /// 開 store（handler 內先認證、再進 spawn_blocking 開連線）。
-fn open_store(state: &ServerState) -> Result<SqliteStore, AppError> {
+pub(crate) fn open_store(state: &ServerState) -> Result<SqliteStore, AppError> {
     SqliteStore::open(&state.db_path).map_err(|e| {
         AppError::new("server.dbOpenFail").p("detail", e.to_string())
     })

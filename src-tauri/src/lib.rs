@@ -22,6 +22,7 @@ mod note_view;
 mod prereq;
 mod runtime;
 mod scheduler;
+mod server_proc;
 
 pub use ocore::{agent_state, domain, i18n, llm};
 pub mod outbound;
@@ -68,6 +69,12 @@ fn app_info() -> AppInfo {
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
+}
+
+/// 本地服務資訊（P3 前端 HTTP 用）：{port, token, running}。token 不出本機。
+#[tauri::command]
+fn server_info<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<serde_json::Value, crate::i18n::AppError> {
+    server_proc::server_info(&app)
 }
 
 /// 一次性 identifier 遷移（Emploid→Operoid）。
@@ -123,6 +130,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info,
             ping,
+            server_info,
             prereq::check_prerequisites,
             config::get_gbrain_config,
             config::save_gbrain_config_raw,
@@ -200,8 +208,10 @@ pub fn run() {
             // 渲染為按需（僅瀏覽器請求時），不寫磁碟檔案。
             let port = note_server::start(app.handle().clone());
             app.manage(note_server::NoteServer { port });
-            // Phase 6：啟動 Runtime 排程器（常駐 task，依 Trigger 喚醒員工）。
-            scheduler::start(app.handle().clone());
+            // P3 分離：runtime（排程器）改由 oserver 擁有——GUI 只注入 AppState
+            // 供殘留 invoke 指令使用，並確保本地服務在跑（detached，GUI 退出不帶走）。
+            scheduler::manage_state_only(app.handle().clone());
+            server_proc::ensure_server(app.handle());
             // E7：外部事件 ingress server（opt-in；port＋secret 皆有設才啟動）。
             // 供外部 bridge（Email／IM／…）以 `POST /event` 投遞事件 → dispatch_event 喚醒員工。
             if let Some(p) = ingress_server::start(app.handle().clone()) {

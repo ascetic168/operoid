@@ -2,7 +2,7 @@
 //! （P2–P4 過渡期決策——零設定重複、與桌面行為完全一致；`operoid.toml` 於 P5
 //! 設定遷移時定形）。檔案格式為 tauri-plugin-store 的 JSON：`{"app_config": {...}}`。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use ocore::app_config::AppConfig;
 

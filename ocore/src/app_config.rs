@@ -137,6 +137,19 @@ pub struct AppConfig {
     /// obridge 執行檔路徑（autostart 用）。
     #[serde(default)]
     pub obridge_executable: Option<String>,
+    /// 本地服務（oserver）自動帶起（P3）：GUI 啟動時 healthz 無回應則 spawn（detached——
+    /// GUI 退出**不帶走**，服務續跑：分離核心價值）。預設 true。
+    #[serde(default = "default_true")]
+    pub server_autostart: bool,
+    /// 本地服務 port（oserver 監聽 127.0.0.1）。預設 7340。
+    #[serde(default = "default_server_port")]
+    pub server_port: u16,
+    /// 本地服務 shared token（前端 HTTP 認證用）。None → 殼層首次自動生成並保存。
+    #[serde(default)]
+    pub server_token: Option<String>,
+    /// oserver 執行檔路徑（代管用；缺省 → 自動偵測：app exe 同目錄 → dev 的 target/debug）。
+    #[serde(default)]
+    pub server_executable: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -147,6 +160,9 @@ fn default_temp() -> f64 {
 }
 fn default_llm_concurrency() -> usize {
     4
+}
+fn default_server_port() -> u16 {
+    7340
 }
 fn default_max_tokens() -> u32 {
     4096
@@ -283,6 +299,10 @@ impl Default for AppConfig {
             obridge_config_path: None,
             obridge_autostart: false,
             obridge_executable: None,
+            server_autostart: true,
+            server_port: default_server_port(),
+            server_token: None,
+            server_executable: None,
         };
         cfg.normalize();
         cfg

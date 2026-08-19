@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_state::AppState;
+use crate::agent_state::{AppState, WakeSignal};
 
 use crate::app_config;
 
@@ -29,9 +29,9 @@ use crate::domain::tools::ToolFuture;
 
 use crate::outbound::{send_external, OutboundConfig, SendOutcome, SendTool};
 
-use crate::domain::{id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, Commitment, CommitmentStatus, Employee, EmployeeState, Event, Memory, Message, MessageDirection, SqliteStore, Store, Task, TaskStatus, Tool, ToolCtx, ToolInput};
+use crate::domain::{id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus, Commitment, CommitmentStatus, Employee, EmployeeState, EmployeeTemplate, Event, Memory, Message, MessageDirection, SqliteStore, Store, Task, BrainRef, TaskStatus, Tool, ToolCtx, ToolInput, Workspace, WorkspaceStatus};
 #[cfg(test)]
-use crate::domain::{BrainRef, EmployeeTemplate, Project, ProjectStatus, Workspace, WorkspaceStatus};
+use crate::domain::{Project, ProjectStatus};
 
 use crate::domain::tools::{parse_json_value, Reasoner, ReasonerFuture, ToolOutput, ToolSpec};
 
@@ -3962,4 +3962,290 @@ pub fn list_state_payload(
         "tasks": store.list_tasks(workspace_id)?,
         "artifacts": store.list_artifacts(workspace_id)?,
     }))
+}
+
+// ───────────────── 寫入面核心（P3：殼 command 與 oserver handler 共用）─────────────────
+//
+// 介面收 (&SqliteStore, &AppState, ...)：不含任何 Tauri。`agent_os_enabled` 把關由
+// 呼叫端負責。需要「背景喚醒」者（create/approve commitment）以 `tokio::spawn` 跑
+// `run_commitments_for_employee`——與殼層 7a 語意一致（busy-lock 把關、非阻塞）。
+
+/// 冪等確保 `ws-default` workspace 存在（不建 employee-1）。回其 id。
+pub fn ensure_workspace_core(store: &SqliteStore) -> Result<WorkspaceResult, AppError> {
+    if store.get_workspace(AGENT_WS)?.is_none() {
+        store.put_workspace(&Workspace {
+            id: AGENT_WS.into(),
+            name: "Default".into(),
+            description: None,
+            status: WorkspaceStatus::Active,
+            created_at: now_rfc3339(),
+        })?;
+    }
+    Ok(WorkspaceResult {
+        workspace_id: AGENT_WS.into(),
+    })
+}
+
+/// 建立模板。`brain_id` 缺省 → cfg 作用中腦（否則預設腦）。
+pub fn create_template_core(
+    cfg: &app_config::AppConfig,
+    store: &SqliteStore,
+    workspace_id: &str,
+    name: &str,
+    brain_id: Option<&str>,
+    role: Option<&str>,
+) -> Result<TemplateResult, AppError> {
+    let brain_id = brain_id.map(str::to_string).unwrap_or_else(|| {
+        cfg.active_brain_id
+            .clone()
+            .unwrap_or_else(|| app_config::DEFAULT_BRAIN_ID.to_string())
+    });
+    let existing: Vec<String> = store
+        .list_templates(workspace_id)?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    let template_id = id_from_name(name, &existing);
+    store.put_template(&EmployeeTemplate {
+        id: template_id.clone(),
+        workspace_id: workspace_id.to_string(),
+        name: name.to_string(),
+        brain: BrainRef { brain_id },
+        role: role.map(str::to_string),
+        created_at: now_rfc3339(),
+    })?;
+    Ok(TemplateResult { template_id })
+}
+
+/// 刪除模板。
+pub fn delete_template_core(store: &SqliteStore, template_id: &str) -> Result<(), AppError> {
+    store.delete_template(template_id)?;
+    Ok(())
+}
+
+/// 重新命名模板。
+pub fn rename_template_core(
+    store: &SqliteStore,
+    template_id: &str,
+    name: &str,
+) -> Result<(), AppError> {
+    let mut t = store
+        .get_template(template_id)?
+        .ok_or_else(|| AppError::new("agent_os.templateNotFound").p("id", template_id))?;
+    t.name = name.to_string();
+    store.put_template(&t)?;
+    Ok(())
+}
+
+/// 刪除員工實體。
+pub fn delete_employee_core(store: &SqliteStore, employee_id: &str) -> Result<(), AppError> {
+    store.delete_employee(employee_id)?;
+    Ok(())
+}
+
+/// 重新命名員工實體（個別命名，如 Steve@TW）。
+pub fn rename_employee_core(
+    store: &SqliteStore,
+    employee_id: &str,
+    name: &str,
+) -> Result<(), AppError> {
+    let mut e = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    e.name = name.to_string();
+    store.put_employee(&e)?;
+    Ok(())
+}
+
+/// 投遞一則人類訊息：Message{In}（對話紀錄）＋ Inbox Task（Assigned）＋ wake。
+/// scheduler 的 scan_inbox/run_inbox 會消化——訊息無 commitment 也會被處理（6c）。
+pub fn send_message_core(
+    state: &AppState,
+    store: &SqliteStore,
+    employee_id: &str,
+    text: &str,
+    commitment_id: Option<&str>,
+) -> Result<SendMessageResult, AppError> {
+    let emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    let ws = emp.workspace_id.clone();
+    let existing: Vec<String> = store.list_tasks(&ws)?.into_iter().map(|t| t.id).collect();
+    let task_id = next_id("msg", &existing);
+    let now = now_rfc3339();
+    // Message{In}：對話紀錄（Ch.16）；與下面的 Task 是同一趟往返的兩面。
+    store.put_message(&Message {
+        id: fresh_id("msg-in"),
+        workspace_id: ws.clone(),
+        employee_id: employee_id.to_string(),
+        direction: MessageDirection::In,
+        text: text.to_string(),
+        source_commitment_id: commitment_id.map(str::to_string),
+        proposed_commitment_id: None,
+        artifact_id: None,
+        created_at: now.clone(),
+    })?;
+    // Task：給 scan_inbox／run_inbox 消化的工作項（喚醒員工）。
+    store.put_task(&Task {
+        id: task_id.clone(),
+        workspace_id: ws,
+        owner_employee_id: employee_id.to_string(),
+        objective: "Human message".into(),
+        input: text.to_string(),
+        status: TaskStatus::Assigned,
+        output_artifact_id: None,
+        commitment_id: commitment_id.map(str::to_string),
+        project_id: None,
+        external_reply_to: None,
+        external_source: None,
+        created_at: now,
+    })?;
+    // 推喚醒信號（best-effort；即便 channel 滿，下次 30s tick 也會掃到這個 Assigned task）。
+    state.wake(WakeSignal {
+        employee_id: employee_id.to_string(),
+        reason: "message".into(),
+    });
+    Ok(SendMessageResult { task_id })
+}
+
+/// 清除某員工的全部對話訊息（僅互動層；Artifact／Commitment／Event 不受影響）。
+pub fn clear_messages_core(store: &SqliteStore, employee_id: &str) -> Result<(), AppError> {
+    store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    store.clear_messages_by_employee(employee_id)?;
+    Ok(())
+}
+
+/// 交辦承諾（Created→Active）＋**背景立即喚醒**（7a：spawn run_commitments_for_employee，
+/// busy-lock 把關、非阻塞）。呼叫端（殼／oserver）負責 flag 檢查與 store 開啟。
+pub fn create_commitment_core(
+    state: &AppState,
+    cfg: &app_config::AppConfig,
+    db_path: &std::path::Path,
+    store: &SqliteStore,
+    employee_id: &str,
+    title: &str,
+    completion_condition: &str,
+) -> Result<CommitmentResult, AppError> {
+    let emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    let ws = emp.workspace_id.clone();
+    let wake_id = employee_id.to_string();
+    let now = now_rfc3339();
+    let commitment_id = id_from_name(title, &{
+        let mut v: Vec<String> = store
+            .list_commitments(&ws)?
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        v.sort();
+        v
+    });
+    store.put_commitment(&Commitment {
+        id: commitment_id.clone(),
+        workspace_id: ws,
+        owner_employee_id: employee_id.to_string(),
+        title: title.to_string(),
+        completion_condition: completion_condition.to_string(),
+        status: CommitmentStatus::Active,
+        created_at: now.clone(),
+        updated_at: now,
+    })?;
+    // 交辦後立即喚醒該員工跑承諾（背景、非阻塞；busy-lock 把關）。
+    let state2 = state.clone();
+    let cfg2 = cfg.clone();
+    let db2 = db_path.to_path_buf();
+    tokio::spawn(async move {
+        let _ = run_commitments_for_employee(&state2, &cfg2, &db2, &wake_id).await;
+    });
+    Ok(CommitmentResult { commitment_id })
+}
+
+/// 人類核可：Proposed → Active ＋ 喚醒該員工跑承諾（同 7a）。狀態守衛：僅 Proposed。
+pub fn approve_commitment_core(
+    state: &AppState,
+    cfg: &app_config::AppConfig,
+    db_path: &std::path::Path,
+    store: &SqliteStore,
+    commitment_id: &str,
+) -> Result<(), AppError> {
+    let mut com = store
+        .get_commitment(commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", commitment_id))?;
+    if com.status != CommitmentStatus::Proposed {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", commitment_id)
+            .p("from", format!("{:?}", com.status).to_lowercase())
+            .p("to", "active"));
+    }
+    com.status = CommitmentStatus::Active;
+    com.updated_at = now_rfc3339();
+    let emp_id = com.owner_employee_id.clone();
+    store.put_commitment(&com)?;
+    // 喚醒該員工跑承諾（同 7a 交辦後喚醒）。
+    let state2 = state.clone();
+    let cfg2 = cfg.clone();
+    let db2 = db_path.to_path_buf();
+    tokio::spawn(async move {
+        let _ = run_commitments_for_employee(&state2, &cfg2, &db2, &emp_id).await;
+    });
+    Ok(())
+}
+
+/// 人類拒絕：Proposed → Rejected。狀態守衛：僅 Proposed。
+pub fn reject_commitment_core(
+    store: &SqliteStore,
+    commitment_id: &str,
+) -> Result<(), AppError> {
+    let mut com = store
+        .get_commitment(commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", commitment_id))?;
+    if com.status != CommitmentStatus::Proposed {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", commitment_id)
+            .p("from", format!("{:?}", com.status).to_lowercase())
+            .p("to", "rejected"));
+    }
+    com.status = CommitmentStatus::Rejected;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    Ok(())
+}
+
+/// 人類封存：任意狀態 → Archived（軟刪除；資料保留可稽核）。已 Archived 拒絕重複封存。
+pub fn archive_commitment_core(
+    store: &SqliteStore,
+    commitment_id: &str,
+) -> Result<(), AppError> {
+    let mut com = store
+        .get_commitment(commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", commitment_id))?;
+    if com.status == CommitmentStatus::Archived {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", commitment_id)
+            .p("from", "archived")
+            .p("to", "archived"));
+    }
+    com.status = CommitmentStatus::Archived;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    Ok(())
+}
+
+/// 人類取消：活躍 task（Created/Assigned/InProgress）→ Cancelled（軟刪除）。
+pub fn cancel_task_core(store: &SqliteStore, task_id: &str) -> Result<(), AppError> {
+    let mut tk = store
+        .get_task(task_id)?
+        .ok_or_else(|| AppError::new("agent_os.taskNotFound").p("id", task_id))?;
+    if !matches!(tk.status, TaskStatus::Created | TaskStatus::Assigned | TaskStatus::InProgress) {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", task_id)
+            .p("from", format!("{:?}", tk.status).to_lowercase())
+            .p("to", "cancelled"));
+    }
+    tk.status = TaskStatus::Cancelled;
+    store.put_task(&tk)?;
+    Ok(())
 }

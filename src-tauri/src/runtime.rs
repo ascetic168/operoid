@@ -4,7 +4,7 @@
 
 pub use ocore::runtime::*;
 
-use crate::agent_state::{AppState, WakeSignal};
+use crate::agent_state::AppState;
 use crate::config::app_config;
 use crate::config::DEFAULT_BRAIN_ID;
 use crate::config::gbrain_config;
@@ -111,28 +111,9 @@ pub async fn agent_create_template<R: tauri::Runtime>(
         return Err(AppError::new("agent_os.disabled"));
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
-
-    let brain_id = brain_id.unwrap_or_else(|| {
-        cfg.active_brain_id
-            .clone()
-            .unwrap_or_else(|| DEFAULT_BRAIN_ID.to_string())
-    });
-    let existing: Vec<String> = store
-        .list_templates(&workspace_id)?
-        .into_iter()
-        .map(|t| t.id)
-        .collect();
-    let template_id = id_from_name(&name, &existing);
-    store.put_template(&EmployeeTemplate {
-        id: template_id.clone(),
-        workspace_id,
-        name,
-        brain: BrainRef { brain_id },
-        role,
-        created_at: now_rfc3339(),
-    })?;
-    Ok(TemplateResult { template_id })
+    create_template_core(&cfg, &store, &workspace_id, &name, brain_id.as_deref(), role.as_deref())
 }
+
 
 /// 從 Template 部署一個獨立 Instance。
 #[tauri::command]
@@ -183,19 +164,9 @@ pub async fn agent_ensure_workspace<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<WorkspaceResult, AppError> {
     let store = agent_store(&app)?;
-    if store.get_workspace(AGENT_WS)?.is_none() {
-        store.put_workspace(&Workspace {
-            id: AGENT_WS.into(),
-            name: "Default".into(),
-            description: None,
-            status: WorkspaceStatus::Active,
-            created_at: now_rfc3339(),
-        })?;
-    }
-    Ok(WorkspaceResult {
-        workspace_id: AGENT_WS.into(),
-    })
+    ensure_workspace_core(&store)
 }
+
 
 /// 列出某 workspace 的模板（typed）。
 #[tauri::command]
@@ -224,9 +195,9 @@ pub async fn agent_delete_template<R: tauri::Runtime>(
     template_id: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    store.delete_template(&template_id)?;
-    Ok(())
+    delete_template_core(&store, &template_id)
 }
+
 
 /// 刪除員工實體。
 #[tauri::command]
@@ -235,9 +206,9 @@ pub async fn agent_delete_employee<R: tauri::Runtime>(
     employee_id: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    store.delete_employee(&employee_id)?;
-    Ok(())
+    delete_employee_core(&store, &employee_id)
 }
+
 
 /// 重新命名模板。
 #[tauri::command]
@@ -247,13 +218,9 @@ pub async fn agent_rename_template<R: tauri::Runtime>(
     name: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    let mut t = store
-        .get_template(&template_id)?
-        .ok_or_else(|| AppError::new("agent_os.templateNotFound").p("id", &template_id))?;
-    t.name = name;
-    store.put_template(&t)?;
-    Ok(())
+    rename_template_core(&store, &template_id, &name)
 }
+
 
 /// 重新命名員工實體（個別命名，如 Steve@TW）。
 #[tauri::command]
@@ -263,13 +230,9 @@ pub async fn agent_rename_employee<R: tauri::Runtime>(
     name: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    let mut e = store
-        .get_employee(&employee_id)?
-        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
-    e.name = name;
-    store.put_employee(&e)?;
-    Ok(())
+    rename_employee_core(&store, &employee_id, &name)
 }
+
 
 /// 跑一輪 Employee 循環：載入 employee→解析腦→建 ToolCtx→run_cycle（gbrain think）。
 /// `commitment_id` 可選：綁定則此循環的 task／artifact 連到該長期責任。
@@ -312,7 +275,6 @@ pub async fn agent_run<R: tauri::Runtime>(
 /// 為單一員工執行「承諾驅動 session」：acquire busy-lock → 建 tool/ctx/reasoner → 先清 Inbox，
 /// 再對每個 Active commitment 跑 [`run_autonomous`]。供 `agent_create_commitment`（交辦後立即喚醒）
 
-/// 建立一個長期責任（Commitment）：Created→Active，擁有某 Employee，帶完成條件。
 #[tauri::command]
 pub async fn agent_create_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -320,44 +282,18 @@ pub async fn agent_create_commitment<R: tauri::Runtime>(
     title: String,
     completion_condition: String,
 ) -> Result<CommitmentResult, AppError> {
+    use tauri::Manager;
     let cfg = app_config::load(&app)?;
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
+    let state = app.state::<AppState>();
     let store = SqliteStore::open(agent_db_path(&app)?)?;
-
-    let emp = store
-        .get_employee(&employee_id)?
-        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
-    let ws = emp.workspace_id.clone();
-    let wake_id = employee_id.clone();
-    let now = now_rfc3339();
-    let commitment_id = id_from_name(&title, &{
-        let mut v: Vec<String> = store
-            .list_commitments(&ws)?
-            .into_iter()
-            .map(|c| c.id)
-            .collect();
-        v.sort();
-        v
-    });
-    store.put_commitment(&Commitment {
-        id: commitment_id.clone(),
-        workspace_id: ws,
-        owner_employee_id: employee_id,
-        title,
-        completion_condition,
-        status: CommitmentStatus::Active,
-        created_at: now.clone(),
-        updated_at: now,
-    })?;
-    // 交辦後立即喚醒該員工跑承諾（背景、非阻塞；busy-lock 把關）。
-    let app2 = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = run_commitments_for_employee(&app2, &wake_id).await;
-    });
-    Ok(CommitmentResult { commitment_id })
+    create_commitment_core(
+        &state, &cfg, &agent_db_path(&app)?, &store, &employee_id, &title, &completion_condition,
+    )
 }
+
 
 /// 手動標記一個 Commitment 已滿足（Satisfied）。
 /// 自動判斷已由 `run_autonomous` 的 `evaluate_done`（Reasoner 評估 completion_condition）實作；
@@ -384,102 +320,55 @@ pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
 
 // ───────────────── 承諾審核（Phase 7c，Ch.11/Ch.20 §5）─────────────────
 // 提案的建立由 run_inbox 內聯 → create_proposed_commitment（去重 + record_event）。
-/// 人類核可：Proposed → Active ＋ 喚醒該員工跑 run_commitments_for_employee。
-/// 狀態守衛：僅 Proposed 可被核可（缺陷 3）。
+/// 人類核可：Proposed → Active ＋ 喚醒該員工跑承諾（同 7a）。狀態守衛：僅 Proposed。
 #[tauri::command]
 pub async fn agent_approve_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     commitment_id: String,
 ) -> Result<(), AppError> {
-    let store = agent_store(&app)?;
-    let mut com = store
-        .get_commitment(&commitment_id)?
-        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
-    if com.status != CommitmentStatus::Proposed {
-        return Err(AppError::new("agent_os.invalidTransition")
-            .p("id", &commitment_id)
-            .p("from", format!("{:?}", com.status).to_lowercase())
-            .p("to", "active"));
+    use tauri::Manager;
+    let cfg = app_config::load(&app)?;
+    if !cfg.agent_os_enabled {
+        return Err(AppError::new("agent_os.disabled"));
     }
-    com.status = CommitmentStatus::Active;
-    com.updated_at = now_rfc3339();
-    let emp_id = com.owner_employee_id.clone();
-    store.put_commitment(&com)?;
-    // 喚醒該員工跑承諾（同 7a 交辦後喚醒）。
-    let app2 = app.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = run_commitments_for_employee(&app2, &emp_id).await;
-    });
-    Ok(())
+    let state = app.state::<AppState>();
+    let store = SqliteStore::open(agent_db_path(&app)?)?;
+    approve_commitment_core(&state, &cfg, &agent_db_path(&app)?, &store, &commitment_id)
 }
 
-/// 人類拒絕：Proposed → Rejected。
-/// 狀態守衛：僅 Proposed 可被拒絕（缺陷 3）。
+
+/// 人類拒絕：Proposed → Rejected。狀態守衛：僅 Proposed。
 #[tauri::command]
 pub async fn agent_reject_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     commitment_id: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    let mut com = store
-        .get_commitment(&commitment_id)?
-        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
-    if com.status != CommitmentStatus::Proposed {
-        return Err(AppError::new("agent_os.invalidTransition")
-            .p("id", &commitment_id)
-            .p("from", format!("{:?}", com.status).to_lowercase())
-            .p("to", "rejected"));
-    }
-    com.status = CommitmentStatus::Rejected;
-    com.updated_at = now_rfc3339();
-    store.put_commitment(&com)?;
-    Ok(())
+    reject_commitment_core(&store, &commitment_id)
 }
 
-/// 人類封存：任意狀態 → Archived（軟刪除；資料保留可稽核）。
-/// 已 Archived 者拒絕重複封存。封存不喚醒員工（退出，非啟動）。
+
+/// 人類封存：任意狀態 → Archived（軟刪除；資料保留可稽核）。已 Archived 拒絕重複封存。
 #[tauri::command]
 pub async fn agent_archive_commitment<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     commitment_id: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    let mut com = store
-        .get_commitment(&commitment_id)?
-        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
-    if com.status == CommitmentStatus::Archived {
-        return Err(AppError::new("agent_os.invalidTransition")
-            .p("id", &commitment_id)
-            .p("from", "archived")
-            .p("to", "archived"));
-    }
-    com.status = CommitmentStatus::Archived;
-    com.updated_at = now_rfc3339();
-    store.put_commitment(&com)?;
-    Ok(())
+    archive_commitment_core(&store, &commitment_id)
 }
 
+
 /// 人類取消：活躍 task（Created/Assigned/InProgress）→ Cancelled（軟刪除）。
-/// 已 Completed/Failed/Cancelled 者拒絕。取消不喚醒員工（退出，非啟動）。
 #[tauri::command]
 pub async fn agent_cancel_task<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     task_id: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    let mut tk = store
-        .get_task(&task_id)?
-        .ok_or_else(|| AppError::new("agent_os.taskNotFound").p("id", &task_id))?;
-    if !matches!(tk.status, TaskStatus::Created | TaskStatus::Assigned | TaskStatus::InProgress) {
-        return Err(AppError::new("agent_os.invalidTransition")
-            .p("id", &task_id)
-            .p("from", format!("{:?}", tk.status).to_lowercase())
-            .p("to", "cancelled"));
-    }
-    tk.status = TaskStatus::Cancelled;
-    store.put_task(&tk)?;
-    Ok(())
+    cancel_task_core(&store, &task_id)
 }
+
 
 #[tauri::command]
 pub async fn agent_revise_artifact<R: tauri::Runtime>(
@@ -672,11 +561,7 @@ pub async fn agent_run_task<R: tauri::Runtime>(
     Ok(result)
 }
 
-/// 溝通：人類的一則訊息 → 目標員工 Inbox 裡一個 `Assigned` Task，並喚醒該員工。
-///
-/// 訊息即 Message-driven Trigger（Handbook Ch.12 §2／Ch.04 Inbox）——其內容成為 Inbox 裡的一個
-/// Task；排程器 `scan_inbox` 會以 [`run_inbox`] 消化（訊息無 commitment 也會被處理）。
-/// 本指令不執行員工、不搶 busy-lock——只投遞工作＋發喚醒信號。
+/// 投遞一則人類訊息給員工（Message{In}＋Inbox Task＋wake）。
 #[tauri::command]
 pub async fn agent_send_message<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -686,68 +571,20 @@ pub async fn agent_send_message<R: tauri::Runtime>(
     commitment_id: Option<String>,
 ) -> Result<SendMessageResult, AppError> {
     let store = agent_store(&app)?;
-    let emp = store
-        .get_employee(&employee_id)?
-        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
-    let ws = emp.workspace_id.clone();
-    let existing: Vec<String> = store
-        .list_tasks(&ws)?
-        .into_iter()
-        .map(|t| t.id)
-        .collect();
-    let task_id = next_id("msg", &existing);
-    let now = now_rfc3339();
-    // Message{In}：對話紀錄（Ch.16）；與下面的 Task 是同一趟往返的兩面。
-    store.put_message(&Message {
-        id: fresh_id("msg-in"),
-        workspace_id: ws.clone(),
-        employee_id: employee_id.clone(),
-        direction: MessageDirection::In,
-        text: text.clone(),
-        source_commitment_id: commitment_id.clone(),
-        proposed_commitment_id: None,
-        artifact_id: None,
-        created_at: now.clone(),
-    })?;
-    // Task：給 scan_inbox／run_inbox 消化的工作項（喚醒員工）。
-    store.put_task(&Task {
-        id: task_id.clone(),
-        workspace_id: ws,
-        owner_employee_id: employee_id.clone(),
-        objective: "Human message".into(),
-        input: text,
-        status: TaskStatus::Assigned,
-        output_artifact_id: None,
-        commitment_id,
-        project_id: None,
-        external_reply_to: None,
-        external_source: None,
-        created_at: now,
-    })?;
-    // 推喚醒信號（best-effort；即便 channel 滿，下次 30s tick 也會掃到這個 Assigned task）。
-    state.wake(WakeSignal {
-        employee_id,
-        reason: "message".into(),
-    });
-    Ok(SendMessageResult { task_id })
+    send_message_core(&state, &store, &employee_id, &text, commitment_id.as_deref())
 }
 
-/// 清除某員工的全部對話訊息（Message）。
-///
-/// 僅清互動層（對話往返）；工作產出（Artifact／Commitment）與事件（Event）不受影響。
-/// 用於對話頁的「清除對話內容」。
+
+/// 清除某員工的全部對話訊息（僅互動層；Artifact／Commitment／Event 不受影響）。
 #[tauri::command]
 pub async fn agent_clear_messages<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     employee_id: String,
 ) -> Result<(), AppError> {
     let store = agent_store(&app)?;
-    store
-        .get_employee(&employee_id)?
-        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", &employee_id))?;
-    store.clear_messages_by_employee(&employee_id)?;
-    Ok(())
+    clear_messages_core(&store, &employee_id)
 }
+
 
 // ───────────────── 監看（Phase 6d）─────────────────
 /// 監看：取回某員工的即時觀察快照——給監看 modal 每 ~1.5s 輪詢。
@@ -790,14 +627,3 @@ pub async fn agent_recent_events<R: tauri::Runtime>(
     recent_events_payload(&store, limit.unwrap_or(50))
 }
 
-/// 殼層包裝（P1b）：載入 cfg/state/db_path 後委派 ocore 版。供 `agent_create_commitment`
-/// （交辦後立即喚醒）與啟動掃描使用。
-pub async fn run_commitments_for_employee<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    employee_id: &str,
-) -> anyhow::Result<()> {
-    use tauri::Manager;
-    let state = app.state::<AppState>();
-    let cfg = app_config::load(app)?;
-    ocore::runtime::run_commitments_for_employee(&state, &cfg, &agent_db_path(app)?, employee_id).await
-}

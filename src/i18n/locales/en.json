@@ -466,5 +466,11 @@
   },
   "error": {
     "unexpected": "An unexpected error occurred: {detail}"
+  },
+  "server": {
+    "offline": "Operoid local service is not running — reopen the app (it auto-starts the service) or run oserver manually",
+    "httpError": "Local service communication failed",
+    "cfgFail": "Failed to load local service settings",
+    "notReady": "Local service is warming up, please retry"
   }
 }

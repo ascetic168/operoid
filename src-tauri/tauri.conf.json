@@ -31,7 +31,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/obridge"
+      "binaries/obridge",
+      "binaries/oserver"
     ],
     "icon": [
       "icons/32x32.png",

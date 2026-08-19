@@ -15,6 +15,7 @@
 mod auth;
 mod config;
 mod routes;
+mod writes;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -82,12 +83,19 @@ async fn run() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("bind {addr} 失敗（已有 oserver 實例？）：{e}"))?;
     eprintln!("[oserver] 監聽 http://{addr}（healthz: /healthz）");
 
+    // AppState（寫入面喚醒＋scheduler 共用；CfgLoader 每次呼叫重讀設定檔——熱生效）。
+    let (wake_tx, wake_rx) = tokio::sync::mpsc::channel(64);
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel(128);
+    let app_state = AppState::new(wake_tx, event_tx, cfg.llm_concurrency);
+    let _ = SHARED_STATE.set(app_state.clone());
+
     let ready = Arc::new(AtomicBool::new(false));
     let state = Arc::new(ServerState {
         auth: Arc::new(TokenProvider::new(token)),
         cfg: cfg.clone(),
         db_path: db_path.clone(),
         ready: Arc::clone(&ready),
+        agent_state: Some(app_state.clone()),
     });
 
     // ── 初始化（不阻塞 accept；healthz 已可回 warming）──
@@ -105,11 +113,7 @@ async fn run() -> anyhow::Result<()> {
         eprintln!("[oserver] 注意：agent_os_enabled=false（app-settings.json）——API 將回 503");
     }
 
-    // AppState＋scheduler：與桌面殼同一接線形狀（CfgLoader 每次呼叫重讀設定檔——熱生效）。
-    let (wake_tx, wake_rx) = tokio::sync::mpsc::channel(64);
-    let (event_tx, event_rx) = tokio::sync::mpsc::channel(128);
-    let app_state = AppState::new(wake_tx, event_tx, cfg.llm_concurrency);
-    let _ = SHARED_STATE.set(app_state.clone());
+
     let dir_for_loader = dirs.settings_dir.clone();
     let load_cfg: scheduler::CfgLoader = Arc::new(move || Ok(config::load_config(&dir_for_loader)));
     scheduler::spawn_loop(app_state, load_cfg, db_path.clone(), wake_rx, event_rx);
@@ -117,7 +121,7 @@ async fn run() -> anyhow::Result<()> {
     ready.store(true, Ordering::SeqCst);
     eprintln!("[oserver] 就緒（healthz → ready）");
 
-    let app = routes::router(state);
+    let app = routes::router(Arc::clone(&state)).merge(writes::write_routes().with_state(state));
     let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
     server.await?;
     eprintln!("[oserver] 已退出");
