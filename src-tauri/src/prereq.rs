@@ -9,5 +9,5 @@ use crate::config;
 #[tauri::command]
 pub fn check_prerequisites<R: Runtime>(app: AppHandle<R>) -> Result<Vec<DepStatus>, String> {
     let cfg = config::app_config::load(&app).unwrap_or_default();
-    Ok(check_all(&cfg.gbrain_exe_path))
+    Ok(check_all(&cfg.gbrain_exe_path, dirs::home_dir().as_deref()))
 }

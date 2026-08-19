@@ -78,6 +78,13 @@ fn save_cfg(st: &ServerState, cfg: &AppConfig) -> Result<(), AppError> {
         .map_err(|e| AppError::new("server.cfgSaveFail").p("detail", e.to_string()))
 }
 
+/// 由 settings_dir（<home>/AppData/Roaming/com.operoid.studio 或 --data-dir 覆寫）
+/// 反推使用者 home；非預設版面（覆寫）回 None（不做 fallback 探測）。
+fn derive_user_home(settings_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    // …/AppData/Roaming/com.operoid.studio → 往上三層
+    settings_dir.ancestors().nth(3).map(std::path::PathBuf::from).filter(|p| p.join(".bun").exists())
+}
+
 fn exe_of(cfg: &AppConfig) -> Result<String, AppError> {
     if std::path::Path::new(&cfg.gbrain_exe_path).exists() {
         Ok(cfg.gbrain_exe_path.clone())
@@ -904,7 +911,10 @@ async fn api_prereq(
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let cfg = load_cfg(&st)?;
-        Ok(check_all(&cfg.gbrain_exe_path))
+        // 服務模式（LocalSystem）的 PATH 不含使用者 .bun/bin——由 settings_dir 推導
+        // 使用者 home（<home>/AppData/Roaming/com.operoid.studio 反推）供 fallback。
+        let user_home = derive_user_home(&st.settings_dir);
+        Ok(check_all(&cfg.gbrain_exe_path, user_home.as_deref()))
     })
     .await;
     finish(res)
