@@ -10,13 +10,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 可在地化訊息：代碼 + 具名參數（直接餵 vue-i18n `t(code, params)`）。
 ///
 /// 空參數不序列化（前端 `t(code)` 亦可）。用於結果 struct 的 `summary` / `note` /
 /// `errors` 等欄位。
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct L10n {
     pub code: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

@@ -1,4 +1,4 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { agentFetch } from "@/lib/http";
 import i18n from "@/i18n";
 
@@ -60,7 +60,7 @@ export interface DepStatus {
 }
 
 export const checkPrerequisites = (): Promise<DepStatus[]> =>
-  invoke<DepStatus[]>("check_prerequisites");
+  agentFetch<DepStatus[]>("/api/prereq");
 
 /** 用系統預設瀏覽器開 URL(tauri-plugin-shell open;需 shell:allow-open)。 */
 export async function openUrl(url: string): Promise<void> {
@@ -139,27 +139,34 @@ export interface AppConfig {
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>
-  invoke<GBrainConfigView>("get_gbrain_config");
+  agentFetch<GBrainConfigView>("/api/gbrain/config");
 export const saveGbrainConfigRaw = (raw: unknown): Promise<void> =>
-  invoke<void>("save_gbrain_config_raw", { rawJson: raw });
+  agentFetch<void>("/api/gbrain/config-raw", {
+    method: "POST",
+    body: { raw_json: raw },
+  });
 
 /** 設單一 model/tier 鍵（走 DB plane via gbrain config set）。 */
 export const setGbrainModel = (key: string, value: string): Promise<void> =>
-  invoke<void>("set_gbrain_model", { key, value });
+  agentFetch<void>("/api/gbrain/model", { method: "POST", body: { key, value } });
 /** 單一模型同步到全部 tier + chat_model + models.default/think。 */
 export const setGbrainModelsAll = (model: string): Promise<void> =>
-  invoke<void>("set_gbrain_models_all", { model });
+  agentFetch<void>("/api/gbrain/models-all", { method: "POST", body: { model } });
 /** 從 DB plane 移除單一 model/tier 鍵（讓 file/default 生效）。 */
 export const unsetGbrainModel = (key: string): Promise<void> =>
-  invoke<void>("unset_gbrain_model", { key });
+  agentFetch<void>("/api/gbrain/model/unset", { method: "POST", body: { key } });
 /** 清除所有 DB-plane model/tier 覆寫（修復用）。 */
 export const clearDbOverrides = (): Promise<void> =>
-  invoke<void>("clear_db_overrides");
+  agentFetch<void>("/api/gbrain/db-overrides/clear", { method: "POST" });
 /** 設 provider_base_url（直寫檔案；base_url=null 移除覆寫）。 */
 export const setProviderBaseUrl = (
   provider: string,
   baseUrl: string | null,
-): Promise<void> => invoke<void>("set_provider_base_url", { provider, baseUrl });
+): Promise<void> =>
+  agentFetch<void>("/api/gbrain/provider-base-url", {
+    method: "POST",
+    body: { provider, base_url: baseUrl },
+  });
 
 export const getAppConfig = (): Promise<AppConfig> => invoke<AppConfig>("get_app_config");
 export const saveAppConfig = (config: AppConfig): Promise<void> =>
@@ -218,15 +225,48 @@ export type OpName =
   | "storage"
   | "graph-query";
 
-/** 跑一個 gbrain 操作，逐行串流到 onLine；Promise 解析為最終結果。 */
+/** 操作輪詢快照（oserver ring buffer）。 */
+interface OpSnapshot {
+  operation_id: string;
+  lines: CliLine[];
+  done: boolean;
+  result: OpResult | null;
+  dropped: number;
+}
+
+/** 輪詢一個長跑操作：增量行餵 onLine，完成時回最終結果（簽名與舊 Channel 版相同）。 */
+async function pollOperation(
+  operationId: string,
+  onLine: (line: CliLine) => void,
+): Promise<OpResult> {
+  let since = 0;
+  let total = 0;
+  for (;;) {
+    const snap = await agentFetch<OpSnapshot>(
+      `/api/operations/${encodeURIComponent(operationId)}?since=${since}`,
+    );
+    for (const line of snap.lines) onLine(line);
+    total += snap.lines.length;
+    since = total + snap.dropped;
+    if (snap.done) {
+      if (snap.result) return snap.result;
+      throw { code: "server.opFailed", params: { id: operationId } };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
+/** 跑一個 gbrain 操作，逐行（輪詢增量）到 onLine；Promise 解析為最終結果。 */
 export async function runOp(
   op: OpName,
   arg: string | null,
   onLine: (line: CliLine) => void,
 ): Promise<OpResult> {
-  const ch = new Channel<CliLine>();
-  ch.onmessage = onLine;
-  return invoke<OpResult>("op_run", { onEvent: ch, op, arg });
+  const { operation_id } = await agentFetch<{ operation_id: string }>("/api/operations", {
+    method: "POST",
+    body: { op, arg },
+  });
+  return pollOperation(operation_id, onLine);
 }
 
 // ---- Factories (drag-drop → convert → preview → write) ----
@@ -281,7 +321,10 @@ export const factoryRun = (
   paths: string[],
   targetRepo: string | null,
 ): Promise<PreviewResult> =>
-  invoke<PreviewResult>("factory_run", { factory, paths, targetRepo });
+  agentFetch<PreviewResult>("/api/factories/run", {
+    method: "POST",
+    body: { factory, paths, target_repo: targetRepo },
+  });
 
 /** `factory_open_dir` 回傳：以什麼方式開啟了目錄。 */
 export interface OpenDirResult {
@@ -301,12 +344,18 @@ export const factoryWritePages = (
   pages: WritePage[],
   targetRepo: string | null,
 ): Promise<WriteResult> =>
-  invoke<WriteResult>("factory_write_pages", { pages, targetRepo });
+  agentFetch<WriteResult>("/api/factories/write-pages", {
+    method: "POST",
+    body: { pages, target_repo: targetRepo },
+  });
 export const extractCompaniesRun = (
   clean: boolean,
   targetRepo: string | null,
 ): Promise<WriteResult> =>
-  invoke<WriteResult>("extract_companies_run", { clean, targetRepo });
+  agentFetch<WriteResult>("/api/factories/extract-companies", {
+    method: "POST",
+    body: { clean, target_repo: targetRepo },
+  });
 
 export interface AuthoredResult {
   slug: string;
@@ -325,11 +374,14 @@ export const factorySaveAuthored = (
   existingSlug: string | null,
   targetRepo: string | null,
 ): Promise<AuthoredResult> =>
-  invoke<AuthoredResult>("factory_save_authored", {
-    factory,
-    markdown,
-    existingSlug,
-    targetRepo,
+  agentFetch<AuthoredResult>("/api/factories/save-authored", {
+    method: "POST",
+    body: {
+      factory,
+      markdown,
+      existing_slug: existingSlug,
+      target_repo: targetRepo,
+    },
   });
 
 // ---- Factory auto-classify（統一入口：丟任意檔 → 程式判斷歸屬）----
@@ -348,7 +400,10 @@ export interface FileClassification {
 
 /** 逐檔判斷歸屬工廠（副檔名/特徵優先，模糊才用 LLM；無 key 退回純規則）。 */
 export const factoryClassify = (paths: string[]): Promise<FileClassification[]> =>
-  invoke<FileClassification[]>("factory_classify", { paths });
+  agentFetch<FileClassification[]>("/api/factories/classify", {
+    method: "POST",
+    body: { paths },
+  });
 
 // ---- Brains management (多腦 + 每腦多來源) ----
 
@@ -385,24 +440,35 @@ export interface AddBrainReq {
   chat_model?: string;
 }
 
-export const brainsList = (): Promise<BrainsList> => invoke<BrainsList>("brains_list");
+export const brainsList = (): Promise<BrainsList> =>
+  agentFetch<BrainsList>("/api/brains");
 export const brainsAdd = (req: AddBrainReq): Promise<BrainEntry> =>
-  invoke<BrainEntry>("brains_add", { req });
-export const brainsRemove = (id: string): Promise<void> => invoke<void>("brains_remove", { id });
+  agentFetch<BrainEntry>("/api/brains", { method: "POST", body: req });
+export const brainsRemove = (id: string): Promise<void> =>
+  agentFetch<void>(`/api/brains/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const brainsSetActive = (id: string): Promise<void> =>
-  invoke<void>("brains_set_active", { id });
+  agentFetch<void>(`/api/brains/${encodeURIComponent(id)}/active`, { method: "POST" });
 export const brainsSetActiveSource = (sourceId: string | null): Promise<void> =>
-  invoke<void>("brains_set_active_source", { sourceId: sourceId });
+  agentFetch<void>("/api/brains/active-source", {
+    method: "POST",
+    body: { source_id: sourceId },
+  });
 export const brainSources = (brainId: string): Promise<GbrainSource[]> =>
-  invoke<GbrainSource[]>("brain_sources", { brainId });
+  agentFetch<GbrainSource[]>(`/api/brains/${encodeURIComponent(brainId)}/sources`);
 export const brainSourceAdd = (
   brainId: string,
   sourceId: string,
   path: string,
 ): Promise<void> =>
-  invoke<void>("brain_source_add", { req: { brain_id: brainId, source_id: sourceId, path } });
+  agentFetch<void>(`/api/brains/${encodeURIComponent(brainId)}/sources`, {
+    method: "POST",
+    body: { source_id: sourceId, path },
+  });
 export const brainSourceRemove = (brainId: string, sourceId: string): Promise<void> =>
-  invoke<void>("brain_source_remove", { req: { brain_id: brainId, source_id: sourceId } });
+  agentFetch<void>(
+    `/api/brains/${encodeURIComponent(brainId)}/sources/${encodeURIComponent(sourceId)}`,
+    { method: "DELETE" },
+  );
 
 // ---- Note view（點擊 wikilink → 該 .md 轉 HTML 用預設瀏覽器開啟）----
 
@@ -422,14 +488,11 @@ export async function brainSync(
   sourceId: string | null,
   onLine: (line: CliLine) => void,
 ): Promise<OpResult> {
-  const ch = new Channel<CliLine>();
-  ch.onmessage = onLine;
-  return invoke<OpResult>("brain_sync", {
-    onEvent: ch,
-    brainId,
-    scope,
-    sourceId: sourceId,
-  });
+  const { operation_id } = await agentFetch<{ operation_id: string }>(
+    `/api/brains/${encodeURIComponent(brainId)}/sync`,
+    { method: "POST", body: { scope, source_id: sourceId } },
+  );
+  return pollOperation(operation_id, onLine);
 }
 
 /** 綁定 default 來源路徑：確保 path 是 git repo（自動 init）→ gbrain sync --repo 綁定。 */
@@ -438,9 +501,11 @@ export async function brainBindSourcePath(
   path: string,
   onLine: (line: CliLine) => void,
 ): Promise<OpResult> {
-  const ch = new Channel<CliLine>();
-  ch.onmessage = onLine;
-  return invoke<OpResult>("brain_bind_source_path", { onEvent: ch, brainId, path });
+  const { operation_id } = await agentFetch<{ operation_id: string }>(
+    `/api/brains/${encodeURIComponent(brainId)}/bind-path`,
+    { method: "POST", body: { path } },
+  );
+  return pollOperation(operation_id, onLine);
 }
 
 // ───────────────── Agent-OS（員工模板／實體管理）─────────────────

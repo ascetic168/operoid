@@ -75,3 +75,20 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
+
+/// 保存 AppConfig 回 `app-settings.json`（與桌面殼同一檔、同一格式）。
+/// 原子寫（先寫暫存再改名）——避免半寫狀態。
+pub fn save_config(dir: &Path, cfg: &AppConfig) -> anyhow::Result<()> {
+    use std::io::Write;
+    let path = dir.join("app-settings.json");
+    // 保留檔案中其他鍵（目前僅 app_config；如實重建）
+    let mut root = serde_json::Map::new();
+    root.insert("app_config".into(), serde_json::to_value(cfg)?);
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(root))?;
+    let tmp = path.with_extension("json.tmp");
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(text.as_bytes())?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}

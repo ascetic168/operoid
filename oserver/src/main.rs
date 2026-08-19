@@ -14,7 +14,9 @@
 
 mod auth;
 mod config;
+mod gbrain;
 mod routes;
+mod operations;
 mod writes;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -96,6 +98,8 @@ async fn run() -> anyhow::Result<()> {
         db_path: db_path.clone(),
         ready: Arc::clone(&ready),
         agent_state: Some(app_state.clone()),
+        ops: Arc::new(operations::OpRegistry::new()),
+        settings_dir: dirs.settings_dir.clone(),
     });
 
     // ── 初始化（不阻塞 accept；healthz 已可回 warming）──
@@ -121,7 +125,9 @@ async fn run() -> anyhow::Result<()> {
     ready.store(true, Ordering::SeqCst);
     eprintln!("[oserver] 就緒（healthz → ready）");
 
-    let app = routes::router(Arc::clone(&state)).merge(writes::write_routes().with_state(state));
+    let app = routes::router(Arc::clone(&state))
+        .merge(writes::write_routes().with_state(Arc::clone(&state)))
+        .merge(gbrain::gbrain_routes().with_state(state));
     let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
     server.await?;
     eprintln!("[oserver] 已退出");

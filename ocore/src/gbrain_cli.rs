@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
@@ -35,7 +35,7 @@ pub fn noop_sink() -> LineSink {
 }
 
 /// 指令最終結果。
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct OpResult {
     pub success: bool,
     pub exit_code: Option<i32>,

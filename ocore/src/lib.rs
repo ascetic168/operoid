@@ -20,6 +20,7 @@ pub mod event_bus;
 pub mod gbrain_config;
 pub mod i18n;
 pub mod factories;
+pub mod gbrain_cfg;
 pub mod gbrain_cli;
 pub mod llm;
 pub mod outbound;

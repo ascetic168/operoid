@@ -32,6 +32,10 @@ pub struct ServerState {
     pub ready: Arc<std::sync::atomic::AtomicBool>,
     /// scheduler 的 AppState（寫入面喚醒用；初始化完成後注入——warming 期 None → 503）。
     pub agent_state: Option<ocore::agent_state::AppState>,
+    /// 長跑操作 ring buffer（P4：op_run／sync／bind 的輪詢主控台）。
+    pub ops: Arc<crate::operations::OpRegistry>,
+    /// 桌面設定目錄（app-settings.json 讀寫——與殼同一檔）。
+    pub settings_dir: std::path::PathBuf,
 }
 
 /// 統一錯誕回應：`AppError` → JSON＋status 映射。
