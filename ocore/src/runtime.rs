@@ -1410,6 +1410,13 @@ pub struct DeployResult {
 /// 預設 workspace id（GUI 用）。
 pub const AGENT_WS: &str = "ws-default";
 
+/// Agent-OS DB 檔案路徑（P1d：資料目錄邏輯上移 ocore——殼層解析 Local AppData、
+/// 未來 oserver 解析服務資料目錄後，皆由此統一衍生 `operoid.db`）。
+pub fn agent_db_path_in(data_dir: &std::path::Path) -> std::path::PathBuf {
+    let _ = std::fs::create_dir_all(data_dir);
+    data_dir.join("operoid.db")
+}
+
 /// 為某員工解析其腦並建構（GbrainThinkTool, ToolCtx）。`agent_run` 與排程器共用。
 pub fn build_tool_ctx(
     cfg: &app_config::AppConfig,

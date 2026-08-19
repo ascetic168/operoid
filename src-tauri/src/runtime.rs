@@ -11,7 +11,6 @@ use crate::config::gbrain_config;
 use crate::domain::*; // 指令層大量使用 domain 型別/Store 方法（原 runtime 模組內 use 隨核心搬入 ocore）
 use crate::i18n::AppError;
 
-use tauri::Manager;
 
 /// 招募一個 Employee（供無 UI 時的手動驗證用）：建立 default workspace ＋ 一個指向
 /// 作用中腦的 employee。回傳其 id。
@@ -153,15 +152,18 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
 
 /// Agent-OS DB 路徑：**Local AppData**（避免 Roaming 被 OneDrive／網域同步導致 WAL 損壞——
 /// WAL 的 `-wal`／`-shm` 必須是共置本地檔案）。
+/// Agent-OS DB 路徑：**Local AppData**（避免 Roaming 被 OneDrive／網域同步導致 WAL 損壞——
+/// WAL 的 `-wal`／`-shm` 必須是共置本地檔案）。衍生邏輯在 `ocore::runtime::agent_db_path_in`
+/// （P1d 上移——殼層只負責解析 Tauri 的 Local AppData 目錄）。
 pub(crate) fn agent_db_path<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<std::path::PathBuf, AppError> {
+    use tauri::Manager;
     let local_dir = app
         .path()
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
-    let _ = std::fs::create_dir_all(&local_dir);
-    Ok(local_dir.join("operoid.db"))
+    Ok(agent_db_path_in(&local_dir))
 }
 
 /// 共用：Agent-OS flag 檢查 ＋ 開 `operoid.db`（Local AppData）。
