@@ -29,5 +29,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-      - name: cargo check（全 workspace，含測試目標）
-        run: cargo check --workspace --all-targets
+      - name: cargo check（ocore/oserver/obridge——不含 Tauri 殼）
+        # 排除 operoid（src-tauri）：其 build script 要求 externalBin 檔案已暫存
+        # （release 的 beforeBuildCommand 產物），check 階段不存在；殼的平台
+        # 問題由 release workflow 覆蓋。check 的價值在核心/服務/橋接的 cfg 邊界。
+        run: cargo check --workspace --exclude operoid --all-targets
