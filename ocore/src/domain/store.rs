@@ -56,6 +56,15 @@ pub trait Store {
     /// 列出**所有** workspace 的員工（排程器啟動掃描用）。
     fn list_all_employees(&self) -> Result<Vec<Employee>>;
 
+    /// 列出**所有** workspace 的 tasks（啟動復原用）。
+    fn list_all_tasks(&self) -> Result<Vec<Task>> {
+        let mut out = Vec::new();
+        for ws in self.list_workspaces()? {
+            out.extend(self.list_tasks(&ws.id)?);
+        }
+        Ok(out)
+    }
+
     /// 列出**所有** workspace 的 commitments（動詞軌跨員工聚合用）。
     fn list_all_commitments(&self) -> Result<Vec<Commitment>> {
         // 預設實作：遍歷 workspaces 再串接。SqliteStore 覆寫為無 where 的 select_all。

@@ -4249,3 +4249,85 @@ pub fn cancel_task_core(store: &SqliteStore, task_id: &str) -> Result<(), AppErr
     store.put_task(&tk)?;
     Ok(())
 }
+
+// ───────────────── 啟動復原（P5：崩潰恢復）─────────────────
+
+/// 服務啟動時的崩潰復原：把「上次行程中途被殺」留下的孤兒狀態救回。
+///
+/// 症狀（2026-08-20 實例）：員工跑一半時 oserver 被殺（重啟/更新/斷電）——
+/// task 卡 `InProgress`、員工卡 `Working`；scheduler 只喚醒 `Sleeping`，
+/// 孤兒永遠不會被再處理。復原安全性：行程死亡＝世上已無 busy-lock 持有者，
+/// 且 oserver 是唯一寫入者（單例守衛保證）——啟動時把 `Working` 員工重設
+/// `Sleeping`、`InProgress` task 退回 `Assigned`，下次掃描自然接手。
+pub fn recover_stale_runs(store: &SqliteStore) -> Result<usize, AppError> {
+    let mut recovered = 0;
+    for mut e in store
+        .list_all_employees()?
+        .into_iter()
+        .filter(|e| e.state == EmployeeState::Working)
+    {
+        e.state = EmployeeState::Sleeping;
+        store.put_employee(&e)?;
+        recovered += 1;
+        eprintln!("[recover] {}：Working→Sleeping（上次執行中途被殺）", e.id);
+    }
+    for mut t in store
+        .list_all_tasks()?
+        .into_iter()
+        .filter(|t| t.status == TaskStatus::InProgress)
+    {
+        t.status = TaskStatus::Assigned;
+        store.put_task(&t)?;
+        eprintln!("[recover] task {}：InProgress→Assigned", t.id);
+    }
+    Ok(recovered)
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::domain::{Store, Task, TaskStatus};
+
+    /// 崩潰復原：Working 員工→Sleeping、InProgress task→Assigned（下次掃描接手）。
+    #[test]
+    fn recover_resets_orphaned_working_state() {
+        let db = std::env::temp_dir().join(format!("recover-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db);
+        let store = SqliteStore::open(&db).unwrap();
+        let ws = ensure_workspace_core(&store).unwrap().workspace_id;
+        // 種一名 Working 員工＋一個 InProgress task（模擬被殺殘局）
+        let emp = Employee {
+            id: "stuck-1".into(),
+            workspace_id: ws.clone(),
+            name: "Stuck".into(),
+            brain: BrainRef { brain_id: "brain".into() },
+            role: None,
+            template_id: None,
+            state: EmployeeState::Working,
+            created_at: now_rfc3339(),
+        };
+        store.put_employee(&emp).unwrap();
+        store.put_task(&Task {
+            id: "t-stuck".into(),
+            workspace_id: ws,
+            owner_employee_id: "stuck-1".into(),
+            objective: "Human message".into(),
+            input: "x".into(),
+            status: TaskStatus::InProgress,
+            output_artifact_id: None,
+            commitment_id: None,
+            project_id: None,
+            external_reply_to: None,
+            external_source: None,
+            created_at: now_rfc3339(),
+        })
+        .unwrap();
+        let n = recover_stale_runs(&store).unwrap();
+        assert_eq!(n, 1);
+        let emp = store.get_employee("stuck-1").unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping);
+        let t = store.get_task("t-stuck").unwrap().unwrap();
+        assert_eq!(t.status, TaskStatus::Assigned);
+        let _ = std::fs::remove_file(&db);
+    }
+}

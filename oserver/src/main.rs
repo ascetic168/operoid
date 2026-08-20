@@ -206,8 +206,15 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
 
     // 驗 DB（spawn_blocking——rusqlite 同步 API）。
     let db_check = db_path.clone();
-    match tokio::task::spawn_blocking(move || ocore::domain::SqliteStore::open(&db_check)).await {
-        Ok(Ok(_)) => eprintln!("[oserver] DB 就緒：{}", db_path.display()),
+    match tokio::task::spawn_blocking(move || {
+        let store = ocore::domain::SqliteStore::open(&db_check)?;
+        // 崩潰復原（P5）：上次行程中途被殺的孤兒（Working 員工/InProgress task）
+        // 救回可掃描狀態——必須在 scheduler 起來之前。
+        ocore::runtime::recover_stale_runs(&store)
+    })
+    .await
+    {
+        Ok(Ok(n)) => eprintln!("[oserver] DB 就緒：{}（啟動復原 {} 名員工）", db_path.display(), n),
         Ok(Err(e)) => anyhow::bail!("DB 開啟失敗：{e}"),
         Err(e) => anyhow::bail!("DB 檢查任務失敗：{e}"),
     }
