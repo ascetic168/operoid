@@ -75,10 +75,18 @@ Runtime 管理**執行**，從不管理**思考** —— Employee 想什麼，�
 架構手冊為 **v0.2（草稿）**，而路線圖的里程碑已**一路實作至 Phase 7** ——
 手冊中的願景現在是一個運行中的系統，而不只是草稿。
 
-目前版本（v0.2.x）實作了完整的 Agent-OS 技術棧：
+**v0.3.0 —— 常駐服務、多前端。** 後端如今以 **`oserver`** 常駐服務的形態運行
+（127.0.0.1 的 HTTP API），由它擁有 Runtime：**無論視窗開關，Employee 持續工作**。
+桌面 app 成為「諸多前端之一」——任何能說 HTTP 的程式都能驅動同一個後端。
 
-- 一個 **Tauri v2 桌面工作空間**（Vue 3 + TypeScript 前端、Rust 後端）。
-- 一個以 [GBrain](https://github.com/garrytan/gbrain) 為基礎的**知識圖譜層** ——
+目前版本（v0.3.0）實作完整的 Agent-OS 技術棧：
+
+- **常駐服務架構**：`ocore`（純 Rust 核心：Runtime、排程器、事件匯流排、GBrain 能力域）
+  ＋ `oserver`（axum HTTP API，token 認證）＋ **Tauri v2 桌面殼**（前端之一）。
+- **服務生命週期雙語意**：安裝開機服務（Employee 從開機就運行；關閉 app 毫無影響）
+  或不安裝（服務隨 app 啟停）。Windows 已實作並實機驗證；Linux（systemd）與
+  macOS（launchd）已實作、尚未實機驗證。
+- - 一個以 [GBrain](https://github.com/garrytan/gbrain) 為基礎的**知識圖譜層** ——
   把日常檔案（聯絡人 CSV、會議 PDF、公司介紹）變成互連、可查詢的筆記；
   透過 GUI 而非命令列來同步、提問與推論。
 - 完整的 **Agent-OS 執行引擎**（Phase 1–7）：由 Trigger 驅動的 Employee 生命週期引擎；
@@ -86,6 +94,8 @@ Runtime 管理**執行**，從不管理**思考** —— Employee 想什麼，�
   **範本 → 實例**（定義一次、部署多次）；**共享 Brain** 讓一次升級惠及所有 Employee；
   **團隊、專案與任務交接**實現多 Employee 協作；以及**對話層** —— 人機聊天、
   訊息驅動喚醒、即時觀察面板。
+- **Email 進出**：內建的 [obridge](obridge/) 橋接器（收信經事件進氣口喚醒對應
+  Employee；Employee 透過 send 工具回信）。IM 類通道走 WASM 外掛。
 - 第一個**代理入口**：在工作空間內啟動並監看 [Claude Code](https://claude.com/claude-code)。
 
 > ℹ️ GBrain 知識圖譜功能是本版本的*知識*層。
@@ -94,7 +104,8 @@ Runtime 管理**執行**，從不管理**思考** —— Employee 想什麼，�
 ## 技術棧
 
 **前端：** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
-**後端：** Tauri v2 · Rust
+**核心與服務：** Rust —— `ocore`（領域核心）· `oserver`（axum 服務）· `obridge`（Email/WASM 橋接）
+**桌面殼：** Tauri v2（視窗＋桌面專屬能力；所有邏輯都在服務裡）
 
 ## 前置需求
 
@@ -140,13 +151,19 @@ cd src-tauri && cargo check   # 後端快速型別檢查
 ## 專案結構
 
 ```
-src/              Vue 3 前端（views、Pinia stores、i18n、具型別 IPC 包裝）
+src/              Vue 3 前端（views、Pinia stores、i18n、HTTP 包裝）
                   —— Brains、Factories、Config、員工範本／實體、
-                    員工對話、Operations（即時觀察面板）
-src-tauri/src/    Rust 後端
-                    config · converters · factories · gbrain_cli · claude_code
-                    brains · classifier · note_view · llm · prereq · i18n
-                    runtime · agent_state · scheduler · event_bus · note_server
+                    員工對話、Operations（即時主控台）、收件匣
+ocore/            Rust 領域核心（零 Tauri 依賴）
+                    domain · runtime · scheduler · event_bus · agent 狀態
+                    GBrain 能力域（cli/brains/factories/converters）· llm
+oserver/          常駐服務 —— axum HTTP API（token 認證）
+                    agent-os 讀寫面 · GBrain 全域 · 操作主控台（ring buffer 輪詢）
+                    事件進氣口 /event · 服務註冊（Windows/Linux/macOS）
+src-tauri/        桌面殼（Tauri v2）—— 視窗＋桌面專屬功能
+                    （Claude Code、筆記預覽）、指令薄層、服務代管
+obridge/          Email 橋接器＋WASM 外掛宿主（IMAP 收／SMTP 寄）
+ocontract/        共享契約型別（Operoid ↔ obridge）
 handbook/         架構手冊 —— 憲法（英文 + 中文）
 ```
 

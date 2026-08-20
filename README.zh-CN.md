@@ -75,9 +75,17 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 架构手册为 **v0.2（草稿）**，而路线图的里程碑已**一路实现至 Phase 7** ——
 手册中的愿景现在是一个运行中的系统，而不只是草稿。
 
-当前版本（v0.2.x）实现了完整的 Agent-OS 技术栈：
+**v0.3.0 —— 常驻服务、多前端。** 后端如今以 **`oserver`** 常驻服务的形态运行
+（127.0.0.1 的 HTTP API），由它拥有 Runtime：**无论窗口开关，Employee 持续工作**。
+桌面 app 成为「诸多前端之一」——任何能说 HTTP 的程序都能驱动同一个后端。
 
-- 一个 **Tauri v2 桌面工作空间**（Vue 3 + TypeScript 前端、Rust 后端）。
+当前版本（v0.3.0）实现完整的 Agent-OS 技术栈：
+
+- **常驻服务架构**：`ocore`（纯 Rust 核心：Runtime、调度器、事件总线、GBrain 能力域）
+  ＋ `oserver`（axum HTTP API，token 认证）＋ **Tauri v2 桌面壳**（前端之一）。
+- **服务生命周期双语意**：安装开机服务（Employee 从开机就运行；关闭 app 毫无影响）
+  或不安装（服务随 app 启停）。Windows 已实现并实机验证；Linux（systemd）与
+  macOS（launchd）已实现、尚未实机验证。
 - 一个以 [GBrain](https://github.com/garrytan/gbrain) 为基础的**知识图谱层** ——
   把日常文件（联系人 CSV、会议 PDF、公司介绍）变成互连、可查询的笔记；
   通过 GUI 而非命令行来同步、提问与推理。
@@ -86,6 +94,8 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
   **模板 → 实例**（定义一次、部署多次）；**共享 Brain** 让一次升级惠及所有 Employee；
   **团队、项目与任务交接**实现多 Employee 协作；以及**对话层** —— 人机聊天、
   消息驱动唤醒、实时观察面板。
+- **Email 进出**：内置的 [obridge](obridge/) 桥接器（收信经事件进气口唤醒对应
+  Employee；Employee 通过 send 工具回信）。IM 类通道走 WASM 插件。
 - 第一个**代理入口**：在工作空间内启动并监视 [Claude Code](https://claude.com/claude-code)。
 
 > ℹ️ GBrain 知识图谱功能是当前版本的*知识*层。
@@ -94,7 +104,8 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 ## 技术栈
 
 **前端：** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
-**后端：** Tauri v2 · Rust
+**核心与服务：** Rust —— `ocore`（领域核心）· `oserver`（axum 服务）· `obridge`（Email/WASM 橋接）
+**桌面壳：** Tauri v2（窗口＋桌面专属能力；所有逻辑都在服务里）
 
 ## 前置需求
 
@@ -140,13 +151,19 @@ cd src-tauri && cargo check   # 后端快速类型检查
 ## 项目结构
 
 ```
-src/              Vue 3 前端（views、Pinia stores、i18n、带类型 IPC 包装）
+src/              Vue 3 前端（views、Pinia stores、i18n、HTTP 包装）
                   —— Brains、Factories、Config、员工模板／实例、
-                    员工对话、Operations（实时观察面板）
-src-tauri/src/    Rust 后端
-                    config · converters · factories · gbrain_cli · claude_code
-                    brains · classifier · note_view · llm · prereq · i18n
-                    runtime · agent_state · scheduler · event_bus · note_server
+                    员工对话、Operations（实时控制台）、收件箱
+ocore/            Rust 领域核心（零 Tauri 依赖）
+                    domain · runtime · scheduler · event_bus · agent 状态
+                    GBrain 能力域（cli/brains/factories/converters）· llm
+oserver/          常驻服务 —— axum HTTP API（token 认证）
+                    agent-os 读写面 · GBrain 全域 · 操作控制台（ring buffer 轮询）
+                    事件进气口 /event · 服务注册（Windows/Linux/macOS）
+src-tauri/        桌面壳（Tauri v2）—— 窗口＋桌面专属功能
+                    （Claude Code、笔记预览）、指令薄层、服务托管
+obridge/          Email 桥接器＋WASM 插件宿主（IMAP 收／SMTP 发）
+ocontract/        共享契约类型（Operoid ↔ obridge）
 handbook/         架构手册 —— 宪法（英文 + 中文）
 ```
 

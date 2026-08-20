@@ -14,7 +14,8 @@ action to closure. Those responsibilities need an environment that
 
 Operoid exists to be that environment.
 
-Built with **Tauri v2 (Rust)** + **Vue 3 + TypeScript**.
+Built with **Rust** (a resident service + a Tauri v2 desktop shell) and
+**Vue 3 + TypeScript** frontends over a local HTTP API.
 **Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** see [Current status](#current-status)
 
 ---
@@ -82,9 +83,20 @@ The Architecture Handbook is at **v0.2 (Draft)**, and the roadmap's milestones
 have been **built end-to-end through Phase 7** — the vision in the handbook is
 now a running system, not just a draft.
 
-The current build (v0.2.x) implements the full Agent-OS stack:
+**v0.3.0 — a resident service, many frontends.** The backend now runs as
+**`oserver`**, a local service (HTTP API on 127.0.0.1) that owns the Runtime:
+Employees keep working whether or not any window is open. The desktop app is
+now *one frontend among many* — anything that speaks HTTP can drive the same
+backend.
 
-- A **Tauri v2 desktop workspace** (Vue 3 + TypeScript frontend, Rust backend).
+- A **resident service architecture**: `ocore` (pure-Rust core: Runtime,
+  scheduler, event bus, GBrain capabilities) + `oserver` (axum HTTP API with
+  token auth) + the **Tauri v2 desktop shell** as a frontend.
+- **Service lifecycle, two modes**: install the boot-time service (Employees
+  run from power-on; closing the app changes nothing) or run without it (the
+  service starts and stops with the app). Windows is fully implemented and
+  verified; Linux (systemd) and macOS (launchd) are implemented but not yet
+  verified on real machines.
 - A **knowledge-graph foundation** built on [GBrain](https://github.com/garrytan/gbrain) — turn everyday files (contacts CSVs, meeting PDFs, company write-ups) into linked, queryable notes; sync, ask, and reason over them through a GUI instead of the CLI.
 - A full **Agent-OS runtime** (Phases 1–7): an Employee lifecycle engine driven
   by Triggers; durable **Artifacts** and **Commitments** persisted in SQLite;
@@ -92,16 +104,16 @@ The current build (v0.2.x) implements the full Agent-OS stack:
   upgrade reaches every Employee; **Teams, Projects, and Task handoff** for
   multi-Employee collaboration; and a **conversational layer** with human–agent
   chat, message-driven waking, and a live observation panel.
+- **Email in/out** via [obridge](obridge/) (bundled): inbound mail wakes the
+  matching Employee through the event ingress; Employees reply through the
+  send tool. IM works through WASM plugins.
 - A first **agent entry point**: launch and monitor [Claude Code](https://claude.com/claude-code) from inside the workspace.
-
-> ℹ️ The GBrain knowledge-graph features are the *knowledge* layer of the build.
-> The Employee / Runtime / Commitment architecture — defined in the handbook —
-> is now implemented and running.
 
 ## Tech stack
 
 **Frontend:** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
-**Backend:** Tauri v2 · Rust
+**Core & service:** Rust — `ocore` (domain core) · `oserver` (axum service) · `obridge` (mail/WASM bridge)
+**Desktop shell:** Tauri v2 (window + desktop-specific capabilities; all logic lives in the service)
 
 ## Prerequisites
 
@@ -151,13 +163,20 @@ cd src-tauri && cargo check   # fast backend typecheck
 ## Project structure
 
 ```
-src/              Vue 3 frontend (views, Pinia stores, i18n, typed IPC wrappers)
+src/              Vue 3 frontend (views, Pinia stores, i18n, HTTP wrappers)
                   — Brains, Factories, Config, Employee templates/instances,
-                    Employee chat, Operations (live observation panel)
-src-tauri/src/    Rust backend
-                    config · converters · factories · gbrain_cli · claude_code
-                    brains · classifier · note_view · llm · prereq · i18n
-                    runtime · agent_state · scheduler · event_bus · note_server
+                    Employee chat, Operations (live console), Inbox
+ocore/            Rust domain core (zero Tauri deps)
+                    domain · runtime · scheduler · event_bus · agents state
+                    gbrain capabilities (cli/brains/factories/converters) · llm
+oserver/          The resident service — axum HTTP API (token auth)
+                    agent-os read/write · GBrain domain · operations console
+                    event ingress /event · service install (Win/Linux/macOS)
+src-tauri/        Desktop shell (Tauri v2) — window, desktop-only features
+                    (Claude Code, note preview), command thin-layer, service
+                    supervision (start-with-app / stop-with-app)
+obridge/          Email bridge + WASM plugin host (IMAP in / SMTP out)
+ocontract/        Shared contract types (Operoid ↔ obridge)
 handbook/         The Architecture Handbook — the constitution (EN + 中文)
 ```
 
