@@ -215,6 +215,11 @@ pub fn default_base_url(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// 全部 provider 的 API key 環境變數名（快照用——殼層把存在者寫入 AppConfig.llm_env）。
+pub fn all_env_keys() -> Vec<&'static str> {
+    ALL_PROVIDERS.iter().filter_map(|p| env_key(p)).collect()
+}
+
 /// provider → 取 API key 的環境變數名（ollama 等免 auth 回 None）。
 pub fn env_key(provider: &str) -> Option<&'static str> {
     match provider {

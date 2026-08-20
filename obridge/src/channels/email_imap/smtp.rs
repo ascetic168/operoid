@@ -133,6 +133,7 @@ pub(crate) mod tests {
             username: std::env::var("OBRIDGE_SMTP_USER").unwrap(),
             password: std::env::var("OBRIDGE_SMTP_PASS").unwrap(),
             subject: "Operoid 測試".into(),
+            tls_insecure: std::env::var("OBRIDGE_TLS_INSECURE").is_ok(),
         };
         let sink = SmtpSink::new(cfg);
         sink.send_mail(OutgoingMail {

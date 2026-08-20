@@ -105,6 +105,7 @@ mod tests {
             username: std::env::var("OBRIDGE_IMAP_USER").unwrap(),
             password: std::env::var("OBRIDGE_IMAP_PASS").unwrap(),
             folder: "INBOX".into(),
+            tls_insecure: std::env::var("OBRIDGE_TLS_INSECURE").is_ok(),
         };
         let src = ImapSource::new(cfg);
         let (mails, seen) = src.fetch_new(&Seen::default()).unwrap();

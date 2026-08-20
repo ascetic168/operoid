@@ -153,6 +153,11 @@ pub struct AppConfig {
     /// 前置程式版本字串快取（P5：探測不 spawn——版本背景刷新後回寫於此）。
     #[serde(default)]
     pub prereq_cache: Option<crate::prereq::PrereqCache>,
+    /// LLM provider API key 環境變數快取（P5：服務以 LocalSystem 跑，看不到使用者
+    /// 環境——殼層於帶起/安裝服務時快照於此；oserver 啟動時注入自身環境，
+    /// gbrain 子行程自動繼承）。僅鍵存在於殼層環境者會被快照。
+    #[serde(default)]
+    pub llm_env: std::collections::BTreeMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -307,6 +312,7 @@ impl Default for AppConfig {
             server_token: None,
             server_executable: None,
             prereq_cache: None,
+            llm_env: std::collections::BTreeMap::new(),
         };
         cfg.normalize();
         cfg

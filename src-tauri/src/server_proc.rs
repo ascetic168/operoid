@@ -70,6 +70,26 @@ pub fn kill_spawned() {
     }
 }
 
+/// 把當前（使用者）環境中存在的 provider API key 快照進 cfg.llm_env 並保存。
+/// 服務以 LocalSystem 跑、看不到使用者環境——快照是其取得 key 的唯一途徑（P5）。
+/// 冪等合併：只補存在於當前環境的鍵，不清除既有。
+fn snapshot_llm_env<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(mut cfg) = app_config::load(app) else { return };
+    let mut changed = false;
+    for key in ocore::gbrain_config::all_env_keys() {
+        if let Ok(v) = std::env::var(key) {
+            if !v.trim().is_empty() && cfg.llm_env.get(key) != Some(&v) {
+                cfg.llm_env.insert(key.to_string(), v);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        let _ = app_config::save(app, &cfg);
+        eprintln!("[server] LLM API key 環境變數已快照至設定（服務行程用）");
+    }
+}
+
 /// App 啟動時呼叫（lib.rs setup）：確保本地服務在跑。
 pub fn ensure_server<R: Runtime>(app: &AppHandle<R>) {
     let mut cfg = match app_config::load(app) {
@@ -79,6 +99,8 @@ pub fn ensure_server<R: Runtime>(app: &AppHandle<R>) {
     if !cfg.server_autostart {
         return;
     }
+    // 使用者環境的 provider key 快照（服務行程看不到使用者環境）。
+    snapshot_llm_env(app);
     // token 缺省 → 生成並保存（前端 server_info 需要）。
     if cfg.server_token.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none() {
         cfg.server_token = Some(gen_token());
@@ -173,6 +195,7 @@ fn desktop_dirs<R: Runtime>(app: &AppHandle<R>) -> (String, String) {
 
 /// 安裝開機服務（設定頁開關 on）：spawn `oserver install --settings-dir … --db-dir …`。
 pub fn service_install<R: Runtime>(app: &AppHandle<R>) -> Result<(), crate::i18n::AppError> {
+    snapshot_llm_env(app);
     let Some(exe) = resolve_oserver(None) else {
         return Err(crate::i18n::AppError::new("server.exeNotFound"));
     };

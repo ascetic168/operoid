@@ -159,6 +159,14 @@ fn main() {
 async fn run(a: &DirArgs) -> anyhow::Result<()> {
     let dirs = resolve_from_args(a)?;
     let cfg = config::load_config(&dirs.settings_dir);
+    // 服務行程（LocalSystem）看不到使用者環境——注入殼層快照的 provider keys
+    // （llm::complete 與 gbrain 子行程自此都有 key）。
+    for (k, v) in &cfg.llm_env {
+        std::env::set_var(k, v);
+    }
+    if !cfg.llm_env.is_empty() {
+        eprintln!("[oserver] 已注入 {} 個 LLM 環境變數（設定快照）", cfg.llm_env.len());
+    }
 
     // token：env 優先，否則設定檔 server_token（服務模式路徑）。
     let token = std::env::var("OSERVER_TOKEN")
