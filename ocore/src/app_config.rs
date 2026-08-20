@@ -150,6 +150,9 @@ pub struct AppConfig {
     /// oserver 執行檔路徑（代管用；缺省 → 自動偵測：app exe 同目錄 → dev 的 target/debug）。
     #[serde(default)]
     pub server_executable: Option<String>,
+    /// 前置程式版本字串快取（P5：探測不 spawn——版本背景刷新後回寫於此）。
+    #[serde(default)]
+    pub prereq_cache: Option<crate::prereq::PrereqCache>,
 }
 
 fn default_true() -> bool {
@@ -303,6 +306,7 @@ impl Default for AppConfig {
             server_port: default_server_port(),
             server_token: None,
             server_executable: None,
+            prereq_cache: None,
         };
         cfg.normalize();
         cfg

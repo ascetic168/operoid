@@ -911,11 +911,33 @@ async fn api_prereq(
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let cfg = load_cfg(&st)?;
-        // 服務模式（LocalSystem）的 PATH 不含使用者 .bun/bin——由 settings_dir 推導
-        // 使用者 home（<home>/AppData/Roaming/com.operoid.studio 反推）供 fallback。
+        let cache = cfg.prereq_cache.clone().unwrap_or_default();
         let user_home = derive_user_home(&st.settings_dir);
-        Ok(check_all(&cfg.gbrain_exe_path, user_home.as_deref()))
+        let needs_refresh = cache.bun.is_none() || cache.gbrain.is_none();
+        let deps = check_all(&cfg.gbrain_exe_path, user_home.as_deref(), &cache);
+        Ok((deps, needs_refresh, user_home, cfg.gbrain_exe_path))
     })
     .await;
-    finish(res)
+    match res {
+        Ok(Ok((deps, needs_refresh, user_home, gbrain_exe))) => {
+            // 版本快取缺漏 → 背景刷新（spawn gbrain 是 bun 冷啟——絕不掛 API 回應）。
+            if needs_refresh {
+                let st2 = state.clone();
+                tokio::task::spawn_blocking(move || {
+                    let fresh = ocore::prereq::refresh_details(&gbrain_exe, user_home.as_deref());
+                    if let Ok(mut cfg) = load_cfg(&st2) {
+                        cfg.prereq_cache = Some(fresh);
+                        let _ = save_cfg(&st2, &cfg);
+                    }
+                });
+            }
+            ok_json(serde_json::to_value(&deps).unwrap_or_default())
+        }
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
