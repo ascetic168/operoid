@@ -4,8 +4,8 @@
 # ── 進氣：Operoid 的 POST /event 進氣口 ─────────────────────────────
 # 對應 Operoid app-settings.json 的 event_ingress_port / event_ingress_secret
 [operoid]
-ingress_url = "http://127.0.0.1:17341/event"
-ingress_secret = "operoid-ingress-secret"
+ingress_url = "http://127.0.0.1:7340/event"
+ingress_secret = "18cd2ab2e8c0798800000000000034e8"
 
 # ── 出氣：Obridge 的 send endpoint（Operoid 的 event_outbound_url 指向這裡）──
 # 僅綁 127.0.0.1。Operoid 端設 event_outbound_url = "http://127.0.0.1:17401/send"、
@@ -23,15 +23,17 @@ poll_secs = 60               # poll 間隔（秒）
 # state_file = "email-state.json"  # 去重狀態檔（預設與設定檔同目錄）
 
 [channels.email_imap.imap]
-host = "imap.corp.com"
-port = 993                   # 預設 993（implicit TLS）
+host = "mail.example.test"
+port = 993
+tls_insecure = true            # 測試伺服器自簽憑證——正式環境請移除                   # 預設 993（implicit TLS）
 username = "steve_tw@example.test"
 password = "AgentSteveTW01"    # 建議用 app password（v1 不支援 OAuth）
 folder = "INBOX"
 
 [channels.email_imap.smtp]
-host = "smtp.corp.com"
-port = 465                   # 465=implicit TLS；587=STARTTLS
+host = "mail.example.test"
+port = 465
+tls_insecure = true            # 測試伺服器自簽憑證——正式環境請移除                   # 465=implicit TLS；587=STARTTLS
 username = "steve_tw@example.test"
 password = "AgentSteveTW01"
 subject = "Operoid"          # 外寄預設主旨（thread 靠 In-Reply-To 維持）

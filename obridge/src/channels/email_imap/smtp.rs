@@ -73,9 +73,12 @@ impl MailSink for SmtpSink {
         );
         let mailer: AsyncSmtpTransport<Tokio1Executor> = if self.cfg.port == 465 {
             // implicit TLS（SMTPS）
-            let tls = lettre::transport::smtp::client::Tls::Wrapper(
-                lettre::transport::smtp::client::TlsParameters::new(self.cfg.host.clone())?,
-            );
+            let mut tls_params = lettre::transport::smtp::client::TlsParametersBuilder::new(self.cfg.host.clone());
+            if self.cfg.tls_insecure {
+                // 測試伺服器（自簽憑證）——僅在明確設定時放行。
+                tls_params = tls_params.dangerous_accept_invalid_certs(true);
+            }
+            let tls = lettre::transport::smtp::client::Tls::Wrapper(tls_params.build()?);
             AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(self.cfg.host.clone())
                 .port(465)
                 .tls(tls)

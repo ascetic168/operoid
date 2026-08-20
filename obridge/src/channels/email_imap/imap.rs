@@ -43,7 +43,12 @@ impl ImapSource {
 
 impl MailSource for ImapSource {
     fn fetch_new(&self, seen: &Seen) -> anyhow::Result<(Vec<RawMail>, Seen)> {
-        let client = imap::ClientBuilder::new(&self.cfg.host, self.cfg.port).connect()?;
+        let mut builder = imap::ClientBuilder::new(&self.cfg.host, self.cfg.port);
+        if self.cfg.tls_insecure {
+            // 測試伺服器（自簽憑證）——僅在明確設定時放行。
+            builder = builder.danger_skip_tls_verify(true);
+        }
+        let client = builder.connect()?;
         let mut session = client
             .login(&self.cfg.username, &self.cfg.password)
             .map_err(|e| anyhow::anyhow!("IMAP login 失敗：{}", e.0))?;

@@ -95,6 +95,9 @@ pub struct ImapCfg {
     pub password: String,
     #[serde(default = "default_folder")]
     pub folder: String,
+    /// 接受自簽/無效憑證（**測試伺服器專用**——正式環境務必 false/省略）。
+    #[serde(default)]
+    pub tls_insecure: bool,
 }
 
 fn default_imap_port() -> u16 {
@@ -116,6 +119,9 @@ pub struct SmtpCfg {
     /// In-Reply-To/References 維持）。預設 "Operoid"。
     #[serde(default = "default_subject")]
     pub subject: String,
+    /// 接受自簽/無效憑證（**測試伺服器專用**——正式環境務必 false/省略）。
+    #[serde(default)]
+    pub tls_insecure: bool,
 }
 
 fn default_smtp_port() -> u16 {
