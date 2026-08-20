@@ -33,3 +33,5 @@ docs/
 
 /target/
 src-tauri/binaries/
+obridge/email-state.json
+patch_readmes.py
