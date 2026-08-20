@@ -7,9 +7,6 @@ authors = ["朱國棟 (Charlie Chu)"]
 license = "MIT"
 
 [dependencies]
-[target.'cfg(windows)'.dependencies]
-windows-service = "0.8"
-runas = "1"
 ocore = { path = "../ocore" }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
@@ -18,3 +15,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 dirs = "5"
+
+# 服務註冊（P5）：SCM 整合＋UAC 自我提權——僅 Windows 需要。
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+runas = "1"
