@@ -259,6 +259,7 @@ pub fn run_service() -> Result<(), String> {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::*;
+    use std::path::PathBuf;
 
     fn unit_path() -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join(".config/systemd/user/operoid.service"))
@@ -292,47 +293,7 @@ mod imp {
         }
     }
 
-    /// 是否已以管理員身分執行（SCM 操作需要）。
-    fn is_elevated() -> bool {
-        // 簡單可靠的判斷：嘗試寫入需要提權的位置失敗即未提權——改用 OpenProcess token 更準；
-        // 此處用常見作法：寫 %WINDIR%\Temp 測試。
-        std::env::var("WINDIR")
-            .map(|w| {
-                let probe = std::path::PathBuf::from(w).join(".operoid-elev-probe");
-                std::fs::write(&probe, b"1").is_ok() && std::fs::remove_file(&probe).is_ok()
-            })
-            .unwrap_or(false)
-    }
-
-    /// SCM 操作需要管理員——非提權時以 runas（UAC）自我重啟並等待完成。
-    /// 回 true 表示已由提權行程完成（呼叫端直接退出）；false 表示當前已是提權行程。
-    fn elevate(cmd: &str, args: &[String]) -> Result<bool, String> {
-        if is_elevated() {
-            return Ok(false);
-        }
-        eprintln!("[service] 需要管理員權限——彈出 UAC 提權視窗……");
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let mut full = vec![cmd.to_string()];
-        full.extend_from_slice(args);
-        let status = runas::Command::new(exe)
-            .args(&full)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err("提權執行失敗（UAC 被拒或執行錯誤）".into());
-        }
-        Ok(true)
-    }
-
     pub fn install(settings_dir: &Path, db_dir: &Path) -> Result<(), String> {
-        let sdir = settings_dir.to_string_lossy().into_owned();
-        let ddir = db_dir.to_string_lossy().into_owned();
-        let args = vec!["--settings-dir".into(), sdir, "--db-dir".into(), ddir];
-        if elevate("install", &args)? {
-            return Ok(());
-        }
-        let settings_dir = Path::new(&args[1]);
-        let db_dir = Path::new(&args[3]);
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let unit = unit_path().ok_or("無法解析 home 目錄")?;
         if let Some(parent) = unit.parent() {
@@ -382,6 +343,7 @@ pub use imp::{install, is_installed, run_service, uninstall, unit_content};
 #[cfg(target_os = "macos")]
 mod imp {
     use super::*;
+    use std::path::PathBuf;
 
     fn plist_path() -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join("Library/LaunchAgents/com.operoid.studio.server.plist"))
@@ -411,47 +373,7 @@ mod imp {
         )
     }
 
-    /// 是否已以管理員身分執行（SCM 操作需要）。
-    fn is_elevated() -> bool {
-        // 簡單可靠的判斷：嘗試寫入需要提權的位置失敗即未提權——改用 OpenProcess token 更準；
-        // 此處用常見作法：寫 %WINDIR%\Temp 測試。
-        std::env::var("WINDIR")
-            .map(|w| {
-                let probe = std::path::PathBuf::from(w).join(".operoid-elev-probe");
-                std::fs::write(&probe, b"1").is_ok() && std::fs::remove_file(&probe).is_ok()
-            })
-            .unwrap_or(false)
-    }
-
-    /// SCM 操作需要管理員——非提權時以 runas（UAC）自我重啟並等待完成。
-    /// 回 true 表示已由提權行程完成（呼叫端直接退出）；false 表示當前已是提權行程。
-    fn elevate(cmd: &str, args: &[String]) -> Result<bool, String> {
-        if is_elevated() {
-            return Ok(false);
-        }
-        eprintln!("[service] 需要管理員權限——彈出 UAC 提權視窗……");
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        let mut full = vec![cmd.to_string()];
-        full.extend_from_slice(args);
-        let status = runas::Command::new(exe)
-            .args(&full)
-            .status()
-            .map_err(|e| e.to_string())?;
-        if !status.success() {
-            return Err("提權執行失敗（UAC 被拒或執行錯誤）".into());
-        }
-        Ok(true)
-    }
-
     pub fn install(settings_dir: &Path, db_dir: &Path) -> Result<(), String> {
-        let sdir = settings_dir.to_string_lossy().into_owned();
-        let ddir = db_dir.to_string_lossy().into_owned();
-        let args = vec!["--settings-dir".into(), sdir, "--db-dir".into(), ddir];
-        if elevate("install", &args)? {
-            return Ok(());
-        }
-        let settings_dir = Path::new(&args[1]);
-        let db_dir = Path::new(&args[3]);
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let plist = plist_path().ok_or("無法解析 home 目錄")?;
         if let Some(parent) = plist.parent() {
