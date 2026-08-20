@@ -1,0 +1,33 @@
+# 快速檢查工作流程：push 到 main 即在三平台跑 cargo check——跨平台編譯問題
+# （cfg 邊界、平台專屬依賴、簽名漂移）在 push 時現形，不等 20 分鐘的 release。
+# 教訓（2026-08-20 三連）：Windows 本機綠燈會掩蓋 linux/macOS 的 cfg 內程式碼錯誤。
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cargo-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'ubuntu-22.04'
+          - platform: 'macos-latest'
+          - platform: 'windows-latest'
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+      - name: cargo check（全 workspace，含測試目標）
+        run: cargo check --workspace --all-targets

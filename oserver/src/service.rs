@@ -331,7 +331,7 @@ mod imp {
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;
-        rt.block_on(crate::run()).map_err(|e| e.to_string())
+        rt.block_on(crate::run(&crate::parse_args())).map_err(|e| e.to_string())
     }
 }
 
@@ -419,7 +419,7 @@ mod imp {
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;
-        rt.block_on(crate::run()).map_err(|e| e.to_string())
+        rt.block_on(crate::run(&crate::parse_args())).map_err(|e| e.to_string())
     }
 }
 
