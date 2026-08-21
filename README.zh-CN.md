@@ -125,6 +125,23 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 [**Releases** 页面](https://github.com/ascetic168/Operoid/releases)下载对应平台的最新版本并运行。
 除非你要开发 Operoid，否则不需要 `git clone` 或从源码构建。
 
+### 安装开机服务（Linux / macOS）
+
+Linux 与 macOS 的开机服务在**任何用户登录前**就会启动
+（Linux：`/etc/systemd/system` 的 systemd system unit；
+macOS：`/Library/LaunchDaemons` 的 launchd LaunchDaemon）。安装注意事项：
+
+- 请**从你自己的账号通过 `sudo` 安装**（例如 `sudo oserver install`）。
+  提权只用于写入系统位置的 unit/plist 文件；服务本身以**安装者的身份**运行
+  （`User=`／`UserName`），因此 SQLite DB、`app-settings.json`、
+  gbrain／obridge 文件的所有者与桌面 app 一致——不会和 GUI 起权限冲突。
+- 若安装程序无法判定安装用户（例如直接在 root shell 执行），会直接
+  报错拒绝——请改从你的账号以 `sudo` 安装。
+- 服务的 `HOME` 会明确指向你的 home（Linux unit 内设置），
+  bun／gbrain 的惯例路径因此不会落到 `/root`。
+- 移除服务：`sudo oserver uninstall`。
+- Linux／macOS 的服务路径已实现但**尚未实机验证**（Windows 已验证）。
+
 ### 开发者（从源码构建）
 
 构建桌面应用需要 **Rust 工具链**与 [Tauri v2 前置需求](https://v2.tauri.app/start/prerequisites/)。

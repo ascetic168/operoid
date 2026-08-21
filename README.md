@@ -135,6 +135,26 @@ your platform from the
 [**Releases** page](https://github.com/ascetic168/Operoid/releases) and run it.
 No need to `git clone` or build from source unless you intend to develop Operoid.
 
+### Installing the boot-time service (Linux / macOS)
+
+On Linux and macOS the boot-time service starts **before any user logs in**
+(systemd system unit in `/etc/systemd/system`, or a launchd LaunchDaemon in
+`/Library/LaunchDaemons`). Notes for installing it:
+
+- Install it **from your own user account via `sudo`** (e.g. `sudo oserver
+  install`). The privileged step only writes the unit file; the service itself
+  runs as **the user who installed it** (`User=` / `UserName`), so the SQLite
+  DB, `app-settings.json`, and gbrain/obridge files keep the same owner as the
+  desktop app — no permission conflicts with the GUI.
+- If the installer cannot determine the invoking user (e.g. run from a pure
+  root shell), it refuses with an error — install via `sudo` from your account
+  instead.
+- `HOME` is set explicitly for the service (Linux unit), so bun/gbrain
+  convention paths resolve to your home, not `/root`.
+- Remove it with `sudo oserver uninstall`.
+- Linux/macOS service paths are implemented but **not yet verified on real
+  machines** (Windows is).
+
 ### For developers (build from source)
 
 Building the desktop app needs the **Rust toolchain** and the
