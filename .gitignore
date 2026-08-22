@@ -35,3 +35,4 @@ docs/
 src-tauri/binaries/
 obridge/email-state.json
 patch_readmes.py
+bun.lock
