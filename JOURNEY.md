@@ -311,6 +311,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 ## 延後
 
 - **D3 — GUI 演進策略：⏸ 刻意延後，做到 Phase 1+ 再想。** 目前唯一共識：「feature flag 隔離、先不動既有 GBrain 頁面」；新頁面何時上線，等 Phase 1 有東西可展示再決定。
+- **D6 — GUI 與 oserver 跨機器分離部署：⏸ 延後（2026-08-22 記錄）。** v0.3.0 刻意限定 oserver 僅本機（bind 127.0.0.1、前端寫死 127.0.0.1、token 明文本機假設）。未來跨機器時有四個必改點，**含最易漏的 CSP connect-src**（2026-08-22 NSIS 安裝版事件：CSP 只在打包版生效、dev 不套用——dev 正常、安裝版待辦全空）。完整清單見待處理清單 E14；屆時以專檔計畫展開。
 
 ## 已定案（2026-08-18）
 
@@ -378,3 +379,5 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 **前後端分離完成（2026-08-18～20，P1–P5，v0.3.0）**：`ocore`（純 Rust 核心，零 Tauri）＋`oserver`（常駐服務：axum HTTP API、token 認證、agent-os 讀寫面、GBrain 全域、ring-buffer 主控台、`/event` ingress、三平台服務註冊）＋桌面殼（視窗＋桌面專屬能力，前端全走 HTTP）。生命週期雙語意：裝服務→開機自啟（GUI 關閉不影響）；未裝→GUI 帶起帶走。計畫全貌見 `docs/Operoid-計畫-前後端分離.md`（DR1–DR6＋版次策略：個人/企業差異在發佈與組態層，認證 provider 插座已種）。
 
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。
+
+**CSP 事件與分離部署記錄（2026-08-22）**：NSIS 安裝版啟動後待辦全空、按鍵凍結——根因是 `tauri.conf.json` CSP 無 `connect-src`，打包版擋掉前端對 oserver 的 `http://127.0.0.1` fetch（dev 模式不套用 CSP，故 dev 正常）。修法：CSP 補 `connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*`，重建安裝檔。教訓已轉為待處理清單 **E14**（GUI 與 oserver 跨機器分離部署的四個必改點，含最易漏的 CSP），並登錄為決策 D6（延後）。
