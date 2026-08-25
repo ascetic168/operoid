@@ -66,6 +66,11 @@ pub struct AppConfig {
     /// 註冊的腦清單。
     #[serde(default)]
     pub brains: Vec<BrainEntry>,
+    /// gbrain 傳輸方式：`"mcp"`（預設；Employee 知識工具走 `gbrain serve` stdio MCP，
+    /// 失敗自動 fallback CLI）或 `"cli"`（純子行程）。僅影響 think/query 檢索路徑；
+    /// 管理操作（sync/sources/config）一律走 CLI。
+    #[serde(default = "default_gbrain_transport")]
+    pub gbrain_transport: String,
     /// 作用中腦 id。
     #[serde(default)]
     pub active_brain_id: Option<String>,
@@ -162,6 +167,9 @@ pub struct AppConfig {
 
 fn default_true() -> bool {
     true
+}
+fn default_gbrain_transport() -> String {
+    "mcp".into()
 }
 fn default_temp() -> f64 {
     0.2
@@ -287,6 +295,7 @@ impl Default for AppConfig {
             gbrain_exe_path: gbrain_exe,
             gbrain_home_override: None,
             brains: vec![],
+            gbrain_transport: default_gbrain_transport(),
             active_brain_id: None,
             active_source_id: None,
             auto_sync: true,

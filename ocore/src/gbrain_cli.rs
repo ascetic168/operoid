@@ -329,8 +329,8 @@ async fn run_sync(
 }
 
 /// 統一操作分派（core，P1c：cfg/exe 由殼層解析傳入）。`op` ∈
-/// stats|sync|extract|embed|ask|think|doctor|orphans|storage|graph-query。
-/// `arg` 為 ask/think/graph-query 的查詢或 slug；think 可用 `anchor:<slug>` 前綴。
+/// stats|sync|extract|embed|ask|query|think|doctor|orphans|storage|graph-query|unify-types。
+/// `arg` 為 ask/query/think/graph-query 的查詢或 slug；think 可用 `anchor:<slug>` 前綴。
 pub async fn op_run_core(
     cfg: &AppConfig,
     exe: &str,
@@ -381,6 +381,20 @@ pub async fn op_run_core(
         "ask" => {
             let q = arg.ok_or_else(|| AppError::new("op.needArg").p("op", "ask"))?;
             let code = run!(&["ask", &q]).map_err(|e| e.to_string())?;
+            Ok(OpResult::from_code(code))
+        }
+        // query＝混合檢索（向量＋關鍵字＋RRF 融合，無 LLM 合成；gbrain v0.46 的 `search`
+        // 只是 tsvector 關鍵字搜尋，混合檢索叫 `query`）。
+        "query" => {
+            let q = arg.ok_or_else(|| AppError::new("op.needArg").p("op", "query"))?;
+            let code = run!(&["query", &q]).map_err(|e| e.to_string())?;
+            Ok(OpResult::from_code(code))
+        }
+        // schema pack v1（gbrain-base）→v2（gbrain-base-v2）遷移：提交 unify-types Minion
+        // job（retype 舊 24 型→15 標準型）。僅供設定頁的提示按鈕手動觸發，不自動執行。
+        "unify-types" => {
+            let code = run!(&["jobs", "submit", "unify-types"])
+                .map_err(|e| e.to_string())?;
             Ok(OpResult::from_code(code))
         }
         "think" => {

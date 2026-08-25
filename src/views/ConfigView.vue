@@ -5,6 +5,7 @@ import { Save, AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-vue
 import { useConfigStore } from "@/stores/config";
 import {
   formatError,
+  runOp,
   tL10n,
   type AppConfig,
   obridgeConfigLoad,
@@ -199,6 +200,7 @@ const form = reactive<AppConfig>({
   claude_terminal: null,
   claude_terminal_template: null,
   agent_os_enabled: false,
+  gbrain_transport: "mcp",
   obridge_config_path: null,
   obridge_autostart: false,
   obridge_executable: null,
@@ -238,6 +240,22 @@ async function toggleService() {
   }
 }
 onMounted(loadServerInfo);
+
+// unify-types（schema pack v1→v2 遷移 job）：僅提示入口，手動觸發。
+const unifyBusy = ref(false);
+const unifyMsg = ref<string | null>(null);
+async function runUnifyTypes() {
+  unifyBusy.value = true;
+  unifyMsg.value = null;
+  try {
+    const res = await runOp("unify-types", null, () => {});
+    unifyMsg.value = res.success ? t("configView.schemaV2Done") : t("configView.schemaV2Fail");
+  } catch (e) {
+    unifyMsg.value = formatError(e);
+  } finally {
+    unifyBusy.value = false;
+  }
+}
 
 const appSaved = ref(false);
 const appError = ref<string | null>(null);
@@ -329,6 +347,23 @@ async function onLocaleChange(v: string) {
         <div><span class="text-muted-foreground">embedding：</span><code>{{ config.gbrain.embedding_model ?? $t("common.dash") }}</code></div>
         <div><span class="text-muted-foreground">schema_pack：</span><code>{{ config.gbrain.schema_pack ?? $t("common.dash") }}</code></div>
         <div><span class="text-muted-foreground">database：</span><code>{{ config.gbrain.database_path ?? $t("common.dash") }}</code></div>
+      </div>
+
+      <!-- schema pack v2 提示：legacy pack 顯示遷移入口（不自動執行） -->
+      <div
+        v-if="config.gbrain?.schema_pack && !config.gbrain.schema_pack_v2"
+        class="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-warning/50 bg-warning/10 p-2 text-sm"
+      >
+        <AlertTriangle :size="14" class="text-warning" />
+        <span>{{ $t("configView.schemaV2Hint") }}</span>
+        <button
+          class="rounded-md border border-border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+          :disabled="unifyBusy"
+          @click="runUnifyTypes"
+        >
+          {{ $t("configView.schemaV2Run") }}
+        </button>
+        <span v-if="unifyMsg" class="text-xs text-muted-foreground">{{ unifyMsg }}</span>
       </div>
 
       <!-- LLM endpoint resolution -->
@@ -552,6 +587,14 @@ async function onLocaleChange(v: string) {
           </select>
         </label>
         <div class="flex flex-col gap-2 sm:col-span-2">
+          <label class="flex items-center gap-2 text-sm">
+            <span>{{ $t("configView.gbrainTransportLabel") }}</span>
+            <select v-model="form.gbrain_transport" class="rounded-md border border-border bg-background px-2 py-1.5">
+              <option value="mcp">MCP</option>
+              <option value="cli">CLI</option>
+            </select>
+            <span class="text-muted-foreground text-xs">{{ $t("configView.gbrainTransportHint") }}</span>
+          </label>
           <label class="flex items-center gap-2">
             <input v-model="form.auto_sync" type="checkbox" />
             <span>{{ $t("configView.autoSyncLabel") }}</span>

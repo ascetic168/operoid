@@ -265,6 +265,8 @@
       "ask": "ask",
       "askDesc": "混合檢索",
       "think": "think",
+      "query": "query",
+      "queryDesc": "混合檢索（query；ask 的新一代指令）",
       "thinkDesc": "多跳合成（可選 anchor:slug 換行）"
     },
     "diagnostics": {
@@ -275,7 +277,9 @@
       "storage": "storage",
       "storageDesc": "層狀態",
       "graphQuery": "graph-query",
-      "graphQueryDesc": "看實體邊"
+      "graphQueryDesc": "看實體邊",
+      "unifyTypes": "unify-types",
+      "unifyTypesDesc": "schema pack v1→v2 型別遷移（jobs submit unify-types）"
     }
   },
   "configView": {
@@ -295,6 +299,12 @@
     "tierDesc": "gbrain v0.42 依 tier 路由任務。設定經 gbrain config set 寫入 DB plane（權威層）。",
     "unifyModel": "全部 tier 用同一個模型",
     "unifyModelHint": "把單一模型套用到 chat + 四個 tier（utility/reasoning/deep/subagent）。",
+      "gbrainTransportLabel": "gbrain 傳輸",
+      "gbrainTransportHint": "員工 think/query 走 MCP（gbrain serve；失敗自動退回 CLI）或純 CLI",
+      "schemaV2Hint": "此腦仍是 schema pack v1（gbrain-base）。建議遷移到 v2（15 標準型）後再繼續寫入。",
+      "schemaV2Run": "執行 unify-types",
+      "schemaV2Done": "已提交 unify-types job（可在 Operations 執行 jobs list 觀察）",
+      "schemaV2Fail": "unify-types 失敗（見 Operations 主控台）",
     "mainModelTitle": "主模型（套用至全部 tier）",
     "mainModelHint": "經 gbrain config set 寫入 chat_model + models.default/think + 四個 tier 到 DB plane。",
     "mainModelPh": "provider:model（例如 zhipu:glm-4-flash）",

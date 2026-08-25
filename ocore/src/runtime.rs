@@ -506,16 +506,26 @@ pub fn fresh_id(prefix: &str) -> String {
     format!("{prefix}-{}", now_rfc3339().replace(':', "-"))
 }
 
+/// 現在時刻資訊行：LLM 沒有時鐘——喚醒 prompt 注入，讓「今天/這週」的判斷有依據。
+fn now_line() -> String {
+    use chrono::Datelike;
+    let now = chrono::Local::now();
+    let wd = ["一", "二", "三", "四", "五", "六", "日"][now.weekday().num_days_from_monday() as usize];
+    format!("{}（週{wd}）", now.format("%Y-%m-%d %H:%M"))
+}
+
 /// 對話回合 tool-loop 的步數上限（E12）：防 LLM 失控循環。簡單回覆 1～2 步即收斂
 /// （think→finish 或直接 finish）；複雜訊息可查多寄多＋順帶提案。用盡 → best-effort 視同 finish。
 const MAX_TURN_STEPS: u32 = 6;
 
 const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外部訊息。你可以連續多步行動，每步只回一個 JSON 動作，不附加其他文字：\n\
-  {\"action\": \"think\", \"query\": \"...\"} —— 查詢知識圖譜取得證據（需要依據才回答時使用）。\n\
+  {\"action\": \"search\", \"query\": \"...\"} —— 快速檢索知識圖譜的相關頁面（無合成、省時；查資料/找原文時優先用）。\n\
+  {\"action\": \"think\", \"query\": \"...\"} —— 對知識圖譜做多跳引用合成（需要綜合結論/依據才回答時使用）。\n\
   {\"action\": \"send\", \"to\": \"...\"（可省，預設回覆喚醒你的這則訊息）, \"text\": \"要外發的訊息全文\"} —— 把訊息寄給外部對象（經 bridge；內部對話也會留紀錄）。\n\
   {\"action\": \"propose\", \"title\": \"承諾標題\", \"condition\": \"完成條件\"} —— 提案一個長期承諾，待人類核可。\n\
   {\"action\": \"finish\", \"text\": \"給人類的最終回覆\"（可省）} —— 結束本回合。\n\
-  判斷準則：需要證據就先 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
+  判斷準則：查資料用 search（快、省）；需要跨頁綜合結論才 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
+  回覆人類一個回合只需一次（send 或 finish 擇一，不要重複回覆同一對象）；\
   純通知、與你職責無關、或你無可補充——直接 finish 且不帶 text（不回覆）。";
 /// 處理一則人類／外部訊息（Inbox task）：**回合內 tool-loop**（E12 tool-choice）——員工每步
 
@@ -549,15 +559,27 @@ async fn run_conversational_turn(
     let mut sent_any = false;
     let mut steps: Vec<String> = Vec::new(); // 已完成步驟的結果（進每步的 user prompt）
 
+    // 同通道單一回覆保證：LLM 在 tool-loop 內容易對同一對象 send＋send＋finish 各寫一則
+    // Out Message（使用者收到三則幾乎相同的回覆）。此為 Runtime 結構保證——同一目標
+    // （`to`；缺省＝喚醒訊息的回覆通道）一回合只成功送出一則；**不同目標放行**（多對象
+    // 通知）、**失敗的 send 不計入**（保留重試與 finish 保底）。達成「不對同一個人重複
+    // 說話」，而非「一回合一則訊息」。
+    let default_target = task
+        .external_reply_to
+        .clone()
+        .unwrap_or_else(|| "chat".into());
+    let mut replied: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for _ in 0..MAX_TURN_STEPS {
         let user = format!(
-            "訊息：{}\n\n{}\n請決定下一步動作（只回 JSON）。",
+            "現在時間：{now}。\n訊息：{}\n\n{}\n請決定下一步動作（只回 JSON）。",
             task.input,
             if steps.is_empty() {
                 "（尚未行動）".into()
             } else {
                 format!("已完成步驟結果：\n{}", steps.join("\n"))
             },
+            now = now_line(),
         );
         let action = match reasoner.reason(TURN_SYSTEM, &user).await {
             Ok(v) => v,
@@ -575,6 +597,27 @@ async fn run_conversational_turn(
             .unwrap_or("finish")
             .to_string();
         match act.as_str() {
+            // search：輕量檢索（gbrain query）——以 params.tool 指名 Toolset 底下的檢索工具。
+            "search" => {
+                let query = action
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(task.input.as_str());
+                let mut params = serde_json::Map::new();
+                params.insert("tool".into(), serde_json::json!("search"));
+                let output = knowledge
+                    .invoke(
+                        ToolInput {
+                            query: query.to_string(),
+                            anchor: None,
+                            params: Some(params),
+                        },
+                        ctx,
+                    )
+                    .await?;
+                let snippet: String = output.text.chars().take(1200).collect();
+                steps.push(format!("[search「{query}」] 結果（節錄）：{snippet}"));
+            }
             "think" => {
                 let query = action
                     .get("query")
@@ -613,6 +656,18 @@ async fn run_conversational_turn(
                     steps.push("[send] 失敗：text 不可為空。".into());
                     continue;
                 }
+                // 同通道單一回覆：此目標本回合已成功送出 → 不再重複（見函式開頭註解）。
+                let target = action
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| default_target.clone());
+                if replied.contains(&target) {
+                    steps.push(format!(
+                        "[send] 已回覆過 {target}，同一回合不重複送出；如無其他對象請 finish。"
+                    ));
+                    continue;
+                }
                 let mut params = serde_json::Map::new();
                 params.insert("text".into(), serde_json::Value::String(text.clone()));
                 if let Some(to) = action.get("to").and_then(|v| v.as_str()) {
@@ -643,6 +698,7 @@ async fn run_conversational_turn(
                 match out.meta.get("outcome").and_then(|v| v.as_str()) {
                     Some("sent") => {
                         sent_any = true;
+                        replied.insert(target);
                         record_event(
                             store,
                             &workspace_id,
@@ -650,6 +706,12 @@ async fn run_conversational_turn(
                             "outbound_sent",
                             out.meta.get("to").and_then(|v| v.as_str()).unwrap_or("?"),
                         );
+                    }
+                    // skipped＝外發未啟用、error(no source)＝純內部聊天——兩者的 Out Message
+                    // 都已寫入歷史（人類看得到）→ 計入已回覆；唯 failed（bridge 真的沒送達）
+                    // 保留重試與 finish 保底。
+                    Some("skipped") | Some("error") => {
+                        replied.insert(target);
                     }
                     Some("failed") => record_event(
                         store,
@@ -680,6 +742,11 @@ async fn run_conversational_turn(
             }
             _ => {
                 // finish（含未知 action 的 fail-safe）：有 text → 寫最終 Out Message。
+                // 同通道單一回覆：回覆通道已送出過（send 成功/skipped）→ 不再重複寫
+                // （此為使用者收到重複回覆的主要來源：send 後 finish 又帶 text）。
+                if replied.contains(&default_target) {
+                    return Ok(artifact_id);
+                }
                 if let Some(text) = action.get("text").and_then(|v| v.as_str()) {
                     if !text.trim().is_empty() {
                         store.put_message(&Message {
@@ -861,7 +928,7 @@ pub async fn run_autonomous(
         let recent: Vec<String> = memory.notes.iter().rev().take(5).cloned().collect();
         let summaries = recent_artifact_summaries(store, &artifact_ids, 3, 400)?;
         let plan_user = format!(
-            "承諾：{title}\n完成條件：{cond}\n\
+            "現在時間：{now}。\n承諾：{title}\n完成條件：{cond}\n\
              已查得的成果（近期）：\n{arts}\n\
              近期已做：\n{recent}\n\
              請決定下一步：若上述成果已足以滿足完成條件，回 {{\"done\": true}}；\
@@ -873,6 +940,7 @@ pub async fn run_autonomous(
             cond = commitment.completion_condition,
             arts = if summaries.is_empty() { "(尚無)".into() } else { summaries.join("\n") },
             recent = if recent.is_empty() { "(尚無)".into() } else { recent.join("\n") },
+            now = now_line(),
         );
         let plan = match reasoner.reason(PLAN_SYSTEM, &plan_user).await {
             Ok(v) => v,
@@ -1274,6 +1342,23 @@ impl Tool for GbrainThinkTool {
 
     fn invoke<'a>(&'a self, input: ToolInput, ctx: &'a ToolCtx) -> ToolFuture<'a> {
         Box::pin(async move {
+            // MCP 優先（transport=mcp 時 ctx 已注入 client）；任何失敗 fallback CLI。
+            if let Some(mcp) = &ctx.mcp {
+                let mut args = serde_json::json!({ "question": input.query });
+                if let Some(m) = &ctx.chat_model {
+                    args["model"] = serde_json::json!(m);
+                }
+                if let Some(a) = &input.anchor {
+                    args["anchor"] = serde_json::json!(a);
+                }
+                match mcp.call("think", args).await {
+                    Ok(text) => {
+                        let meta = parse_think_meta(&text);
+                        return Ok(ToolOutput { text, meta });
+                    }
+                    Err(e) => eprintln!("[runtime] gbrain think 走 MCP 失敗（fallback CLI）: {e}"),
+                }
+            }
             let env = crate::proc::env_for_brain(ctx.gbrain_home.as_deref());
             let mut args: Vec<String> = vec!["think".into(), input.query.clone()];
             // E9：顯式指定 model，跳過 gbrain 的解析鏈 fallback（models.think→default→$GBRAIN_MODEL→opus）。
@@ -1312,6 +1397,107 @@ impl Tool for GbrainThinkTool {
             let meta = parse_think_meta(&stdout);
             Ok(ToolOutput { text: stdout, meta })
         })
+    }
+}
+
+// ───────────────── 第二個 Tool：gbrain query（輕量檢索，無合成）─────────────────
+/// 以 gbrain `query` 做混合檢索（向量＋關鍵字＋RRF 融合）。與 [`GbrainThinkTool`]（多跳
+/// 引用合成）成對：search 取回原始頁面（省 token、快），think 做最終綜合結論。
+pub struct GbrainSearchTool {
+    spec: ToolSpec,
+}
+
+impl GbrainSearchTool {
+    pub fn new() -> Self {
+        Self {
+            spec: ToolSpec {
+                id: "gbrain-search".into(),
+                description: "Fast hybrid retrieval (vector+BM25+RRF) over the GBrain \
+                    knowledge graph. No synthesis; need cited conclusions → gbrain-think."
+                    .into(),
+            },
+        }
+    }
+}
+
+impl Tool for GbrainSearchTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    fn invoke<'a>(&'a self, input: ToolInput, ctx: &'a ToolCtx) -> ToolFuture<'a> {
+        Box::pin(async move {
+            // MCP 優先（transport=mcp 時 ctx 已注入 client）；任何失敗 fallback CLI。
+            if let Some(mcp) = &ctx.mcp {
+                match mcp
+                    .call("query", serde_json::json!({ "query": input.query, "limit": 10 }))
+                    .await
+                {
+                    Ok(text) => return Ok(ToolOutput { text, meta: serde_json::json!({}) }),
+                    Err(e) => eprintln!("[runtime] gbrain query 走 MCP 失敗（fallback CLI）: {e}"),
+                }
+            }
+            let env = crate::proc::env_for_brain(ctx.gbrain_home.as_deref());
+            let arg_refs = ["query", input.query.as_str(), "--limit", "10"];
+            let mut cmd = tokio::process::Command::new(&ctx.gbrain_exe);
+            crate::proc::no_console_async(&mut cmd);
+            cmd.args(&arg_refs);
+            for (k, v) in &env {
+                cmd.env(k, v);
+            }
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let out = cmd
+                .output()
+                .await
+                .map_err(|e| anyhow::anyhow!("spawn gbrain query failed: {e}"))?;
+            let code = out.status.code().unwrap_or(-1);
+            let stdout = crate::proc::decode_buf(&out.stdout);
+            let stderr = crate::proc::decode_buf(&out.stderr);
+            if code != 0 && stdout.trim().is_empty() {
+                anyhow::bail!("gbrain query failed (exit {code}): {}", stderr.trim());
+            }
+            Ok(ToolOutput { text: stdout, meta: serde_json::json!({}) })
+        })
+    }
+}
+
+// ───────────────── Toolset：極簡工具登錄表（本身也是 Tool）─────────────────
+/// 一組知識工具的複合分派器：依 `input.params["tool"]` 選擇底層工具（`"search"` →
+/// [`GbrainSearchTool`]；其餘/缺省 → [`GbrainThinkTool`]）。本身實作 `Tool`，故 Runtime
+/// 既有的 `&dyn Tool` 簽名不必改——多工具併存的最小結構保證（Principle 5 不變：
+/// 選哪個工具仍是 Runtime/Reasoner 的決策，Toolset 只分派）。
+pub struct GbrainToolset {
+    think: GbrainThinkTool,
+    search: GbrainSearchTool,
+}
+
+impl GbrainToolset {
+    pub fn new() -> Self {
+        Self {
+            think: GbrainThinkTool::new(),
+            search: GbrainSearchTool::new(),
+        }
+    }
+
+    fn pick(&self, input: &ToolInput) -> &dyn Tool {
+        match input.params.as_ref().and_then(|p| p.get("tool")).and_then(|v| v.as_str()) {
+            Some("search") => &self.search,
+            _ => &self.think,
+        }
+    }
+}
+
+impl Tool for GbrainToolset {
+    fn spec(&self) -> &ToolSpec {
+        // Toolset 的 spec 描述整組能力；呼叫端（如 TURN_SYSTEM 的 action）以 params 指名工具。
+        &self.think.spec
+    }
+
+    fn invoke<'a>(&'a self, input: ToolInput, ctx: &'a ToolCtx) -> ToolFuture<'a> {
+        // 分派是同步決策（依 params），直接在 pick 後轉發——不額外包非同步邏輯。
+        self.pick(&input).invoke(input, ctx)
     }
 }
 
@@ -1417,12 +1603,13 @@ pub fn agent_db_path_in(data_dir: &std::path::Path) -> std::path::PathBuf {
     data_dir.join("operoid.db")
 }
 
-/// 為某員工解析其腦並建構（GbrainThinkTool, ToolCtx）。`agent_run` 與排程器共用。
+/// 為某員工解析其腦並建構（GbrainToolset, ToolCtx）。`agent_run` 與排程器共用。
+/// transport=mcp（預設）時 ctx 注入 MCP client；exe 仍在 ctx 供 fallback。
 pub fn build_tool_ctx(
     cfg: &app_config::AppConfig,
     store: &SqliteStore,
     employee_id: &str,
-) -> Result<(GbrainThinkTool, ToolCtx), AppError> {
+) -> Result<(GbrainToolset, ToolCtx), AppError> {
     let emp = store
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
@@ -1430,12 +1617,22 @@ pub fn build_tool_ctx(
     let chat_model = gbrain_config::load_for(entry.env_home())
         .ok()
         .and_then(|l| l.config.chat_model);
+    let gbrain_home = entry.env_home().map(|s| s.to_string());
+    let mcp = if cfg.gbrain_transport == "mcp" {
+        Some(std::sync::Arc::new(crate::gbrain_mcp::GbrainMcpClient::new(
+            cfg.gbrain_exe_path.clone(),
+            gbrain_home.clone(),
+        )))
+    } else {
+        None
+    };
     Ok((
-        GbrainThinkTool::new(),
+        GbrainToolset::new(),
         ToolCtx {
             gbrain_exe: cfg.gbrain_exe_path.clone(),
-            gbrain_home: entry.env_home().map(|s| s.to_string()),
+            gbrain_home,
             chat_model,
+            mcp,
         },
     ))
 }
@@ -1778,6 +1975,7 @@ mod tests {
             gbrain_exe: String::new(),
             gbrain_home: None,
             chat_model: None,
+            mcp: None,
         }
     }
 
@@ -1918,6 +2116,86 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Completed);
         assert_eq!(store.list_artifacts("ws").unwrap().len(), 1);
         assert_eq!(tool.call_count(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 同通道單一回覆保證：模型 send→send→finish（過去＝三則 Out Message，使用者收到
+    /// 三則重複回覆）→ 現在只允許第一則送達回覆通道，其餘被 Runtime 抑制。
+    #[tokio::test]
+    async fn conversational_send_send_finish_single_reply() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "早安！".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("x");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"send","text":"早安，有什麼需要？"}"#,
+            r#"{"action":"send","text":"早安，有什麼需要？（重複）"}"#,
+            r#"{"action":"finish","text":"早安，有什麼需要？（finish 又帶 text）"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+            .await
+            .unwrap();
+
+        // 僅一則 Out Message（第一個 send）；後續 send 與 finish 的重複回覆都被抑制。
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].direction, MessageDirection::Out);
+        assert_eq!(msgs[0].text, "早安，有什麼需要？");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 不同目標不受單一回應限制：send 給另一對象（顯式 to）＋回覆預設通道 → 兩則皆送達。
+    #[tokio::test]
+    async fn conversational_distinct_targets_not_suppressed() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "請同步主管。".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("x");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"send","to":"boss@example.com","text":"主管好，事件已處理。"}"#,
+            r#"{"action":"finish","text":"已同步主管。"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+            .await
+            .unwrap();
+
+        // 兩則 Out Message：給主管的一則＋回覆人類的一則（不同目標，皆合法）。
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs.iter().any(|m| m.text.contains("主管好")));
+        assert!(msgs.iter().any(|m| m.text.contains("已同步主管")));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -2265,9 +2543,11 @@ mod tests {
             .await
             .unwrap();
 
-        // send 的 Out message 照寫（歷史如實記錄外發意圖）＋ finish 的最終回覆。
+        // send 的 Out message 照寫（歷史如實記錄外發意圖）；finish 的重複回覆被同通道
+        // 單一回覆保證抑制（send 已可見於歷史——再寫一則＝人類收到重複回覆）。
         let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
-        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert_eq!(msgs.len(), 1, "{msgs:?}");
+        assert_eq!(msgs[0].text, "回覆");
         let evs = store.list_events_by_employee(&emp_id, 20).unwrap();
         assert!(
             !evs.iter().any(|e| e.kind.starts_with("outbound")),
@@ -2817,6 +3097,7 @@ mod tests {
                 .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
+            mcp: None,
         };
         let res = run_cycle(
             &emp_id,
@@ -2927,6 +3208,7 @@ mod tests {
                 .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
+            mcp: None,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -3352,6 +3634,7 @@ mod tests {
                 .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
+            mcp: None,
         };
 
         let dir = test_dir();
@@ -3667,6 +3950,7 @@ mod tests {
                 .and_then(|l| l.config.chat_model),
             gbrain_exe: exe,
             gbrain_home: home,
+            mcp: None,
         };
 
         let dir = test_dir();

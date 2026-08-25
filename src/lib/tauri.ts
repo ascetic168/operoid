@@ -88,6 +88,7 @@ export interface GBrainConfigView {
   embedding_model: string | null;
   embedding_dimensions: number | null;
   schema_pack: string | null;
+  schema_pack_v2: boolean;
   engine: string | null;
   database_path: string | null;
   provider_base_urls: Record<string, string>;
@@ -133,6 +134,7 @@ export interface AppConfig {
   claude_terminal: string | null;
   claude_terminal_template: string | null;
   agent_os_enabled: boolean;
+  gbrain_transport?: string;
   obridge_config_path?: string | null;
   obridge_autostart?: boolean;
   obridge_executable?: string | null;
@@ -219,7 +221,9 @@ export type OpName =
   | "extract"
   | "embed"
   | "ask"
+  | "query"
   | "think"
+  | "unify-types"
   | "doctor"
   | "orphans"
   | "storage"

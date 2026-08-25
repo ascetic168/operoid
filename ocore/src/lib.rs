@@ -22,6 +22,7 @@ pub mod i18n;
 pub mod factories;
 pub mod gbrain_cfg;
 pub mod gbrain_cli;
+pub mod gbrain_mcp;
 pub mod llm;
 pub mod outbound;
 pub mod prereq;

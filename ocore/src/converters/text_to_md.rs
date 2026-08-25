@@ -109,11 +109,24 @@ pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
         }
     }
 
-    let fm = frontmatter::build(&[
+    // schema pack v2（gbrain-base-v2）對齊：type 值已是 v2 標準型（person/company/meeting/
+    // concept/project）；company 在 v2 有 subtype（companies/ → company）；origin 標記
+    // 產源（v2 把來源資訊放 frontmatter 而非型別）。
+    let subtype = match factory {
+        "companies" => Some("company"),
+        _ => None,
+    };
+    let mut fm_entries: Vec<(&str, String)> = vec![
         ("type", ptype),
+        ("subtype", subtype.unwrap_or_default().to_string()),
+        ("origin", "operoid-factory".to_string()),
         ("title", frontmatter::yaml_single_quote(&title)),
         ("tags", format!("[{}]", tags.join(", "))),
-    ]);
+    ];
+    if subtype.is_none() {
+        fm_entries.retain(|(k, _)| *k != "subtype");
+    }
+    let fm = frontmatter::build(&fm_entries);
     let joined = b.join("\n").trim_end().to_string();
     (slug, format!("{fm}{joined}\n"))
 }
@@ -310,9 +323,26 @@ mod tests {
         };
         let (slug, md) = render("companies", &sp);
         assert_eq!(slug, "acme-corp");
-        assert!(md.starts_with("---\ntype: company\ntitle: 'Acme Corp'\ntags: [companies, contact]\n---"));
+        assert!(md.starts_with(
+            "---\ntype: company\nsubtype: company\norigin: operoid-factory\ntitle: 'Acme Corp'\ntags: [companies, contact]\n---"
+        ));
         assert!(md.contains("# Acme Corp"));
         assert!(md.contains("[[people/jane-doe|Jane Doe]]"));
+    }
+
+    #[test]
+    fn renders_person_without_subtype() {
+        let sp = StructuredPage {
+            title: "王大明".into(),
+            page_type: "".into(),
+            tags: vec![],
+            body_markdown: "業務聯絡人。".into(),
+            timeline: vec![],
+            mentioned_names: vec![],
+        };
+        let (_, md) = render("people", &sp);
+        assert!(md.starts_with("---\ntype: person\norigin: operoid-factory\ntitle: '王大明'"));
+        assert!(!md.contains("subtype"));
     }
 
     #[test]

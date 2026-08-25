@@ -459,10 +459,11 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             gbrain_exe: cfg.gbrain_exe_path.clone(),
             gbrain_home: entry.env_home().map(|s| s.to_string()),
             chat_model,
+            mcp: None,
         });
     }
 
-    let tool = GbrainThinkTool::new();
+    let tool = crate::runtime::GbrainToolset::new();
     let futs = assignments.iter().zip(ctxs.iter()).map(|(a, ctx)| {
         run_cycle(
             &a.employee_id,

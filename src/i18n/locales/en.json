@@ -265,6 +265,8 @@
       "ask": "ask",
       "askDesc": "hybrid retrieval",
       "think": "think",
+      "query": "query",
+      "queryDesc": "hybrid retrieval (query; successor to ask)",
       "thinkDesc": "multi-hop synthesis (optional anchor:slug on new line)"
     },
     "diagnostics": {
@@ -275,7 +277,9 @@
       "storage": "storage",
       "storageDesc": "layer status",
       "graphQuery": "graph-query",
-      "graphQueryDesc": "view entity edges"
+      "graphQueryDesc": "view entity edges",
+      "unifyTypes": "unify-types",
+      "unifyTypesDesc": "schema pack v1→v2 type migration (jobs submit unify-types)"
     }
   },
   "configView": {
@@ -295,6 +299,12 @@
     "tierDesc": "gbrain v0.42 routes tasks to model tiers. Settings write to the DB plane (authoritative) via gbrain config set.",
     "unifyModel": "Use one model for all tiers",
     "unifyModelHint": "Apply a single model to chat + all four tiers (utility/reasoning/deep/subagent).",
+      "gbrainTransportLabel": "gbrain transport",
+      "gbrainTransportHint": "Employee think/query via MCP (gbrain serve; auto-fallback to CLI) or CLI only",
+      "schemaV2Hint": "This brain is still on schema pack v1 (gbrain-base). Migrating to v2 (15 canonical types) is recommended before further writes.",
+      "schemaV2Run": "Run unify-types",
+      "schemaV2Done": "unify-types job submitted (watch via jobs list in Operations)",
+      "schemaV2Fail": "unify-types failed (see Operations console)",
     "mainModelTitle": "Main model (applies to all tiers)",
     "mainModelHint": "Writes chat_model + models.default/think + all four tiers to the DB plane via gbrain config set.",
     "mainModelPh": "provider:model (e.g. zhipu:glm-4-flash)",

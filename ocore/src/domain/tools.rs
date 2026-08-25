@@ -42,7 +42,7 @@ pub struct ToolOutput {
 
 /// Tool 執行脈絡（純資料，無 Tauri）。Phase 1 僅 gbrain 後端，故攜帶 gbrain exe 與
 /// 已解析的腦 home（D1）。日後多後端時可演化為列舉／擴充。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ToolCtx {
     pub gbrain_exe: String,
     /// GBRAIN_HOME 值；`None` = 預設腦（~/.gbrain）。
@@ -51,6 +51,20 @@ pub struct ToolCtx {
     /// 避免 gbrain 的 model 解析鏈（`models.think → models.default → $GBRAIN_MODEL → opus`）
     /// fallback 到 anthropic——DB-plane models.* 未設時 synthesis 會找 ANTHROPIC_API_KEY 失敗（E9）。
     pub chat_model: Option<String>,
+    /// MCP client（`gbrain serve` stdio；`gbrain_transport = "mcp"` 時注入）。
+    /// `None` = 純 CLI 模式。工具實作：MCP 優先、失敗 fallback CLI 子行程。
+    pub mcp: Option<std::sync::Arc<crate::gbrain_mcp::GbrainMcpClient>>,
+}
+
+impl std::fmt::Debug for ToolCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolCtx")
+            .field("gbrain_exe", &self.gbrain_exe)
+            .field("gbrain_home", &self.gbrain_home)
+            .field("chat_model", &self.chat_model)
+            .field("mcp", &self.mcp.is_some())
+            .finish()
+    }
 }
 
 /// `Tool::invoke` 的回傳 future（boxed、Send）。

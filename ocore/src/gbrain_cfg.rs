@@ -26,6 +26,8 @@ pub struct GBrainConfigView {
     pub embedding_model: Option<String>,
     pub embedding_dimensions: Option<i64>,
     pub schema_pack: Option<String>,
+    /// schema pack 是否 v2 系；`false` 且 schema_pack 有值 → 前端提示 unify-types 遷移。
+    pub schema_pack_v2: bool,
     pub engine: Option<String>,
     pub database_path: Option<String>,
     pub provider_base_urls: serde_json::Value,
@@ -88,6 +90,7 @@ fn to_view_file_only(loaded: LoadedConfig) -> GBrainConfigView {
         embedding_model: c.embedding_model.clone(),
         embedding_dimensions: c.embedding_dimensions,
         schema_pack: c.schema_pack.clone(),
+        schema_pack_v2: c.schema_pack_v2(),
         engine: c.engine.clone(),
         database_path: c.database_path.clone(),
         provider_base_urls: serde_json::to_value(&c.provider_base_urls).unwrap_or_default(),

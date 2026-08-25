@@ -225,6 +225,7 @@ mod tests {
             gbrain_exe: "gbrain".into(),
             gbrain_home: None,
             chat_model: None,
+            mcp: None,
         }
     }
 

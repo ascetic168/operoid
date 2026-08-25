@@ -431,6 +431,8 @@ fn build_page(c: &Contact) -> (String, String) {
 
     let fm = frontmatter::build(&[
         ("type", "person".to_string()),
+        // v2 對齊：origin 標記產源（text_to_md::render 同）。
+        ("origin", "operoid-factory".to_string()),
         ("title", frontmatter::yaml_single_quote(&name)),
         ("tags", "[people, contact]".to_string()),
     ]);
@@ -548,7 +550,7 @@ mod tests {
         assert!(p.markdown.contains("jane@acme.com"));
         assert!(p.markdown.contains("jane@home.com"));
         // frontmatter
-        assert!(p.markdown.starts_with("---\ntype: person\ntitle: 'Jane Doe'\ntags: [people, contact]\n---"));
+        assert!(p.markdown.starts_with("---\ntype: person\norigin: operoid-factory\ntitle: 'Jane Doe'\ntags: [people, contact]\n---"));
         // 組織 bullet
         assert!(p.markdown.contains("- 公司/組織: Acme"));
         assert!(p.markdown.contains("- 職稱: CEO"));

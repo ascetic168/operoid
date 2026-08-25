@@ -43,6 +43,7 @@ const ops: { id: OpName; icon: typeof BarChart3; title: string; descKey: string;
   { id: "sync", icon: RefreshCw, title: "sync", descKey: "operations.ops.syncDesc" },
   { id: "extract", icon: Link2, title: "extract", descKey: "operations.ops.extractDesc" },
   { id: "ask", icon: Search, title: "ask", descKey: "operations.ops.askDesc", needsArg: "query" },
+  { id: "query", icon: Search, title: "query", descKey: "operations.ops.queryDesc", needsArg: "query" },
   { id: "think", icon: Brain, title: "think", descKey: "operations.ops.thinkDesc", needsArg: "query" },
 ];
 
@@ -51,6 +52,7 @@ const diagnostics: { id: OpName; icon: typeof BarChart3; title: string; descKey:
   { id: "orphans", icon: Network, title: "orphans", descKey: "operations.diagnostics.orphansDesc" },
   { id: "storage", icon: HardDrive, title: "storage", descKey: "operations.diagnostics.storageDesc" },
   { id: "graph-query", icon: Network, title: "graph-query", descKey: "operations.diagnostics.graphQueryDesc", needsArg: "slug" },
+  { id: "unify-types", icon: RefreshCw, title: "unify-types", descKey: "operations.diagnostics.unifyTypesDesc" },
 ];
 
 async function push(line: LogEntry) {

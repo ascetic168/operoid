@@ -58,6 +58,14 @@ pub struct GBrainConfig {
     pub models: Option<ModelsSection>,
 }
 
+impl GBrainConfig {
+    /// schema pack 是否為 v2 系（`gbrain-base-v2` 等，名稱含 "v2"）。
+    /// `None`/舊 `gbrain-base` → false（設定頁據此提示 unify-types 遷移）。
+    pub fn schema_pack_v2(&self) -> bool {
+        self.schema_pack.as_deref().is_some_and(|s| s.contains("v2"))
+    }
+}
+
 /// `models` 區段（file-plane 殘值；DB plane 才是權威）。
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ModelsSection {
