@@ -392,9 +392,18 @@ pub async fn op_run_core(
         }
         // schema pack v1（gbrain-base）→v2（gbrain-base-v2）遷移：提交 unify-types Minion
         // job（retype 舊 24 型→15 標準型）。僅供設定頁的提示按鈕手動觸發，不自動執行。
+        // job handler 必帶 `target_pack`，缺參數會 permanent fail（實測 gbrain 0.46）；
+        // `--follow` 讓 PGLite 腦 inline 執行（背景 worker 需要 Postgres，PGLite 無法跑）。
         "unify-types" => {
-            let code = run!(&["jobs", "submit", "unify-types"])
-                .map_err(|e| e.to_string())?;
+            let code = run!(&[
+                "jobs",
+                "submit",
+                "unify-types",
+                "--params",
+                r#"{"target_pack":"gbrain-base-v2","apply":true}"#,
+                "--follow",
+            ])
+            .map_err(|e| e.to_string())?;
             Ok(OpResult::from_code(code))
         }
         "think" => {

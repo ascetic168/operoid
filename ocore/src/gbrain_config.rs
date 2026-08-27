@@ -28,11 +28,11 @@ pub const TIER_NAMES: &[&str] = &["utility", "reasoning", "deep", "subagent"];
 
 /// 新腦建立／GUI 首次設定時的預設 chat model（v0.42 起改用智譜 GLM）。
 ///
-/// 2026-08-18 由 glm-5.2 改為 glm-4-flash：glm-5.x 全系為推理模型（回應含
-/// `reasoning_content`／前置思考文字），gbrain think 的 synthesis 解析不相容
-/// （`LLM_OUTPUT_NOT_JSON` → 隨機空輸出）；glm-4-flash 為非推理模型，
-/// 標準與 coding 端點皆實證可用，開箱即能用。
-pub const DEFAULT_CHAT_MODEL: &str = "zhipu:glm-4-flash";
+/// 2026-08-18 曾由 glm-5.2 降為 glm-4-flash（glm-5.x 的 reasoning 輸出使
+/// gbrain think synthesis 隨機失敗，`LLM_OUTPUT_NOT_JSON` → 空輸出）。
+/// 2026-08-27 改為 glm-5.3-flash：gbrain v0.46 起 search/think 分離，
+/// think 已能正確解析推理模型輸出（實測 0.46.29 穩定、引用連結正常）。
+pub const DEFAULT_CHAT_MODEL: &str = "zhipu:glm-5.3-flash";
 
 /// ~/.gbrain/config.json 的已知欄位（其餘保留於 `raw`）。
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -287,13 +287,13 @@ mod tests {
 
     #[test]
     fn default_chat_model_is_zhipu_glm() {
-        // v0.42 起預設改用智譜 GLM；2026-08-18 改 glm-4-flash（非推理模型，
-        // glm-5.x 的 reasoning 輸出使 gbrain synthesis 隨機失敗，見常數文檔）。
-        assert_eq!(DEFAULT_CHAT_MODEL, "zhipu:glm-4-flash");
+        // v0.42 起預設改用智譜 GLM；2026-08-27 改 glm-5.3-flash（gbrain v0.46
+        // 起 think 已相容推理模型，見常數文檔）。
+        assert_eq!(DEFAULT_CHAT_MODEL, "zhipu:glm-5.3-flash");
         // 確認它是合法的 provider:model 格式
         assert_eq!(
             split_chat_model(DEFAULT_CHAT_MODEL),
-            Some(("zhipu", "glm-4-flash"))
+            Some(("zhipu", "glm-5.3-flash"))
         );
     }
 
