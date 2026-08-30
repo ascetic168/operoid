@@ -1614,9 +1614,11 @@ pub fn build_tool_ctx(
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
     let entry = crate::app_config::brain_entry(cfg, &emp.brain.brain_id)?;
+    // think 顯式 --model 的來源：models.think 優先（長合成需要非推理模型，
+    // 見 GBrainConfig::think_model 文檔），缺時 fallback chat_model。
     let chat_model = gbrain_config::load_for(entry.env_home())
         .ok()
-        .and_then(|l| l.config.chat_model);
+        .and_then(|l| l.config.think_model().map(|s| s.to_string()));
     let gbrain_home = entry.env_home().map(|s| s.to_string());
     let mcp = if cfg.gbrain_transport == "mcp" {
         Some(std::sync::Arc::new(crate::gbrain_mcp::GbrainMcpClient::new(
@@ -3094,7 +3096,7 @@ mod tests {
         let ctx = ToolCtx {
             chat_model: gbrain_config::load_for(home.as_deref())
                 .ok()
-                .and_then(|l| l.config.chat_model),
+                .and_then(|l| l.config.think_model().map(|s| s.to_string())),
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
@@ -3205,7 +3207,7 @@ mod tests {
         let ctx = ToolCtx {
             chat_model: gbrain_config::load_for(home.as_deref())
                 .ok()
-                .and_then(|l| l.config.chat_model),
+                .and_then(|l| l.config.think_model().map(|s| s.to_string())),
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
@@ -3631,7 +3633,7 @@ mod tests {
         let ctx = ToolCtx {
             chat_model: gbrain_config::load_for(home.as_deref())
                 .ok()
-                .and_then(|l| l.config.chat_model),
+                .and_then(|l| l.config.think_model().map(|s| s.to_string())),
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
@@ -3947,7 +3949,7 @@ mod tests {
         let ctx = ToolCtx {
             chat_model: gbrain_config::load_for(home.as_deref())
                 .ok()
-                .and_then(|l| l.config.chat_model),
+                .and_then(|l| l.config.think_model().map(|s| s.to_string())),
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,

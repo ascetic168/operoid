@@ -418,12 +418,13 @@ pub async fn op_run_core(
             };
             let mut args: Vec<String> = vec!["think".into(), question];
             // E9 補遺（2026-08-18）：OperationsView 手動 think 比照 GbrainThinkTool 顯式
-            // 傳 `--model`（作用中腦 config 的 chat_model），跳過 gbrain fallback 鏈
-            // （models.think→default→$GBRAIN_MODEL→opus）。E9 原修復只蓋 agent 路徑，
-            // 此處 DB-plane 未設時同樣 fallback 到 opus → synthesis skipped。
+            // 傳 `--model`，跳過 gbrain fallback 鏈（models.think→default→$GBRAIN_MODEL→opus）。
+            // E9 原修復只蓋 agent 路徑，此處 DB-plane 未設時同樣 fallback 到 opus → synthesis skipped。
+            // 2026-08-30 改取 models.think（缺時 fallback chat_model）：thinking 模型
+            // 長合成會 LLM_OUTPUT_TRUNCATED，think 應走 config 指定的合成專用模型。
             if let Some(m) = crate::gbrain_config::load_for(cfg.active_env_home())
                 .ok()
-                .and_then(|l| l.config.chat_model)
+                .and_then(|l| l.config.think_model().map(|s| s.to_string()))
             {
                 args.push("--model".into());
                 args.push(m);

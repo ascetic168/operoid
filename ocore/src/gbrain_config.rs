@@ -64,6 +64,18 @@ impl GBrainConfig {
     pub fn schema_pack_v2(&self) -> bool {
         self.schema_pack.as_deref().is_some_and(|s| s.contains("v2"))
     }
+
+    /// think（多跳合成）專用模型：`models.think` 優先，缺時 fallback `chat_model`。
+    ///
+    /// 2026-08-30 實測（gbrain 0.47.x）：thinking 模型（glm-5.2/5.3-flash）的
+    /// 推理 token 計入合成 max_tokens 額度，長合成穩定 `LLM_OUTPUT_TRUNCATED`；
+    /// think 可獨立指到非推理模型（如 glm-4-flash），chat 維持強模型。
+    pub fn think_model(&self) -> Option<&str> {
+        self.models
+            .as_ref()
+            .and_then(|m| m.think.as_deref())
+            .or(self.chat_model.as_deref())
+    }
 }
 
 /// `models` 區段（file-plane 殘值；DB plane 才是權威）。
@@ -73,7 +85,6 @@ pub struct ModelsSection {
     #[allow(dead_code)]
     pub default: Option<String>,
     #[serde(default, rename = "think")]
-    #[allow(dead_code)]
     pub think: Option<String>,
     #[serde(default, rename = "tier")]
     pub tier: Option<TierModels>,
