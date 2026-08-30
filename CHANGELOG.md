@@ -13,6 +13,29 @@
 
 ---
 
+## [v0.3.1] - 2026-08-30
+
+### gbrain 整合升級——對齊 gbrain v0.46＋模型層重整
+
+**對齊 gbrain v0.46（三項）**
+
+- **MCP provider**：think／query 優先走 `gbrain serve` stdio MCP（rmcp 3.x），失敗自動 fallback CLI 子行程；管理操作仍走 CLI。新設定 `gbrain_transport`（mcp 預設／cli），設定頁可切換。
+- **search／think 分離**：新增 `GbrainSearchTool`（`gbrain query` 混合檢索，無 LLM 合成、省 token）與 `GbrainToolset` 複合分派器；操作頁新增 query 按鈕。**注意**：gbrain v0.46 起 `ask` 已是 `query` 的別名（純檢索），帶引用連結的合成回答改由 `think` 提供。
+- **schema pack v2 對齊**：factory 寫出的 frontmatter 加 `origin: operoid-factory`；legacy v1 腦顯示遷移橫幅＋unify-types 按鈕。
+
+**模型層重整**
+
+- 預設模型改為 `zhipu:glm-5.3-flash`（gbrain v0.46 起 think 已相容推理模型；先前 glm-4-flash 的降級背景見原始碼文檔）。
+- **think（多跳合成）顯式 model 改取 `models.think`**（缺時 fallback `chat_model`）：實測 thinking 模型的推理 token 計入合成 max_tokens 額度，長篇合成穩定 `LLM_OUTPUT_TRUNCATED`→空輸出；think 可獨立指到非推理模型（如 glm-4-flash），chat 維持強模型。手動操作、agent CLI、MCP 三條路徑一致。
+- 修復 unify-types 按鈕：補 `--params {target_pack, apply}` 與 `--follow`（缺參數會 permanent fail；PGLite 腦無背景 worker 須 inline 執行）。
+
+### 對話回合修復
+
+- 對話回合 user prompt 與自主循環 PLAN prompt 注入現在時間（日期感知）。
+- 同通道單一回覆保證：同目標一回合僅一則成功送出，抑制 send／finish 重複寫出 Out Message。新增對應測試。
+
+**品質**：ocore 123 tests passed；oserver 4 passed；前端 build 綠燈。
+
 ## [v0.3.0] - 2026-08-19
 
 ### 前後端分離完成——Operoid 成為常駐服務＋多前端架構
