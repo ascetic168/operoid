@@ -1,9 +1,11 @@
 //! GBrain 設定核心（P4 起居於 ocore）——設定頁視圖組裝與 model/provider 編輯。
 //!
-//! # v0.42 兩種 config plane
-//! model/tier 設定走 **DB plane**（`gbrain config set`，runtime 權威）；
+//! # 兩種 config plane
+//! model/tier 設定**兩 plane 同步寫入**：file plane（config.json，runtime 優先層）
+//! 直寫，DB plane 走 `gbrain config set`（fallback）。gbrain ≤0.47.x 實測：
+//! file/env plane 的 model/tier 值會 shadow DB-plane 值（`gbrain config get`
+//! 明示），只寫 DB 會被檔案舊值蓋掉。
 //! `provider_base_urls` 等走 **file plane**（直讀直寫 config.json，CLI 對它 no-op）。
-//! 設定頁的 model 編輯走 CLI，provider_base_url 編輯走檔案。
 //!
 //! 介面收 `(exe, home)`（cfg 由殼／oserver 解析傳入）——不含任何 Tauri。
 
@@ -21,7 +23,7 @@ pub struct GBrainConfigView {
     pub exists: bool,
     pub raw: serde_json::Value,
     pub chat_model: Option<String>,
-    /// `models.default`（file-plane 殘值；真正生效值在 DB plane，見 tiers）。
+    /// `models.default`（file-plane 值，runtime 優先層；有效值見 tiers）。
     pub models_default: Option<String>,
     pub embedding_model: Option<String>,
     pub embedding_dimensions: Option<i64>,
@@ -31,11 +33,12 @@ pub struct GBrainConfigView {
     pub engine: Option<String>,
     pub database_path: Option<String>,
     pub provider_base_urls: serde_json::Value,
-    /// v0.42 tier 路由：四層各自的有效模型（DB-plane 優先，否則 file/default）。
+    /// v0.42 tier 路由：四層各自的有效模型（file plane 優先，否則 DB/default）。
     pub tiers: TierModelsView,
-    /// 每個 tier 的來源："db" | "file" | "default"（前端據此顯示狀態徽章）。
+    /// 每個 tier 的來源："file" | "db" | "default"（前端據此顯示狀態徽章）。
     pub tier_source: TierSourceView,
-    /// DB plane 正在蓋過 file plane 的 model/tier 鍵清單（前端據此亮警告橫幅）。
+    /// DB plane 真正生效的 model/tier 鍵清單（= 檔案無值、由 DB fallback 的鍵；
+    /// gbrain 0.47.x 實測 file plane 優先，DB 值有檔案值時是被 shadow 的一方）。
     pub db_overrides: Vec<String>,
     /// 解析後的 LLM 端點（解析失敗時為 None，前端據此提示）。
     pub llm_endpoint: Option<LlmEndpoint>,
@@ -112,34 +115,39 @@ fn to_view_file_only(loaded: LoadedConfig) -> GBrainConfigView {
     }
 }
 
-/// 由 DB-plane（`gbrain config get`）補正 tier 值與來源。
-/// DB 有值 → 覆蓋 file 值，來源標 "db"，並記入 db_overrides（DB 一律視為覆寫，
-/// 因為它是權威、會蓋過 file plane——即使 file 無值，DB 有值就代表「GUI 直寫檔案無效」）。
+/// 以 `gbrain config get` 的**有效值**（runtime 實際採用層）補正 tier 值與來源。
+/// gbrain 0.47.x 實測：model/tier 鍵 file/env plane 優先、DB 值被 shadow
+/// （`config get` 回傳 "source: file/env plane ... shadowed at runtime"）。
+/// 故來源標 "file"（檔案值生效，DB 值被蓋）或 "db"（檔案無值，DB 生效）；
+/// db_overrides 僅列 DB 真正生效的鍵（檔案無值的 fallback）。
 async fn enrich_with_db_plane(exe: &str, home: Option<&str>, view: &mut GBrainConfigView) {
     let mut db_overrides = Vec::new();
     for tier in gbrain_config::TIER_NAMES {
         let key = format!("models.tier.{}", tier);
-        if let Ok(Some((value, _source))) = config_get(exe, home, &key).await {
+        if let Ok(Some((value, source))) = config_get(exe, home, &key).await {
+            let src = if source.contains("file") { "file" } else { "db" };
+            if src == "db" {
+                db_overrides.push(key);
+            }
             match *tier {
                 "utility" => {
                     view.tiers.utility = Some(value);
-                    view.tier_source.utility = "db".into();
+                    view.tier_source.utility = src.into();
                 }
                 "reasoning" => {
                     view.tiers.reasoning = Some(value);
-                    view.tier_source.reasoning = "db".into();
+                    view.tier_source.reasoning = src.into();
                 }
                 "deep" => {
                     view.tiers.deep = Some(value);
-                    view.tier_source.deep = "db".into();
+                    view.tier_source.deep = src.into();
                 }
                 "subagent" => {
                     view.tiers.subagent = Some(value);
-                    view.tier_source.subagent = "db".into();
+                    view.tier_source.subagent = src.into();
                 }
                 _ => {}
             }
-            db_overrides.push(key);
         }
     }
     view.db_overrides = db_overrides;
@@ -177,14 +185,45 @@ fn validate_model_key(key: &str) -> Result<(), AppError> {
     }
 }
 
-/// 設單一 model/tier 鍵（走 DB plane via `gbrain config set`）。
+/// 將單一 model/tier 鍵同步寫入 file plane（config.json）。
+///
+/// gbrain 0.47.x 實測（2026-08-31，#事實修正）：runtime 對 model/tier 鍵採
+/// **file/env plane 優先**——DB-plane 值存在時會被 shadow（`gbrain config get`
+/// 明示 "a DB-plane value also exists and is shadowed at runtime"）。
+/// 故 model 寫入須兩 plane 同步，否則 file-plane 舊值會蓋掉剛寫進 DB 的新值。
+fn set_model_file_plane(home: Option<&str>, key: &str, value: &str) -> Result<(), AppError> {
+    let path = gbrain_config::config_path_for(home)?;
+    let loaded = gbrain_config::load_for(home)?;
+    let mut raw = loaded.raw;
+    if !raw.is_object() {
+        raw = serde_json::json!({});
+    }
+    let v = serde_json::Value::String(value.to_string());
+    match key {
+        "chat_model" => raw["chat_model"] = v,
+        "models.default" => raw["models"]["default"] = v,
+        "models.think" => raw["models"]["think"] = v,
+        tier => {
+            // validate_model_key 白名單保證此處必為 models.tier.<name>
+            let name = tier.strip_prefix("models.tier.").unwrap_or_default();
+            raw["models"]["tier"][name] = v;
+        }
+    }
+    gbrain_config::save_raw(&path, &raw)?;
+    Ok(())
+}
+
+/// 設單一 model/tier 鍵：**兩 plane 同步**——file plane（config.json，runtime
+/// 優先）直寫，DB plane 走 `gbrain config set`（作 fallback／`config get` 來源）。
 /// key 限定白名單：chat_model / models.default / models.think / models.tier.*。
 pub async fn set_model(exe: &str, home: Option<&str>, key: &str, value: &str) -> Result<(), AppError> {
     validate_model_key(key)?;
-    if value.trim().is_empty() {
+    let value = value.trim();
+    if value.is_empty() {
         return Err(AppError::new("gbrain.configEmptyValue"));
     }
-    config_set(exe, home, key, value.trim()).await
+    set_model_file_plane(home, key, value)?;
+    config_set(exe, home, key, value).await
 }
 
 /// 單一模型同步到全部 tier + chat_model + models.default/think（v0.42「勾選同步」用）。
@@ -203,7 +242,8 @@ pub async fn set_models_all(exe: &str, home: Option<&str>, model: &str) -> Resul
         "models.tier.subagent",
     ];
     for k in keys {
-        config_set(exe, home, k, model).await?;
+        // set_model 兩 plane 同步（file plane 為 runtime 優先層，見其文檔）
+        set_model(exe, home, k, model).await?;
     }
     Ok(())
 }
@@ -266,8 +306,9 @@ pub fn set_provider_base_url(
 }
 
 /// 直寫整份 config.json（file-plane；raw 進階編輯器用）。
-/// 注意：model/tier 鍵寫此處會被 DB plane 蓋過——設定頁改用 set_model 等指令。
-/// 故此處如實存使用者輸入的 raw JSON，**不**再偷偷同步 models.default/think（E3 退役）。
+/// model/tier 鍵寫此處**即是生效值**（file plane 為 runtime 優先層）——但會與
+/// DB plane 產生分歧（DB 值被 shadow），設定頁常規編輯改用 set_model 等指令同步雙 plane。
+/// 故此處如實存使用者輸入的 raw JSON，**不**再偷偷同步 models.default/think。
 pub fn save_raw(home: Option<&str>, raw_json: &serde_json::Value) -> Result<(), AppError> {
     let path = gbrain_config::config_path_for(home)?;
     gbrain_config::save_raw(&path, raw_json)?;

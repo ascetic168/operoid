@@ -14,9 +14,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::app_config::{brain_entry, AppConfig, BrainEntry};
-use crate::gbrain_cli::{
-    config_set, git_add_commit, git_init_commit, run_capture, run_child, LineSink, OpResult,
-};
+use crate::gbrain_cli::{git_add_commit, git_init_commit, run_capture, run_child, LineSink, OpResult};
 use crate::proc::env_for_brain;
 use crate::gbrain_config;
 use crate::i18n::{AppError, L10n};
@@ -119,34 +117,23 @@ pub fn default_models(c: &AppConfig) -> (String, i64, String) {
     }
 }
 
-/// 新腦建立後，把 chat_model 同步到 DB plane 的 `models.tier.*` + `models.default/think`。
+/// 新腦建立後，把 chat_model 同步到 **兩個 plane**（file + DB）的
+/// `models.tier.*` + `models.default/think` + `chat_model`。
 ///
-/// v0.42：`gbrain init --chat-model` 只寫頂層 chat_model；但 runtime 讀 DB plane 的
-/// `models.tier.*`（無則 fallback 到 anthropic claude-*）。若不補，新腦 think/subagent
-/// 會跑到 anthropic（跟你要 ANTHROPIC_API_KEY）。故 init 後用 `gbrain config set` 寫 DB plane。
-///
-/// 僅寫 DB plane（v0.42 權威層）。E3 退役：不再寫 file-plane 的 models.default/think 殘值——
-/// runtime 以 DB plane 為準，file-plane 殘值無作用，寫它只會誤導（似有設、實被蓋過）。
+/// gbrain 0.47.x 實測（2026-08-31 事實修正）：runtime 對 model/tier 鍵採
+/// **file/env plane 優先**，DB 值被 shadow（`gbrain config get` 明示）。
+/// 舊版只寫 DB plane 會被 `gbrain init --chat-model` 寫入的 file-plane
+/// chat_model 蓋掉，tier 甚至 fallback 到 anthropic（跟你要 ANTHROPIC_API_KEY）。
+/// 現走 `gbrain_cfg::set_models_all`：file plane 直寫 config.json + DB plane
+/// `gbrain config set`（fallback 層），兩 plane 一致。
 pub async fn sync_new_brain_models(
     exe: &str,
     home: &str,
     chat_model: &str,
 ) -> Result<(), String> {
-    let keys = [
-        "chat_model",
-        "models.default",
-        "models.think",
-        "models.tier.utility",
-        "models.tier.reasoning",
-        "models.tier.deep",
-        "models.tier.subagent",
-    ];
-    for k in keys {
-        config_set(exe, Some(home), k, chat_model)
-            .await
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    crate::gbrain_cfg::set_models_all(exe, Some(home), chat_model)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 新增腦核心：驗證/建立（create=true 跑 gbrain init＋models 同步）→ 回傳更新後的

@@ -30,9 +30,12 @@ pub const TIER_NAMES: &[&str] = &["utility", "reasoning", "deep", "subagent"];
 ///
 /// 2026-08-18 曾由 glm-5.2 降為 glm-4-flash（glm-5.x 的 reasoning 輸出使
 /// gbrain think synthesis 隨機失敗，`LLM_OUTPUT_NOT_JSON` → 空輸出）。
-/// 2026-08-27 改為 glm-5.3-flash：gbrain v0.46 起 search/think 分離，
-/// think 已能正確解析推理模型輸出（實測 0.46.29 穩定、引用連結正常）。
-pub const DEFAULT_CHAT_MODEL: &str = "zhipu:glm-5.3-flash";
+/// 2026-08-27 改為 glm-5.3-flash（gbrain v0.46 起 think 已相容推理模型）；
+/// 2026-08-31 回退為 glm-4-flash：gbrain 對 GLM 未視為 thinking-by-default
+/// （zhipu recipe 缺 `thinking_by_default`，上游 issue garrytan/gbrain#4727），
+/// think/chat 分別被壓在 4000/4096 output tokens，長回應易截斷；glm-4-flash
+/// 為非推理模型，不受此 model-aware cap 影響。
+pub const DEFAULT_CHAT_MODEL: &str = "zhipu:glm-4-flash";
 
 /// ~/.gbrain/config.json 的已知欄位（其餘保留於 `raw`）。
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -52,8 +55,9 @@ pub struct GBrainConfig {
     /// file-plane 鍵；gbrain CLI 對它 no-op，須手編此檔。
     #[serde(default)]
     pub provider_base_urls: HashMap<String, String>,
-    /// file-plane 殘值（`models.tier.*`）。**注意**：gbrain runtime 讀的是 DB plane，
-    /// 檔案裡的 tier 值通常會被 DB 層蓋過；真正生效的值需透過 `gbrain config get` 取得。
+    /// file-plane 的 `models.tier.*`。gbrain 0.47.x 實測：model/tier 鍵 runtime
+    /// 採 **file/env plane 優先**（DB 值被 shadow）；寫入應兩 plane 同步
+    /// （見 `gbrain_cfg::set_model`），避免兩層分歧。
     #[serde(default)]
     pub models: Option<ModelsSection>,
 }
@@ -182,7 +186,8 @@ pub fn save_raw(path: &Path, json: &serde_json::Value) -> Result<()> {
 
 /// 讀 raw config.json 的 `models.default`（供設定頁顯示「think/ask 實際使用的模型」）。
 ///
-/// 注意：此處讀的是 file-plane 殘值；v0.42+ 真正生效的值在 DB plane（`gbrain config get`）。
+/// file plane 為 runtime 優先層（gbrain 0.47.x 實測）；最準確的有效值仍以
+/// `gbrain config get` 為準（它會解析 file/env → DB → default 的優先序）。
 pub fn models_default_of(raw: &serde_json::Value) -> Option<String> {
     raw.get("models")
         .and_then(|m| m.get("default"))
@@ -298,13 +303,13 @@ mod tests {
 
     #[test]
     fn default_chat_model_is_zhipu_glm() {
-        // v0.42 起預設改用智譜 GLM；2026-08-27 改 glm-5.3-flash（gbrain v0.46
-        // 起 think 已相容推理模型，見常數文檔）。
-        assert_eq!(DEFAULT_CHAT_MODEL, "zhipu:glm-5.3-flash");
+        // v0.42 起預設改用智譜 GLM；2026-08-31 回退 glm-4-flash（gbrain 對 GLM
+        // 未視為 thinking-by-default，think/chat 被 cap 在 4000/4096，見常數文檔）。
+        assert_eq!(DEFAULT_CHAT_MODEL, "zhipu:glm-4-flash");
         // 確認它是合法的 provider:model 格式
         assert_eq!(
             split_chat_model(DEFAULT_CHAT_MODEL),
-            Some(("zhipu", "glm-5.3-flash"))
+            Some(("zhipu", "glm-4-flash"))
         );
     }
 

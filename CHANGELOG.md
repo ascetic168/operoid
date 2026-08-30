@@ -13,7 +13,7 @@
 
 ---
 
-## [v0.3.1] - 2026-08-30
+## [v0.3.1] - 2026-08-31
 
 ### gbrain 整合升級——對齊 gbrain v0.46＋模型層重整
 
@@ -25,9 +25,15 @@
 
 **模型層重整**
 
-- 預設模型改為 `zhipu:glm-5.3-flash`（gbrain v0.46 起 think 已相容推理模型；先前 glm-4-flash 的降級背景見原始碼文檔）。
+- 預設模型**回退為 `zhipu:glm-4-flash`**：gbrain（≤0.47.x）對 GLM 未視為 thinking-by-default（zhipu recipe 缺 `thinking_by_default`，上游 issue garrytan/gbrain#4727），glm-5.x 的 think／chat 分別被壓在 4000／4096 output tokens，長回應易截斷；glm-4-flash 為非推理模型不受影響。上游修復後可再升回。
 - **think（多跳合成）顯式 model 改取 `models.think`**（缺時 fallback `chat_model`）：實測 thinking 模型的推理 token 計入合成 max_tokens 額度，長篇合成穩定 `LLM_OUTPUT_TRUNCATED`→空輸出；think 可獨立指到非推理模型（如 glm-4-flash），chat 維持強模型。手動操作、agent CLI、MCP 三條路徑一致。
 - 修復 unify-types 按鈕：補 `--params {target_pack, apply}` 與 `--follow`（缺參數會 permanent fail；PGLite 腦無背景 worker 須 inline 執行）。
+
+**config plane 事實修正（gbrain 0.47.6 實測）**
+
+- gbrain runtime 對 model/tier 鍵採 **file plane（config.json）優先**，DB-plane 值被 shadow（`gbrain config get` 明示）——專案原本「DB plane 權威」的假設與事實相反。
+- `set_model`／`set_models_all`（設定頁主模型／tier 編輯）與新腦的 `sync_new_brain_models` 改為**兩 plane 同步寫入**（file 直寫 + `gbrain config set`），不再只寫 DB 而被檔案舊值蓋掉。
+- 設定頁 tier 顯示改用 `gbrain config get` 的有效值與來源（file／db 徽章如實呈現）；`db_overrides` 語義改為「檔案無值、由 DB fallback 的鍵」，警告橫幅與提示文案同步修正。
 
 ### 對話回合修復
 
