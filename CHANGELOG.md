@@ -13,6 +13,18 @@
 
 ---
 
+## [v0.3.2] - 2026-08-31
+
+### 操作頁 think：輸出末列出全部引註（可點擊連結）
+
+- 「操作」頁的 think 改以 `gbrain think --json` 執行（`ocore/src/gbrain_cli.rs` 新增 `run_think_json`），取得結構化 citations 後重排為人類可讀格式：問題標題、answer、Gaps、`Model/Pages/Takes/Graph/Citations` footer，最後新增「## 引註（Citations）」清單。
+- 引註行採雙括號 wikilink 形式（`[[people/林家豪]]`、`[[林家豪]]（take #3）`）——前端 `OperationsView.linkSegments` 無條件匹配雙括號，不受單括號引註「slug 須含 `/`」規則限制，模型給含前綴或裸標題的 page_slug 皆可點擊開啟筆記（`openNote` 支援裸標題掃描 people/ 等已知目錄）。
+- 隱去 `CITATIONS_STRUCTURED_NOT_INLINE`／`CITATIONS_INLINE_NOT_IN_STRUCTURED` 引註比對警告：gbrain 行內標記 regex 僅接受 ASCII slug（中文頁面恆無法判定為行內），且 glm-4-flash 常在本文留下 `[slug#N]` 佔位字面值——兩方向的比對警告對本應用恆為雜訊，引註已由清單完整呈現。其他警告照常顯示。
+- 顯示前自 answer 剔除 `[slug#N]` 佔位標記。
+- 寬容退路：非零退出碼或 JSON 解析失敗（舊版 gbrain）時逐行原樣輸出 stdout，操作不失敗；stderr（升級提示等）結束後補推不吞訊息。
+- 已知取捨：`--json` 模式下 gbrain 整段輸出，answer 不再逐行串流（期間顯示「think：合成中…」step 提示）。
+- 測試：新增 `citation_line_matches_link_segment_format`（引註行格式鎖定）。
+
 ## [v0.3.1] - 2026-08-31
 
 ### gbrain 整合升級——對齊 gbrain v0.46＋模型層重整

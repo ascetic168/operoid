@@ -232,6 +232,154 @@ pub async fn run_child(
     Ok(status.code().unwrap_or(-1))
 }
 
+// ── think --json：結構化輸出解析＋人類可讀重排 ─────────────────────────────
+
+/// `gbrain think --json` 的 citations 元素（cite-render.ts ParsedCitation）。
+#[derive(Deserialize)]
+struct ThinkCitation {
+    page_slug: String,
+    row_num: Option<u64>,
+}
+
+/// `gbrain think --json` 輸出的最小欄位集（缺項一律寬容為預設）。
+#[derive(Deserialize)]
+struct ThinkJson {
+    #[serde(default)]
+    question: String,
+    #[serde(default)]
+    answer: String,
+    #[serde(default)]
+    citations: Vec<ThinkCitation>,
+    #[serde(default)]
+    gaps: Vec<String>,
+    #[serde(default)]
+    warnings: Vec<String>,
+    #[serde(default, rename = "modelUsed")]
+    model_used: Option<String>,
+    #[serde(default, rename = "pagesGathered")]
+    pages_gathered: Option<u64>,
+    #[serde(default, rename = "takesGathered")]
+    takes_gathered: Option<u64>,
+    #[serde(default, rename = "graphHits")]
+    graph_hits: Option<u64>,
+}
+
+fn push_stdout(ch: &LineSink, text: &str) {
+    ch(CliLine { stream: "stdout".into(), text: text.to_string() });
+}
+
+/// 執行 `gbrain think --json`：stderr 即時串流；stdout 整段捕獲後解析，
+/// 以人類可讀格式重排推送，並在最後條列全部引註（`[dir/slug]` 形式，
+/// 前端 OperationsView.linkSegments 會渲染成連結）。解析失敗或非零退出
+/// 時逐行原樣輸出 stdout（等同舊行為的寬容退路）。
+async fn run_think_json(
+    ch: &LineSink,
+    program: &str,
+    args: &[&str],
+    env: &[(&'static str, std::ffi::OsString)],
+) -> i32 {
+    ch(CliLine { stream: "step".into(), text: "think：合成中…".into() });
+    let (code, stdout, stderr) = match run_capture(program, args, env).await {
+        Ok(r) => r,
+        Err(e) => {
+            ch(CliLine { stream: "stderr".into(), text: format!("think: spawn 失敗：{e}") });
+            return -1;
+        }
+    };
+    // run_capture 無法邊跑邊串流 stderr（gbrain 的進度／升級提示走 stderr），
+    // 結束後補推，確保不吞訊息。
+    for line in stderr.lines() {
+        if !line.is_empty() {
+            ch(CliLine { stream: "stderr".into(), text: line.to_string() });
+        }
+    }
+    if code != 0 {
+        for line in stdout.lines() {
+            if !line.is_empty() { push_stdout(ch, line); }
+        }
+        return code;
+    }
+    let parsed: ThinkJson = match serde_json::from_str(&stdout) {
+        Ok(p) => p,
+        Err(e) => {
+            // 非 JSON（舊版 gbrain、上游格式變更）→ 原樣逐行輸出，不讓操作失敗。
+            ch(CliLine {
+                stream: "stderr".into(),
+                text: format!("think: --json 輸出解析失敗（{e}），改以純文字顯示"),
+            });
+            for line in stdout.lines() {
+                if !line.is_empty() { push_stdout(ch, line); }
+            }
+            return code;
+        }
+    };
+
+    push_stdout(ch, &format!("# {}", parsed.question));
+    if !parsed.answer.is_empty() {
+        // 模型（尤其 glm-4-flash）常把行內引註退化成 `[slug#N]` 佔位字面值，
+        // 對讀者毫無資訊——從顯示本文中剔除（引註以清單呈現）。
+        let cleaned = regex::Regex::new(r"\[slug(?:#\d+)?\]")
+            .expect("static regex")
+            .replace_all(&parsed.answer, "")
+            .trim_end()
+            .to_string();
+        for line in cleaned.lines() {
+            push_stdout(ch, line);
+        }
+    }
+    if !parsed.gaps.is_empty() {
+        push_stdout(ch, "## Gaps");
+        for g in &parsed.gaps {
+            push_stdout(ch, &format!("- {g}"));
+        }
+    }
+    push_stdout(ch, "---");
+    push_stdout(ch, &format!(
+        "Model: {} | Pages: {} | Takes: {} | Graph: {} | Citations: {}",
+        parsed.model_used.unwrap_or_default(),
+        parsed.pages_gathered.unwrap_or(0),
+        parsed.takes_gathered.unwrap_or(0),
+        parsed.graph_hits.unwrap_or(0),
+        parsed.citations.len(),
+    ));
+    // 引註清單：頁面級 `[dir/slug]`、take 級附 row。slug 中的 `/` 保留在括號內，
+    // 符合 linkSegments 的單括號引註格式（不可含空白）。
+    if !parsed.citations.is_empty() {
+        push_stdout(ch, "## 引註（Citations）");
+        for c in &parsed.citations {
+            push_stdout(ch, &format!("- {}", citation_line(c)));
+        }
+    }
+    // 隱去行內/結構化引註比對警告：中文 slug 不符合 gbrain 行內標記的 ASCII
+    // regex，且 glm-4-flash 常在本文留下 `[slug#N]` 佔位標記，兩個方向的
+    // 比對警告對本應用恆為雜訊；引註已由下方清單完整列出。
+    let warnings: Vec<&str> = parsed
+        .warnings
+        .iter()
+        .map(|w| w.as_str())
+        .filter(|w| {
+            !w.contains("CITATIONS_STRUCTURED_NOT_INLINE") && !w.contains("CITATIONS_INLINE_NOT_IN_STRUCTURED")
+        })
+        .collect();
+    if !warnings.is_empty() {
+        ch(CliLine {
+            stream: "stderr".into(),
+            text: format!("Warnings: {}", warnings.join(", ")),
+        });
+    }
+    code
+}
+
+/// 單筆引註行：雙括號 `[[slug]]`（wikilink 形式，linkSegments 無條件匹配，
+/// 且不受 slug 需含 `/` 的單括號規則限制——模型給的 page_slug 可能是
+/// `people/林家豪` 也可能是裸標題 `林家豪`）；take 級附 row 註記。
+fn citation_line(c: &ThinkCitation) -> String {
+    match c.row_num {
+        Some(n) => format!("[[{}]]（take #{n}）", c.page_slug),
+        None => format!("[[{}]]", c.page_slug),
+    }
+}
+
 /// git add -A + commit（best-effort：非零退出碼＝無新變更，不視為錯誤）。
 /// 用於 sync 前確保 working-tree 變更已進 git（gbrain sync 是 git-based incremental，
 /// 未 commit 的變更不會被同步）。回傳 commit 的 exit code；io 層級錯誤（指令啟動失敗）
@@ -433,8 +581,12 @@ pub async fn op_run_core(
                 args.push("--anchor".into());
                 args.push(a);
             }
+            // 以 --json 取得結構化 citations（純文字輸出只在 footer 顯示數量、
+            // 不列出被引頁面），再重排成人類可讀格式。引註以 [dir/slug] 條列，
+            // OperationsView 的 linkSegments 會將其渲染成可點擊連結。
+            args.push("--json".into());
             let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let code = run!(&refs).map_err(|e| e.to_string())?;
+            let code = run_think_json(ch, exe, &refs, &env).await;
             Ok(OpResult::from_code(code))
         }
         "sync" => run_sync(ch, exe, notes_path, &env, cfg).await,
@@ -451,5 +603,17 @@ mod tests {
     fn noop_sink_is_a_line_sink() {
         let sink: LineSink = noop_sink();
         sink(CliLine { stream: "step".into(), text: "x".into() }); // 不 panic、不輸出
+    }
+
+    /// 引註行格式：雙括號 `[[slug]]`（linkSegments 無條件匹配，支援無 `/` 的
+    /// 裸標題 slug）；take 級附 row。
+    #[test]
+    fn citation_line_matches_link_segment_format() {
+        let page = ThinkCitation { page_slug: "people/林家豪".into(), row_num: None };
+        assert_eq!(citation_line(&page), "[[people/林家豪]]");
+        let bare = ThinkCitation { page_slug: "林家豪".into(), row_num: None };
+        assert_eq!(citation_line(&bare), "[[林家豪]]");
+        let take = ThinkCitation { page_slug: "meetings/2026-06-15".into(), row_num: Some(3) };
+        assert_eq!(citation_line(&take), "[[meetings/2026-06-15]]（take #3）");
     }
 }
