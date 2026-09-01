@@ -18,6 +18,17 @@ import {
   Wand2,
   Lightbulb,
   Target,
+  Newspaper,
+  MessageSquare,
+  Rss,
+  LineChart,
+  Atom,
+  Link2,
+  Handshake,
+  Mail,
+  Hash,
+  PenLine,
+  StickyNote,
   X,
 } from "lucide-vue-next";
 import {
@@ -26,10 +37,12 @@ import {
   factoryWritePages,
   factorySaveAuthored,
   factoryClassify,
+  factoryTypes,
   brainSync,
   formatError,
   tL10n,
   type Factory,
+  type FactoryTypeInfo,
   type PreviewPage,
   type PreviewResult,
   type WriteResult,
@@ -39,36 +52,81 @@ import { useBrainsStore } from "@/stores/brains";
 
 const { t } = useI18n();
 
-interface FactoryDef {
-  id: Factory;
-  icon: typeof Users;
-  titleKey: string;
-  acceptKey: string;
-  targetKey: string;
-}
+// ── 類型清單：動態來自作用中腦的 schema pack（factory_types）────────────
+const types = ref<FactoryTypeInfo[]>([]);
+const packName = ref<string | null>(null);
+const packIsV2 = ref(true);
+const v2Hint = ref<string | null>(null);
+const selected = ref<string>(""); // 選中的類型 id（單一拖放區的目標）
 
-const factories: FactoryDef[] = [
-  { id: "people", icon: Users, titleKey: "factories.defs.people.title", acceptKey: "factories.defs.people.accept", targetKey: "factories.defs.people.target" },
-  { id: "companies", icon: Building2, titleKey: "factories.defs.companies.title", acceptKey: "factories.defs.companies.accept", targetKey: "factories.defs.companies.target" },
-  { id: "meeting", icon: CalendarDays, titleKey: "factories.defs.meeting.title", acceptKey: "factories.defs.meeting.accept", targetKey: "factories.defs.meeting.target" },
-  { id: "projects", icon: Target, titleKey: "factories.defs.projects.title", acceptKey: "factories.defs.projects.accept", targetKey: "factories.defs.projects.target" },
-  { id: "concepts", icon: Lightbulb, titleKey: "factories.defs.concepts.title", acceptKey: "factories.defs.concepts.accept", targetKey: "factories.defs.concepts.target" },
-  { id: "inbox", icon: Inbox, titleKey: "factories.defs.inbox.title", acceptKey: "factories.defs.inbox.accept", targetKey: "factories.defs.inbox.target" },
-];
-
-// 點選擇器的副檔名過濾(每個工廠不同)。名稱為檔案類型標籤，語言中立，不譯。
-const FILTERS: Record<Factory, { name: string; extensions: string[] }[]> = {
-  people: [{ name: "CSV / Text / Markdown", extensions: ["csv", "txt", "md"] }],
-  companies: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
-  meeting: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
-  projects: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
-  concepts: [{ name: "Text / Markdown / PDF", extensions: ["txt", "md", "pdf"] }],
-  inbox: [{ name: "Text / Markdown", extensions: ["txt", "md"] }],
+// 已知類型的圖示；未知/自訂 pack 類型退回 FileDown。
+const ICONS: Record<string, typeof Users> = {
+  person: Users, people: Users,
+  company: Building2, companies: Building2,
+  meeting: CalendarDays, meetings: CalendarDays,
+  media: Newspaper,
+  tweet: MessageSquare,
+  "social-digest": Rss,
+  analysis: LineChart,
+  atom: Atom,
+  concept: Lightbulb, concepts: Lightbulb,
+  source: Link2,
+  deal: Handshake,
+  email: Mail,
+  slack: Hash,
+  writing: PenLine,
+  project: Target, projects: Target,
+  note: StickyNote, inbox: Inbox,
 };
 
-// 自動分類入口接受所有目前工廠支援的副檔名。
-const AUTO_FILTER = [{ name: "CSV / Text / Markdown / PDF", extensions: ["csv", "txt", "md", "pdf"] }];
-const factoryOptions: Factory[] = ["people", "companies", "meeting", "projects", "concepts", "inbox"];
+const selectedInfo = computed(() => types.value.find((x) => x.id === selected.value) ?? null);
+
+function iconOf(id: string) {
+  return ICONS[id] ?? FileDown;
+}
+
+// i18n key 缺漏時（未知/自訂 pack 類型）fallback 顯示 id。
+function tOr(key: string, fallback: string): string {
+  const v = t(key);
+  return v === key ? fallback : v;
+}
+function typeTitle(id: string): string {
+  return tOr(`factories.defs.${id}.title`, id);
+}
+function typeTarget(id: string): string {
+  const info = types.value.find((x) => x.id === id);
+  return tOr(`factories.defs.${id}.target`, info ? info.dir : id);
+}
+
+async function loadTypes() {
+  try {
+    const res = await factoryTypes();
+    types.value = res.types;
+    packName.value = res.pack_name ?? res.pack_effective;
+    packIsV2.value = res.is_v2;
+    v2Hint.value = res.v2_hint ? tL10n(res.v2_hint) : null;
+    // 選中失效（pack 切換）→ 預設第一個非 capture 類型
+    if (!res.types.some((x) => x.id === selected.value)) {
+      selected.value = (res.types.find((x) => x.pipeline !== "capture") ?? res.types[0])?.id ?? "";
+    }
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+
+// 點選擇器的副檔名過濾（依類型管線動態組）。名稱為檔案類型標籤，語言中立，不譯。
+function filtersOf(id: string) {
+  const info = types.value.find((x) => x.id === id);
+  const exts = info?.extensions ?? ["txt", "md"];
+  return [{ name: exts.map((e) => e.toUpperCase()).join(" / "), extensions: exts }];
+}
+
+// 自動分類入口接受所有目前類型支援的副檔名。
+const AUTO_FILTER = computed(() => {
+  const exts = [...new Set(types.value.flatMap((x) => x.extensions))];
+  return [{ name: exts.map((e) => e.toUpperCase()).join(" / "), extensions: exts }];
+});
+const factoryOptions = computed(() => types.value.map((x) => x.id));
 
 const cardEls = new Map<string, HTMLElement>();
 function setCardRef(id: string, el: Element | null) {
@@ -145,6 +203,7 @@ function factoryAt(x: number, y: number): string | null {
 let unlisten: (() => void) | null = null;
 onMounted(async () => {
   brains.load(); // 載入腦清單 + 作用中腦的來源（供來源選擇器）
+  loadTypes();
   const webview = getCurrentWebview();
   unlisten = await webview.onDragDropEvent((event) => {
     if (event.payload.type === "drop") {
@@ -160,12 +219,15 @@ onMounted(async () => {
 });
 onUnmounted(() => unlisten?.());
 
+// 切換作用中腦 → pack 可能不同，重新載入類型清單。
+watch(() => brains.activeId, () => loadTypes());
+
 // 點拖放區 → 原生檔案選擇器
 async function pickFiles(f: Factory) {
   try {
-    const selected = await openDialog({ multiple: true, filters: FILTERS[f] });
-    if (!selected) return;
-    const paths = Array.isArray(selected) ? selected : [selected];
+    const chosen = await openDialog({ multiple: true, filters: filtersOf(f) });
+    if (!chosen) return;
+    const paths = Array.isArray(chosen) ? chosen : [chosen];
     if (paths.length) doRun(f, paths);
   } catch (e) {
     errorMsg.value = formatError(e);
@@ -185,9 +247,9 @@ async function openDir(f: Factory) {
 // 點自動卡 → 選檔 → 分類；高/中信心直接跑，低信心跳確認框。
 async function onAutoPick() {
   try {
-    const selected = await openDialog({ multiple: true, filters: AUTO_FILTER });
-    if (!selected) return;
-    const paths = Array.isArray(selected) ? selected : [selected];
+    const picked = await openDialog({ multiple: true, filters: AUTO_FILTER.value });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
     if (paths.length) onAuto(paths);
   } catch (e) {
     errorMsg.value = formatError(e);
@@ -219,7 +281,7 @@ async function onAuto(paths: string[]) {
     if (confirmCls.length) {
       classifyItems.value = confirmCls.map((c) => ({
         path: c.path,
-        chosen: c.factory || "inbox",
+        chosen: c.factory || types.value[types.value.length - 1]?.id || "",
         reason: c.reason,
       }));
       classifyOpen.value = true;
@@ -356,7 +418,9 @@ async function doSync() {
 // "+ 新增"編輯器
 function openEditor(f: Factory) {
   editorFactory.value = f;
-  editorMd.value = t(`factories.templates.${f}`);
+  // 類型專屬範本缺漏（未知/自訂 pack 類型）→ 以 id 動態組通用範本
+  const generic = `---\ntype: ${f}\ntitle: ''\ntags: [${f}]\n---\n\n# \n\n`;
+  editorMd.value = tOr(`factories.templates.${f}`, generic);
   editorSlug.value = null;
   editorResult.value = null;
   editorError.value = null;
@@ -418,49 +482,83 @@ async function saveEditorAndSync() {
       <span v-else class="text-xs text-warning">{{ $t("factories.noSource") }}</span>
     </div>
 
-    <!-- 工廠卡（第一張為自動分類統一入口；其餘各對應一個 DIR_PATTERN 白名單目錄）-->
-    <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-      <!-- 自動分類：丟任何 csv/txt/md/pdf，程式判斷歸屬 -->
-      <div
-        :ref="(el) => setCardRef('auto', el as Element | null)"
-        :class="[
-          'col-span-2 flex flex-col gap-2 rounded-xl p-4 transition-all duration-200',
-          busy === 'auto'
-            ? 'border-4 border-destructive bg-destructive/5 animate-[gb-pulse_1.6s_ease-in-out_infinite]'
-            : hovered === 'auto'
-              ? 'border-2 border-primary bg-primary/10'
-              : 'border-2 border-primary/40 bg-primary/5',
-        ]"
-      >
-        <div class="flex items-center gap-3">
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15">
-            <component :is="busy === 'auto' ? Loader2 : Wand2" :size="18" :class="busy === 'auto' ? 'animate-spin' : ''" />
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="font-medium">{{ $t("factories.defs.auto.title") }}</div>
-            <div class="text-xs text-muted-foreground">{{ $t("factories.accept") }}{{ $t("factories.defs.auto.accept") }}</div>
-          </div>
-        </div>
-        <button
-          type="button"
-          class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 px-3 py-2.5 text-sm transition-colors hover:bg-primary/10"
-          @click="onAutoPick"
+    <!-- 非 v2 pack：提示可到設定頁跑 unify-types 升級 -->
+    <div
+      v-if="v2Hint"
+      class="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning"
+    >
+      <AlertTriangle :size="15" />
+      <span class="min-w-0 flex-1">{{ v2Hint }}</span>
+      <RouterLink to="/config" class="rounded-md border border-warning/50 px-2 py-1 text-xs hover:bg-warning/20">
+        {{ $t("factories.v2HintLink") }}
+      </RouterLink>
+    </div>
+
+    <!-- 主從式版面：左=類型 chip 清單（動態，來自 schema pack）；右=單一拖放區 -->
+    <div class="flex flex-col gap-3 lg:flex-row">
+      <!-- 自動分類 hero 卡＋類型 chip 清單 -->
+      <div class="flex w-full shrink-0 flex-col gap-3 lg:w-80">
+        <!-- 自動分類：丟任何支援格式，程式判斷歸屬 -->
+        <div
+          :ref="(el) => setCardRef('auto', el as Element | null)"
+          :class="[
+            'flex flex-col gap-2 rounded-xl p-4 transition-all duration-200',
+            busy === 'auto'
+              ? 'border-4 border-destructive bg-destructive/5 animate-[gb-pulse_1.6s_ease-in-out_infinite]'
+              : hovered === 'auto'
+                ? 'border-2 border-primary bg-primary/10'
+                : 'border-2 border-primary/40 bg-primary/5',
+          ]"
         >
-          <component :is="busy === 'auto' ? Loader2 : FileDown" :size="16" :class="busy === 'auto' ? 'animate-spin' : ''" />
-          <span class="truncate">{{ hovered === 'auto' ? $t("factories.dropActive") : $t("factories.defs.auto.hint") }}</span>
-        </button>
-        <div class="text-xs text-muted-foreground">{{ $t("factories.output") }} <code>{{ $t("factories.defs.auto.target") }}</code></div>
+          <div class="flex items-center gap-3">
+            <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15">
+              <component :is="busy === 'auto' ? Loader2 : Wand2" :size="18" :class="busy === 'auto' ? 'animate-spin' : ''" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="font-medium">{{ $t("factories.defs.auto.title") }}</div>
+              <div class="text-xs text-muted-foreground">{{ $t("factories.packLabel", { pack: packName ?? "?" }) }}</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 px-3 py-2.5 text-sm transition-colors hover:bg-primary/10"
+            @click="onAutoPick"
+          >
+            <component :is="busy === 'auto' ? Loader2 : FileDown" :size="16" :class="busy === 'auto' ? 'animate-spin' : ''" />
+            <span class="truncate">{{ hovered === 'auto' ? $t("factories.dropActive") : $t("factories.defs.auto.hint") }}</span>
+          </button>
+        </div>
+
+        <!-- 類型 chips：一列多個、點選決定右側拖放區目標 -->
+        <div class="flex flex-wrap content-start gap-1.5 rounded-xl border border-border bg-card/40 p-3">
+          <button
+            v-for="tp in types"
+            :key="tp.id"
+            type="button"
+            :class="[
+              'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors',
+              selected === tp.id
+                ? 'border-primary bg-primary/15 text-foreground'
+                : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
+            ]"
+            @click="selected = tp.id"
+          >
+            <component :is="busy === tp.id ? Loader2 : iconOf(tp.id)" :size="13" :class="busy === tp.id ? 'animate-spin' : ''" />
+            <span>{{ typeTitle(tp.id) }}</span>
+          </button>
+        </div>
       </div>
 
+      <!-- 選中類型的工作區：單一拖放區（點擊=檔案選擇器） -->
       <div
-        v-for="f in factories"
-        :key="f.id"
-        :ref="(el) => setCardRef(f.id, el as Element | null)"
+        v-if="selectedInfo"
+        :ref="(el) => setCardRef(selectedInfo?.id ?? '', el as Element | null)"
+        :key="selectedInfo?.id"
         :class="[
-          'flex flex-col gap-2 rounded-xl p-4 transition-all duration-200',
-          busy === f.id
+          'flex min-h-56 flex-1 flex-col gap-2 rounded-xl p-4 transition-all duration-200',
+          busy === selectedInfo.id
             ? 'border-4 border-destructive bg-destructive/5 animate-[gb-pulse_1.6s_ease-in-out_infinite]'
-            : hovered === f.id
+            : hovered === selectedInfo.id
               ? 'border-2 border-primary bg-primary/5'
               : 'border-2 border-dashed border-border bg-card/40',
         ]"
@@ -468,43 +566,53 @@ async function saveEditorAndSync() {
         <div class="flex items-center gap-3">
           <button
             type="button"
-            :disabled="f.id === 'inbox'"
-            :title="f.id === 'inbox' ? $t('factories.openDirInboxHint') : $t('factories.openDir')"
+            :disabled="selectedInfo.pipeline === 'capture'"
+            :title="selectedInfo.pipeline === 'capture' ? $t('factories.openDirInboxHint') : $t('factories.openDir')"
             class="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-muted-foreground transition-colors enabled:cursor-pointer enabled:hover:bg-accent/70 enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            @click="openDir(f.id)"
+            @click="openDir(selectedInfo.id)"
           >
-            <component :is="busy === f.id ? Loader2 : f.icon" :size="18" :class="busy === f.id ? 'animate-spin' : ''" />
+            <component
+              :is="busy === selectedInfo.id ? Loader2 : iconOf(selectedInfo.id)"
+              :size="18"
+              :class="busy === selectedInfo.id ? 'animate-spin' : ''"
+            />
           </button>
           <div class="min-w-0 flex-1">
             <div class="font-medium">
-              {{ $t(f.titleKey) }}
+              {{ typeTitle(selectedInfo.id) }}
               <span
-                v-if="f.id === 'inbox'"
+                v-if="selectedInfo.pipeline === 'capture'"
                 :title="$t('factories.defs.inbox.noGraphHint')"
                 class="ml-1 rounded bg-warning/15 px-1.5 py-0.5 align-middle text-[10px] font-normal text-warning"
                 >{{ $t("factories.defs.inbox.noGraph") }}</span
               >
             </div>
-            <div class="text-xs text-muted-foreground">{{ $t("factories.accept") }}{{ $t(f.acceptKey) }}</div>
+            <div class="text-xs text-muted-foreground">
+              {{ $t("factories.accept") }}{{ selectedInfo.extensions.join(" / ").toUpperCase() }}
+            </div>
           </div>
           <button
-            :title="$t('factories.addTooltip', { title: $t(f.titleKey) })"
+            :title="$t('factories.addTooltip', { title: typeTitle(selectedInfo.id) })"
             class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
-            @click="openEditor(f.id)"
+            @click="openEditor(selectedInfo.id)"
           >
             <Plus :size="16" />
           </button>
         </div>
         <button
           type="button"
-          class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/60 py-3 text-center text-sm transition-colors hover:border-primary/50 hover:bg-accent/30"
-          :class="hovered === f.id ? 'text-foreground' : 'text-muted-foreground'"
-          @click="pickFiles(f.id)"
+          class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border/60 py-6 text-center text-sm transition-colors hover:border-primary/50 hover:bg-accent/30"
+          :class="hovered === selectedInfo.id ? 'text-foreground' : 'text-muted-foreground'"
+          @click="pickFiles(selectedInfo.id)"
         >
-          <component :is="busy === f.id ? Loader2 : FileDown" :size="18" :class="busy === f.id ? 'animate-spin' : ''" />
-          <span>{{ hovered === f.id ? $t("factories.dropActive") : $t("factories.dropHint") }}</span>
+          <component
+            :is="busy === selectedInfo.id ? Loader2 : FileDown"
+            :size="20"
+            :class="busy === selectedInfo.id ? 'animate-spin' : ''"
+          />
+          <span>{{ hovered === selectedInfo.id ? $t("factories.dropActive") : $t("factories.dropHint") }}</span>
         </button>
-        <div class="text-xs text-muted-foreground">{{ $t("factories.output") }} <code>{{ $t(f.targetKey) }}</code></div>
+        <div class="text-xs text-muted-foreground">{{ $t("factories.output") }} <code>{{ typeTarget(selectedInfo.id) }}</code></div>
       </div>
     </div>
 

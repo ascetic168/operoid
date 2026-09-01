@@ -199,8 +199,70 @@
       "auto": {
         "title": "自動（丟進來我幫你分）",
         "accept": "csv / txt / md / pdf",
-        "target": "依判斷分派 → people/companies/meeting/inbox",
+        "target": "依判斷分派 → 各類型目錄",
         "hint": "拖放任何檔案，或點此選擇"
+      },
+      "person": {
+        "title": "person 人物",
+        "target": "person/"
+      },
+      "company": {
+        "title": "company 公司",
+        "target": "company/"
+      },
+      "media": {
+        "title": "media 媒體",
+        "target": "media/"
+      },
+      "tweet": {
+        "title": "tweet 推文",
+        "target": "tweet/"
+      },
+      "social-digest": {
+        "title": "social-digest 社群摘要",
+        "target": "social-digest/"
+      },
+      "analysis": {
+        "title": "analysis 分析",
+        "target": "analysis/"
+      },
+      "atom": {
+        "title": "atom 知識原子",
+        "target": "atom/"
+      },
+      "concept": {
+        "title": "concept 概念",
+        "target": "concept/"
+      },
+      "source": {
+        "title": "source 來源",
+        "target": "source/"
+      },
+      "deal": {
+        "title": "deal 商機",
+        "target": "deal/"
+      },
+      "email": {
+        "title": "email 郵件",
+        "target": "email/"
+      },
+      "slack": {
+        "title": "slack 對話",
+        "target": "slack/"
+      },
+      "writing": {
+        "title": "writing 寫作",
+        "target": "writing/"
+      },
+      "project": {
+        "title": "project 專案",
+        "target": "project/"
+      },
+      "note": {
+        "title": "note 速記",
+        "target": "note/（gbrain capture）",
+        "noGraph": "不進圖譜",
+        "noGraphHint": "note 走 gbrain capture 當速記，不在知識圖譜的連結白名單（DIR_PATTERN）內，故不與其他頁成邊。"
       }
     },
     "classify": {
@@ -216,8 +278,15 @@
       "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\n日期：YYYY-MM-DD\n地點：\n\n與會者：趙建宏、陳志遠、林家豪、王淑芬\n\n討論：\n- \n\n決議：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目標：。\n\n負責人：\n\n里程碑：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定義：。\n\n要點：\n- \n",
-      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
-    }
+      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n",
+      "person": "---\ntype: person\ntitle: ''\ntags: [person, contact]\n---\n\n# \n\n任職於 ，職稱 。\n\nEmail：\n- \n\nPhone：\n- \n",
+      "company": "---\ntype: company\ntitle: ''\ntags: [company, contact]\n---\n\n# \n\n簡介：。\n",
+      "concept": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定義：。\n\n要點：\n- \n",
+      "project": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目標：。\n\n里程碑：\n- \n"
+    },
+    "packLabel": "Schema pack：{pack}",
+    "v2Hint": "目前 schema pack 為 {pack}（v1，6 工廠）。建議到設定頁執行 unify-types 升級到 gbrain-base-v2（15 型）。",
+    "v2HintLink": "前往設定"
   },
   "chat": {
     "empty": "尚無訊息。發一則開始對話。",
@@ -299,12 +368,12 @@
     "tierDesc": "gbrain v0.42 依 tier 路由任務。設定經 gbrain config set 寫入 DB plane（權威層）。",
     "unifyModel": "全部 tier 用同一個模型",
     "unifyModelHint": "把單一模型套用到 chat + 四個 tier（utility/reasoning/deep/subagent）。",
-      "gbrainTransportLabel": "gbrain 傳輸",
-      "gbrainTransportHint": "員工 think/query 走 MCP（gbrain serve；失敗自動退回 CLI）或純 CLI",
-      "schemaV2Hint": "此腦仍是 schema pack v1（gbrain-base）。建議遷移到 v2（15 標準型）後再繼續寫入。",
-      "schemaV2Run": "執行 unify-types",
-      "schemaV2Done": "已提交 unify-types job（可在 Operations 執行 jobs list 觀察）",
-      "schemaV2Fail": "unify-types 失敗（見 Operations 主控台）",
+    "gbrainTransportLabel": "gbrain 傳輸",
+    "gbrainTransportHint": "員工 think/query 走 MCP（gbrain serve；失敗自動退回 CLI）或純 CLI",
+    "schemaV2Hint": "此腦仍是 schema pack v1（gbrain-base）。建議遷移到 v2（15 標準型）後再繼續寫入。",
+    "schemaV2Run": "執行 unify-types",
+    "schemaV2Done": "已提交 unify-types job（可在 Operations 執行 jobs list 觀察）",
+    "schemaV2Fail": "unify-types 失敗（見 Operations 主控台）",
     "mainModelTitle": "主模型（套用至全部 tier）",
     "mainModelHint": "同步寫入 file plane（config.json，runtime 優先）與 DB plane：chat_model + models.default/think + 四個 tier。",
     "mainModelPh": "provider:model（例如 zhipu:glm-4-flash）",

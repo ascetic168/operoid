@@ -199,8 +199,70 @@
       "auto": {
         "title": "自动（丢进来我帮你分）",
         "accept": "csv / txt / md / pdf",
-        "target": "依判断分派 → people/companies/meeting/inbox",
+        "target": "依判断分派 → 各类型目录",
         "hint": "拖放任何文件，或点此选择"
+      },
+      "person": {
+        "title": "person 人物",
+        "target": "person/"
+      },
+      "company": {
+        "title": "company 公司",
+        "target": "company/"
+      },
+      "media": {
+        "title": "media 媒体",
+        "target": "media/"
+      },
+      "tweet": {
+        "title": "tweet 推文",
+        "target": "tweet/"
+      },
+      "social-digest": {
+        "title": "social-digest 社群摘要",
+        "target": "social-digest/"
+      },
+      "analysis": {
+        "title": "analysis 分析",
+        "target": "analysis/"
+      },
+      "atom": {
+        "title": "atom 知识原子",
+        "target": "atom/"
+      },
+      "concept": {
+        "title": "concept 概念",
+        "target": "concept/"
+      },
+      "source": {
+        "title": "source 来源",
+        "target": "source/"
+      },
+      "deal": {
+        "title": "deal 商机",
+        "target": "deal/"
+      },
+      "email": {
+        "title": "email 邮件",
+        "target": "email/"
+      },
+      "slack": {
+        "title": "slack 对话",
+        "target": "slack/"
+      },
+      "writing": {
+        "title": "writing 写作",
+        "target": "writing/"
+      },
+      "project": {
+        "title": "project 项目",
+        "target": "project/"
+      },
+      "note": {
+        "title": "note 速记",
+        "target": "note/（gbrain capture）",
+        "noGraph": "不进图谱",
+        "noGraphHint": "note 走 gbrain capture 当速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。"
       }
     },
     "classify": {
@@ -216,8 +278,15 @@
       "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\n日期：YYYY-MM-DD\n地点：\n\n与会者：赵建宏、陈志远、林家豪、王淑芬\n\n讨论：\n- \n\n决议：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目标：。\n\n负责人：\n\n里程碑：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定义：。\n\n要点：\n- \n",
-      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
-    }
+      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n",
+      "person": "---\ntype: person\ntitle: ''\ntags: [person, contact]\n---\n\n# \n\n任职于 ，职称 。\n\nEmail：\n- \n\nPhone：\n- \n",
+      "company": "---\ntype: company\ntitle: ''\ntags: [company, contact]\n---\n\n# \n\n简介：。\n",
+      "concept": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定义：。\n\n要点：\n- \n",
+      "project": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目标：。\n\n里程碑：\n- \n"
+    },
+    "packLabel": "Schema pack：{pack}",
+    "v2Hint": "当前 schema pack 为 {pack}（v1，6 工厂）。建议到设置页执行 unify-types 升级到 gbrain-base-v2（15 型）。",
+    "v2HintLink": "前往设置"
   },
   "chat": {
     "empty": "尚无消息。发一则开始对话。",
@@ -299,12 +368,12 @@
     "tierDesc": "gbrain v0.42 依 tier 路由任务。设置经 gbrain config set 写入 DB plane（权威层）。",
     "unifyModel": "全部 tier 用同一个模型",
     "unifyModelHint": "把单一模型套用到 chat + 四个 tier（utility/reasoning/deep/subagent）。",
-      "gbrainTransportLabel": "gbrain 传输",
-      "gbrainTransportHint": "员工 think/query 走 MCP（gbrain serve；失败自动退回 CLI）或纯 CLI",
-      "schemaV2Hint": "此脑仍是 schema pack v1（gbrain-base）。建议迁移到 v2（15 标准型）后再继续写入。",
-      "schemaV2Run": "执行 unify-types",
-      "schemaV2Done": "已提交 unify-types job（可在 Operations 执行 jobs list 观察）",
-      "schemaV2Fail": "unify-types 失败（见 Operations 主控台）",
+    "gbrainTransportLabel": "gbrain 传输",
+    "gbrainTransportHint": "员工 think/query 走 MCP（gbrain serve；失败自动退回 CLI）或纯 CLI",
+    "schemaV2Hint": "此脑仍是 schema pack v1（gbrain-base）。建议迁移到 v2（15 标准型）后再继续写入。",
+    "schemaV2Run": "执行 unify-types",
+    "schemaV2Done": "已提交 unify-types job（可在 Operations 执行 jobs list 观察）",
+    "schemaV2Fail": "unify-types 失败（见 Operations 主控台）",
     "mainModelTitle": "主模型（套用至全部 tier）",
     "mainModelHint": "同步写入 file plane（config.json，runtime 优先）与 DB plane：chat_model + models.default/think + 四个 tier。",
     "mainModelPh": "provider:model（例如 zhipu:glm-4-flash）",

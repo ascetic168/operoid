@@ -199,8 +199,70 @@
       "auto": {
         "title": "Auto (drop it, I'll sort it)",
         "accept": "csv / txt / md / pdf",
-        "target": "routed by content → people/companies/meeting/inbox",
+        "target": "auto-dispatch → per-type directory",
         "hint": "Drop any file, or click to choose"
+      },
+      "person": {
+        "title": "person",
+        "target": "person/"
+      },
+      "company": {
+        "title": "company",
+        "target": "company/"
+      },
+      "media": {
+        "title": "media",
+        "target": "media/"
+      },
+      "tweet": {
+        "title": "tweet",
+        "target": "tweet/"
+      },
+      "social-digest": {
+        "title": "social-digest",
+        "target": "social-digest/"
+      },
+      "analysis": {
+        "title": "analysis",
+        "target": "analysis/"
+      },
+      "atom": {
+        "title": "atom",
+        "target": "atom/"
+      },
+      "concept": {
+        "title": "concept",
+        "target": "concept/"
+      },
+      "source": {
+        "title": "source",
+        "target": "source/"
+      },
+      "deal": {
+        "title": "deal",
+        "target": "deal/"
+      },
+      "email": {
+        "title": "email",
+        "target": "email/"
+      },
+      "slack": {
+        "title": "slack",
+        "target": "slack/"
+      },
+      "writing": {
+        "title": "writing",
+        "target": "writing/"
+      },
+      "project": {
+        "title": "project",
+        "target": "project/"
+      },
+      "note": {
+        "title": "note (quick capture)",
+        "target": "note/ (gbrain capture)",
+        "noGraph": "no graph",
+        "noGraphHint": "notes go through gbrain capture and are not in the graph link whitelist (DIR_PATTERN), so they don't form edges."
       }
     },
     "classify": {
@@ -216,8 +278,15 @@
       "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\nDate: YYYY-MM-DD\nLocation:\n\nAttendees: Jane Doe, John Smith, Alex Lee, Mary Chen\n\nDiscussion:\n- \n\nDecisions:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\nGoal: .\n\nOwner:\n\nMilestones:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
       "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\nDefinition: .\n\nKey points:\n- \n",
-      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n"
-    }
+      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n",
+      "person": "---\ntype: person\ntitle: ''\ntags: [person, contact]\n---\n\n# \n\nWorks at , title .\n\nEmail:\n- \n\nPhone:\n- \n",
+      "company": "---\ntype: company\ntitle: ''\ntags: [company, contact]\n---\n\n# \n\nSummary: .\n",
+      "concept": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\nDefinition: .\n\nKey points:\n- \n",
+      "project": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\nGoal: .\n\nMilestones:\n- \n"
+    },
+    "packLabel": "Schema pack: {pack}",
+    "v2Hint": "Active schema pack is {pack} (v1, 6 factories). Consider running unify-types on the Config page to upgrade to gbrain-base-v2 (15 types).",
+    "v2HintLink": "Open settings"
   },
   "chat": {
     "empty": "No messages yet. Send one to start the conversation.",
@@ -299,12 +368,12 @@
     "tierDesc": "gbrain v0.42 routes tasks to model tiers. Settings write to the DB plane (authoritative) via gbrain config set.",
     "unifyModel": "Use one model for all tiers",
     "unifyModelHint": "Apply a single model to chat + all four tiers (utility/reasoning/deep/subagent).",
-      "gbrainTransportLabel": "gbrain transport",
-      "gbrainTransportHint": "Employee think/query via MCP (gbrain serve; auto-fallback to CLI) or CLI only",
-      "schemaV2Hint": "This brain is still on schema pack v1 (gbrain-base). Migrating to v2 (15 canonical types) is recommended before further writes.",
-      "schemaV2Run": "Run unify-types",
-      "schemaV2Done": "unify-types job submitted (watch via jobs list in Operations)",
-      "schemaV2Fail": "unify-types failed (see Operations console)",
+    "gbrainTransportLabel": "gbrain transport",
+    "gbrainTransportHint": "Employee think/query via MCP (gbrain serve; auto-fallback to CLI) or CLI only",
+    "schemaV2Hint": "This brain is still on schema pack v1 (gbrain-base). Migrating to v2 (15 canonical types) is recommended before further writes.",
+    "schemaV2Run": "Run unify-types",
+    "schemaV2Done": "unify-types job submitted (watch via jobs list in Operations)",
+    "schemaV2Fail": "unify-types failed (see Operations console)",
     "mainModelTitle": "Main model (applies to all tiers)",
     "mainModelHint": "Writes chat_model + models.default/think + all four tiers to BOTH planes: config.json (file plane, takes precedence at runtime) and the DB plane via gbrain config set.",
     "mainModelPh": "provider:model (e.g. zhipu:glm-4-flash)",

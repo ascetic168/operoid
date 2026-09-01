@@ -313,11 +313,32 @@ export interface WriteResult {
 }
 
 /**
- * 工廠／自動分類目標。輸出目錄寫死（people/companies/meetings/concepts/projects，
- * inbox 走 gbrain capture 不寫檔）。v0.42 起 gbrain 的 DIR_PATTERN 不再是丟棄閘
- * （#2576），非白名單目錄也能成邊，故目錄名不再需要可配置。
+ * 工廠／自動分類目標。類型清單動態來自作用中腦的 schema pack
+ * （`factory_types`：gbrain-base-v2 15 型 / legacy 6 工廠），故為自由字串。
  */
-export type Factory = "people" | "companies" | "meeting" | "inbox" | "concepts" | "projects";
+export type Factory = string;
+
+/** 單一工廠類型資訊（`factory_types` 回傳）。 */
+export interface FactoryTypeInfo {
+  id: string;
+  dir: string;
+  /** "people"（CSV+文字）| "textual"（LLM）| "capture"（gbrain capture） */
+  pipeline: "people" | "textual" | "capture";
+  extensions: string[];
+}
+
+/** `factory_types` 回傳：pack 資訊 + 類型清單 + v1→v2 升級提示。 */
+export interface FactoryTypesResult {
+  pack_name: string | null;
+  pack_effective: string;
+  is_v2: boolean;
+  types: FactoryTypeInfo[];
+  v2_hint: L10n | null;
+}
+
+/** 作用中 schema pack 的工廠類型清單（前端動態渲染用）。 */
+export const factoryTypes = (): Promise<FactoryTypesResult> =>
+  agentFetch<FactoryTypesResult>("/api/factories/types");
 
 /** 轉換 + 立即寫入 + 回傳預覽。target_repo=來源 repo 路徑（未給則用 app notes_repo_path）。 */
 export const factoryRun = (

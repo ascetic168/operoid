@@ -10,6 +10,7 @@ use serde::Deserialize;
 
 use super::{frontmatter, slug, wikilink};
 use crate::app_config::AppConfig;
+use crate::factory_types::FactoryTypeSpec;
 use crate::gbrain_config::LlmEndpoint;
 use crate::llm;
 
@@ -38,17 +39,10 @@ pub struct TimelineEntry {
     pub detail: String,
 }
 
-/// 產出：slug + 合規 markdown。
-pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
-    let (dir, default_type, default_tags): (&str, &str, Vec<&str>) = match factory {
-        "companies" => ("companies", "company", vec!["companies", "contact"]),
-        "meeting" => ("meetings", "meeting", vec!["meeting"]),
-        "people" => ("people", "person", vec!["people", "contact"]),
-        "concepts" => ("concepts", "concept", vec!["concept"]),
-        "projects" => ("projects", "project", vec!["project"]),
-        _ => ("concepts", "concept", vec![]),
-    };
-
+/// 產出：slug + 合規 markdown。`person_dir` = 該 pack 人物頁目錄（mentioned_names
+/// wikilink 用；v2=person、legacy=people）。
+pub fn render(spec: &FactoryTypeSpec, person_dir: &str, sp: &StructuredPage) -> (String, String) {
+    let dir = spec.dir;
     let title = if sp.title.trim().is_empty() {
         "未命名".to_string()
     } else {
@@ -56,13 +50,9 @@ pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
     };
     let slug = slug::slugify(&title, &format!("{dir}-untitled"));
 
-    let ptype = if sp.page_type.trim().is_empty() {
-        default_type.to_string()
-    } else {
-        sp.page_type.trim().to_string()
-    };
+    let ptype = crate::factory_types::normalize_page_type(spec, &sp.page_type);
     let tags: Vec<String> = if sp.tags.is_empty() {
-        default_tags.iter().map(|s| s.to_string()).collect()
+        spec.default_tags.iter().map(|s| s.to_string()).collect()
     } else {
         sp.tags.clone()
     };
@@ -74,10 +64,10 @@ pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
         b.push(String::new());
     }
 
-    // mentioned_names → people wikilink bullets（公司=聯絡人 / 會議=與會者）
+    // mentioned_names → person wikilink bullets（公司=聯絡人 / 會議=與會者）
     if !sp.mentioned_names.is_empty() {
-        let label = match factory {
-            "companies" => "## 聯絡人",
+        let label = match spec.heuristic_kind {
+            "company" => "## 聯絡人",
             "meeting" => "## 與會者",
             _ => "## 相關人物",
         };
@@ -86,7 +76,7 @@ pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
         for n in &sp.mentioned_names {
             let nm = n.trim();
             if !nm.is_empty() {
-                b.push(format!("- {}", wikilink::qualified("people", nm)));
+                b.push(format!("- {}", wikilink::qualified(person_dir, nm)));
             }
         }
         b.push(String::new());
@@ -112,10 +102,7 @@ pub fn render(factory: &str, sp: &StructuredPage) -> (String, String) {
     // schema pack v2（gbrain-base-v2）對齊：type 值已是 v2 標準型（person/company/meeting/
     // concept/project）；company 在 v2 有 subtype（companies/ → company）；origin 標記
     // 產源（v2 把來源資訊放 frontmatter 而非型別）。
-    let subtype = match factory {
-        "companies" => Some("company"),
-        _ => None,
-    };
+    let subtype = if spec.id == "companies" { Some("company") } else { None };
     let mut fm_entries: Vec<(&str, String)> = vec![
         ("type", ptype),
         ("subtype", subtype.unwrap_or_default().to_string()),
@@ -144,15 +131,8 @@ pub fn strip_fence(resp: &str) -> String {
     t.to_string()
 }
 
-fn system_prompt(factory: &str) -> String {
-    let role = match factory {
-        "companies" => "公司（company）",
-        "meeting" => "會議（meeting）",
-        "people" => "人物（person）",
-        "concepts" => "主題／概念（concept）",
-        "projects" => "專案（project）",
-        _ => "主題（concept）",
-    };
+fn system_prompt(spec: &FactoryTypeSpec) -> String {
+    let role = format!("{}（{}）", spec.zh, spec.id);
     format!(
         "你是知識圖譜頁面抽取器。把使用者给的文件轉成一個 gbrain 合規的 {role} 頁面。\n\
          只回傳一個 JSON 物件，不要任何說明文字。schema：\n\
@@ -163,28 +143,21 @@ fn system_prompt(factory: &str) -> String {
          規則：\n\
          - title 為簡潔專有名稱（公司名／會議主題／專案名／概念名）。\n\
          - body_markdown 用中文散文概述，不要含 wikilink 語法（連結由系統自動產生）。\n\
-         - mentioned_names 列出實際出現的人物全名（若文件提到該人在腦中有 people 頁才會解析成邊）。\n\
+         - mentioned_names 列出實際出現的人物全名（若文件提到該人在腦中有 person 頁才會解析成邊）。\n\
          - timeline 的 date 必須是 YYYY-MM-DD；沒有明確日期的事件不要放 timeline。\n\
          - 沒有的欄位給空字串或空陣列。",
-        ptype = match factory {
-            "companies" => "company",
-            "meeting" => "meeting",
-            "people" => "person",
-            "concepts" => "concept",
-            "projects" => "project",
-            _ => "concept",
-        }
+        ptype = spec.page_type,
     )
 }
 
 /// 文字 → 結構化頁面（呼叫 LLM）。`raw` 為已抽出的純文字。
 pub async fn text_to_page(
-    factory: &str,
+    spec: &FactoryTypeSpec,
     raw: &str,
     cfg: &AppConfig,
     endpoint: &LlmEndpoint,
 ) -> Result<StructuredPage> {
-    let system = system_prompt(factory);
+    let system = system_prompt(spec);
     // 限制輸入長度，避免超出 context
     let max_in = 24_000;
     let trimmed = if raw.chars().count() > max_in {
@@ -193,7 +166,7 @@ pub async fn text_to_page(
     } else {
         raw.to_string()
     };
-    let user = format!("來源類型：{factory}\n\n文件內容：\n{trimmed}\n\n請只回傳 JSON 物件。");
+    let user = format!("來源類型：{}\n\n文件內容：\n{trimmed}\n\n請只回傳 JSON 物件。", spec.id);
     let resp = llm::complete(endpoint, &cfg.llm_sampling(), &system, &user).await?;
     let json = strip_fence(&resp);
     let sp: StructuredPage =
@@ -229,38 +202,41 @@ async fn extract_names(body: &str, cfg: &AppConfig, endpoint: &LlmEndpoint) -> R
 }
 
 /// 把 body 裡的人名/公司名包成 `[[dir/slug|name]]`；已在 `[[..]]` 內的不重包；
-/// 頁面自身（own_dir + own_slug）不自我連結。純字串處理，可單測。
+/// 頁面自身（own_dir + own_slug）不自我連結。`people_dir`/`companies_dir` 為作用中
+/// pack 的實際目錄（v2=person/company、legacy=people/companies）。純字串處理，可單測。
 pub fn wrap_names(
     body: &str,
     people: &[String],
     companies: &[String],
+    people_dir: &str,
+    companies_dir: &str,
     own_dir: &str,
     own_slug: &str,
 ) -> String {
-    let mut items: Vec<(String, &'static str)> = Vec::new();
+    let mut items: Vec<(String, String)> = Vec::new();
     for n in people {
         let n = n.trim();
         if n.is_empty() {
             continue;
         }
-        if own_dir == "people" && slug::slugify(n, "") == own_slug {
+        if own_dir == people_dir && slug::slugify(n, "") == own_slug {
             continue; // 不自我連結
         }
-        items.push((n.to_string(), "people"));
+        items.push((n.to_string(), people_dir.to_string()));
     }
     for n in companies {
         let n = n.trim();
         if n.is_empty() {
             continue;
         }
-        if own_dir == "companies" && slug::slugify(n, "") == own_slug {
+        if own_dir == companies_dir && slug::slugify(n, "") == own_slug {
             continue;
         }
-        items.push((n.to_string(), "companies"));
+        items.push((n.to_string(), companies_dir.to_string()));
     }
     // 去重 + 長度遞減（避免短名吃到長名的子字串）
     let mut seen = std::collections::HashSet::new();
-    items.retain(|(n, d)| seen.insert((n.clone(), *d)));
+    items.retain(|(n, d)| seen.insert((n.clone(), d.clone())));
     items.sort_by(|a, b| b.0.chars().count().cmp(&a.0.chars().count()));
     if items.is_empty() {
         return body.to_string();
@@ -281,16 +257,19 @@ pub fn wrap_names(
         let (dir, s) = items
             .iter()
             .find(|(n, _)| *n == m)
-            .map(|(n, d)| (*d, slug::slugify(n, "")))
+            .map(|(n, d)| (d.as_str(), slug::slugify(n, "")))
             .unwrap();
         format!("[[{dir}/{s}|{m}]]")
     })
     .into_owned()
 }
 
-/// 對整份 markdown 補 wikilink：frontmatter 不動，只 enrich body。回傳(enriched, 名字數)。
+/// 對整份 markdown 補 wikilink：frontmatter 不動，只 enrich body。
+/// `people_dir`/`companies_dir` 為作用中 pack 的目錄。回傳(enriched, 名字數)。
 pub async fn enrich_wikilinks(
     markdown: &str,
+    people_dir: &str,
+    companies_dir: &str,
     own_dir: &str,
     own_slug: &str,
     cfg: &AppConfig,
@@ -299,7 +278,8 @@ pub async fn enrich_wikilinks(
     let (fm, body) = frontmatter::split(markdown);
     let names = extract_names(body, cfg, endpoint).await?;
     let count = names.people.len() + names.companies.len();
-    let enriched_body = wrap_names(body, &names.people, &names.companies, own_dir, own_slug);
+    let enriched_body =
+        wrap_names(body, &names.people, &names.companies, people_dir, companies_dir, own_dir, own_slug);
     let head = match fm {
         Some(f) => format!("---\n{f}\n---\n"),
         None => String::new(),
@@ -310,6 +290,11 @@ pub async fn enrich_wikilinks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::factory_types::{pack_for, Pipeline};
+
+    fn spec(pack: Option<&str>, id: &str) -> &'static FactoryTypeSpec {
+        pack_for(pack).spec(id).expect("spec exists")
+    }
 
     #[test]
     fn renders_company_page() {
@@ -321,13 +306,31 @@ mod tests {
             timeline: vec![],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let (slug, md) = render("companies", &sp);
+        let (slug, md) = render(spec(Some("gbrain-base"), "companies"), "people", &sp);
         assert_eq!(slug, "acme-corp");
         assert!(md.starts_with(
             "---\ntype: company\nsubtype: company\norigin: operoid-factory\ntitle: 'Acme Corp'\ntags: [companies, contact]\n---"
         ));
         assert!(md.contains("# Acme Corp"));
         assert!(md.contains("[[people/jane-doe|Jane Doe]]"));
+    }
+
+    #[test]
+    fn renders_v2_company_without_subtype() {
+        let sp = StructuredPage {
+            title: "Acme Corp".into(),
+            page_type: "".into(),
+            tags: vec![],
+            body_markdown: "Acme 是一家做 widget 的公司。".into(),
+            timeline: vec![],
+            mentioned_names: vec!["Jane Doe".into()],
+        };
+        let (slug, md) = render(spec(None, "company"), "person", &sp);
+        assert_eq!(slug, "acme-corp");
+        assert!(md.starts_with("---\ntype: company\norigin: operoid-factory"));
+        assert!(!md.contains("subtype"));
+        assert!(md.contains("[[person/jane-doe|Jane Doe]]"));
+        assert!(md.contains("## 聯絡人"));
     }
 
     #[test]
@@ -340,7 +343,7 @@ mod tests {
             timeline: vec![],
             mentioned_names: vec![],
         };
-        let (_, md) = render("people", &sp);
+        let (_, md) = render(spec(Some("gbrain-base"), "people"), "people", &sp);
         assert!(md.starts_with("---\ntype: person\norigin: operoid-factory\ntitle: '王大明'"));
         assert!(!md.contains("subtype"));
     }
@@ -359,7 +362,7 @@ mod tests {
             }],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let (slug, md) = render("meeting", &sp);
+        let (slug, md) = render(spec(Some("gbrain-base"), "meeting"), "people", &sp);
         assert_eq!(slug, "q3-review");
         assert!(md.contains("<!-- timeline -->"));
         assert!(md.contains("### 2026-06-15 — Q3 Review"));
@@ -381,30 +384,52 @@ mod tests {
             body,
             &["趙建宏".into(), "林家豪".into()],
             &["晶瀚半導體".into()],
-            "meetings",
+            "person",
+            "company",
+            "meeting",
             "some-meeting",
         );
-        assert!(out.contains("[[people/趙建宏|趙建宏]]"));
-        assert!(out.contains("[[people/林家豪|林家豪]]"));
-        assert!(out.contains("[[companies/晶瀚半導體|晶瀚半導體]]"));
+        assert!(out.contains("[[person/趙建宏|趙建宏]]"));
+        assert!(out.contains("[[person/林家豪|林家豪]]"));
+        assert!(out.contains("[[company/晶瀚半導體|晶瀚半導體]]"));
     }
 
     #[test]
     fn wrap_names_skips_self() {
         // 林家豪自己的頁面，body H1 與內文出現自己 → 不自我連結；其他人物仍包。
         let body = "# 林家豪\n\n與陳志遠共同處理 E-07。";
-        let out = wrap_names(body, &["林家豪".into(), "陳志遠".into()], &[], "people", "林家豪");
-        assert!(!out.contains("[[people/林家豪"));
-        assert!(out.contains("[[people/陳志遠|陳志遠]]"));
+        let out = wrap_names(
+            body,
+            &["林家豪".into(), "陳志遠".into()],
+            &[],
+            "person",
+            "company",
+            "person",
+            "林家豪",
+        );
+        assert!(!out.contains("[[person/林家豪"));
+        assert!(out.contains("[[person/陳志遠|陳志遠]]"));
         assert!(out.contains("# 林家豪")); // H1 保持原樣
     }
 
     #[test]
     fn wrap_names_no_double_wrap() {
-        let body = "找 [[people/林家豪|林家豪]] 與 陳志遠 討論。";
-        let out = wrap_names(body, &["林家豪".into(), "陳志遠".into()], &[], "meetings", "m");
+        let body = "找 [[person/林家豪|林家豪]] 與 陳志遠 討論。";
+        let out = wrap_names(
+            body,
+            &["林家豪".into(), "陳志遠".into()],
+            &[],
+            "person",
+            "company",
+            "meeting",
+            "m",
+        );
         // 已在 [[..]] 內的林家豪不重包；陳志遠包起來
-        assert_eq!(out, "找 [[people/林家豪|林家豪]] 與 [[people/陳志遠|陳志遠]] 討論。");
+        assert_eq!(out, "找 [[person/林家豪|林家豪]] 與 [[person/陳志遠|陳志遠]] 討論。");
     }
 
+    #[test]
+    fn v2_capture_is_note() {
+        assert_eq!(spec(None, "note").pipeline, Pipeline::Capture);
+    }
 }

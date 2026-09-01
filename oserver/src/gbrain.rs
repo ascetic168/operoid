@@ -57,6 +57,7 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/operations", post(api_op_run))
         .route("/api/operations/{id}", get(api_op_snapshot))
         // 工廠
+        .route("/api/factories/types", get(api_factory_types))
         .route("/api/factories/run", post(api_factory_run))
         .route("/api/factories/write-pages", post(api_factory_write_pages))
         .route("/api/factories/extract-companies", post(api_extract_companies))
@@ -743,6 +744,39 @@ async fn api_op_snapshot(
 }
 
 // ── 工廠 ─────────────────────────────────────────────────────────────
+
+/// 作用中 schema pack 的工廠類型清單（前端動態渲染用）。
+#[derive(serde::Serialize)]
+struct FactoryTypesResult {
+    pack_name: Option<String>,
+    pack_effective: String,
+    is_v2: bool,
+    types: Vec<ocore::factory_types::FactoryTypeInfo>,
+    v2_hint: Option<ocore::i18n::L10n>,
+}
+
+async fn api_factory_types(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let res = tokio::spawn(async move {
+        let cfg = load_cfg(&st)?;
+        let (pack, name) = ocore::factory_types::active_pack(&cfg);
+        Ok::<FactoryTypesResult, AppError>(FactoryTypesResult {
+            pack_name: name.clone(),
+            pack_effective: pack.name.to_string(),
+            is_v2: pack.name.contains("v2"),
+            types: ocore::factory_types::type_infos(pack),
+            v2_hint: ocore::factory_types::v2_hint(name.clone().as_deref()),
+        })
+    })
+    .await;
+    finish(res)
+}
 
 #[derive(Deserialize)]
 struct FactoryRunBody {

@@ -15,6 +15,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use crate::app_config;
+use crate::factory_types::{self, Pack};
 use crate::gbrain_config::LlmEndpoint;
 use crate::converters::{pdf_text, text_to_md};
 use crate::llm;
@@ -61,26 +62,28 @@ struct Hit {
 }
 
 // ── 對外：分類單檔 ──────────────────────────────────────────────────────
+/// pack 由 cfg 解析（作用中腦的 `schema_pack`；未知/未設 → v2 表）。
 pub async fn classify_one(
     path: &Path,
     cfg: &app_config::AppConfig,
     endpoint: Option<&LlmEndpoint>,
 ) -> FileClassification {
+    let (pack, _) = factory_types::active_pack(cfg);
     let has_ep = endpoint.is_some();
-    match verdict(path, has_ep) {
+    match verdict(pack, path, has_ep) {
         Verdict::Done(c) => c,
         Verdict::Llm(content) => match endpoint {
-            Some(ep) => classify_llm(&path.to_string_lossy(), &content, cfg, ep).await,
-            None => no_llm_fallback(&path.to_string_lossy()),
+            Some(ep) => classify_llm(pack, &path.to_string_lossy(), &content, cfg, ep).await,
+            None => no_llm_fallback(pack, &path.to_string_lossy()),
         },
     }
 }
 
-/// 規則判不準、又沒有可用 LLM 端點時的退化結果：低信心、預設 inbox、交確認框。
-fn no_llm_fallback(p: &str) -> FileClassification {
+/// 規則判不準、又沒有可用 LLM 端點時的退化結果：低信心、capture 型（note/inbox）、交確認框。
+fn no_llm_fallback(pack: &Pack, p: &str) -> FileClassification {
     FileClassification {
         path: p.into(),
-        factory: "inbox".into(),
+        factory: pack.catchall_id().into(),
         confidence: Confidence::Low,
         reason: "規則無法判斷，且未設 API key（無法用 LLM 判讀）".into(),
         source: ClassifySource::Extension,
@@ -88,7 +91,7 @@ fn no_llm_fallback(p: &str) -> FileClassification {
 }
 
 // ── Tier 1+2：純同步判斷 ────────────────────────────────────────────────
-fn verdict(path: &Path, has_ep: bool) -> Verdict {
+fn verdict(pack: &Pack, path: &Path, has_ep: bool) -> Verdict {
     let p = path.to_string_lossy().to_string();
     let ext = path
         .extension()
@@ -96,9 +99,9 @@ fn verdict(path: &Path, has_ep: bool) -> Verdict {
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
-        "csv" => Verdict::Done(classify_csv(path, &p)),
-        "txt" | "md" | "markdown" => text_verdict(&p, read_text(path).ok(), has_ep),
-        "pdf" => text_verdict(&p, pdf_text::extract(path).ok(), has_ep),
+        "csv" => Verdict::Done(classify_csv(pack, path, &p)),
+        "txt" | "md" | "markdown" => text_verdict(pack, &p, read_text(path).ok(), has_ep),
+        "pdf" => text_verdict(pack, &p, pdf_text::extract(path).ok(), has_ep),
         other => Verdict::Done(FileClassification {
             path: p,
             factory: String::new(),
@@ -110,22 +113,22 @@ fn verdict(path: &Path, has_ep: bool) -> Verdict {
 }
 
 /// txt/md/pdf 共用：先特徵規則，沒命中就交 LLM。
-/// `has_ep`：特徵命中但執行需 LLM 的文字工廠（companies/meeting/people-text），
+/// `has_ep`：特徵命中但執行需 LLM 的文字工廠（company/meeting/person-text），
 /// 無可用 endpoint 時降為 Low（交確認），避免自動跑卻在 factory_run 因無 key 失敗。
-fn text_verdict(p: &str, content: Option<String>, has_ep: bool) -> Verdict {
+fn text_verdict(pack: &Pack, p: &str, content: Option<String>, has_ep: bool) -> Verdict {
     let content = match content {
         Some(c) if !c.trim().is_empty() => sample(&c),
         _ => {
             return Verdict::Done(FileClassification {
                 path: p.into(),
-                factory: "inbox".into(),
+                factory: pack.catchall_id().into(),
                 confidence: Confidence::Low,
                 reason: "檔案為空或無法讀取文字".into(),
                 source: ClassifySource::Extension,
             })
         }
     };
-    if let Some(hit) = heuristic(&content) {
+    if let Some(hit) = heuristic(pack, &content) {
         let (confidence, reason): (Confidence, String) = if has_ep {
             (Confidence::High, hit.reason.into())
         } else {
@@ -142,9 +145,9 @@ fn text_verdict(p: &str, content: Option<String>, has_ep: bool) -> Verdict {
     Verdict::Llm(content)
 }
 
-/// CSV：嗅探首行表頭判斷是否為聯絡人格式。csv 在本系統一律預設 people，
+/// CSV：嗅探首行表頭判斷是否為聯絡人格式。csv 在本系統一律預設 person/people，
 /// 但表頭不像聯絡人時降為 Low（交確認），避免非聯絡人 CSV 靜默生空白 person 頁。
-fn classify_csv(path: &Path, p: &str) -> FileClassification {
+fn classify_csv(pack: &Pack, path: &Path, p: &str) -> FileClassification {
     let header = read_text(path)
         .ok()
         .and_then(|t| t.lines().next().map(|l| l.to_ascii_lowercase()))
@@ -170,7 +173,7 @@ fn classify_csv(path: &Path, p: &str) -> FileClassification {
     };
     FileClassification {
         path: p.into(),
-        factory: "people".into(),
+        factory: pack.id_of_kind("people").unwrap_or_else(|| pack.catchall_id()).into(),
         confidence: conf,
         reason: reason.into(),
         source: ClassifySource::Extension,
@@ -179,7 +182,8 @@ fn classify_csv(path: &Path, p: &str) -> FileClassification {
 
 /// 特徵規則：明確關鍵字命中且僅單一類別命中才回該類別（High）；
 /// 多類別同時命中視為模糊 → None（交 LLM），避免誤判自動跑。
-fn heuristic(content: &str) -> Option<Hit> {
+/// 命中結果為 canonical kind（people/company/meeting/projects），經 pack 映射為實際 id。
+fn heuristic(pack: &Pack, content: &str) -> Option<Hit> {
     let low = content.to_ascii_lowercase();
     let people = content.contains("BEGIN:VCARD")
         || low.contains("vcard")
@@ -208,7 +212,7 @@ fn heuristic(content: &str) -> Option<Hit> {
             .any(|k| low.contains(k));
     let hits: Vec<&str> = [
         people.then_some("people"),
-        companies.then_some("companies"),
+        companies.then_some("company"),
         meeting.then_some("meeting"),
         projects.then_some("projects"),
     ]
@@ -218,36 +222,39 @@ fn heuristic(content: &str) -> Option<Hit> {
     if hits.len() != 1 {
         return None;
     }
-    Some(match hits[0] {
-        "people" => Hit { factory: "people", reason: "偵測到聯絡人特徵" },
-        "companies" => Hit { factory: "companies", reason: "偵測到公司/組織特徵" },
-        "meeting" => Hit { factory: "meeting", reason: "偵測到會議特徵" },
-        _ => Hit { factory: "projects", reason: "偵測到專案特徵" },
-    })
+    let id = pack.id_of_kind(hits[0])?;
+    let reason = match hits[0] {
+        "people" => "偵測到聯絡人特徵",
+        "company" => "偵測到公司/組織特徵",
+        "meeting" => "偵測到會議特徵",
+        _ => "偵測到專案特徵",
+    };
+    Some(Hit { factory: id, reason })
 }
 
 // ── Tier 3：LLM ─────────────────────────────────────────────────────────
 async fn classify_llm(
+    pack: &Pack,
     p: &str,
     content: &str,
     cfg: &app_config::AppConfig,
     ep: &LlmEndpoint,
 ) -> FileClassification {
-    let system = "你是檔案分類器。判斷這份文件最適合歸入哪個知識庫分類：\n\
-        - people：聯絡人/通訊錄/名片/個人資料\n\
-        - companies：公司或組織的介紹/背景\n\
-        - meeting：會議記錄/逐字稿/議程/開會筆記\n\
-        - projects：專案/計畫（有里程碑、交付項目、時程、工作包）\n\
-        - concepts：主題/概念/知識wiki（技術原理、名詞解釋、主題整理）\n\
-        - inbox：其他一般筆記\n\
-        只回傳一個 JSON 物件：{\"factory\":\"people|companies|meeting|projects|concepts|inbox\",\"confidence\":\"high|low\",\"reason\":\"一句話理由\"}。\n\
-        規則：非常有把握才回 confidence=high，否則給 low。不要任何說明文字。";
+    let ids: Vec<&str> = pack.types.iter().map(|t| t.id).collect();
+    let system = format!(
+        "你是檔案分類器。判斷這份文件最適合歸入哪個知識庫分類：\n\
+        {types}\n\
+        只回傳一個 JSON 物件：{{\"factory\":\"{id_enum}\",\"confidence\":\"high|low\",\"reason\":\"一句話理由\"}}。\n\
+        規則：非常有把握才回 confidence=high，否則給 low。不要任何說明文字。",
+        types = pack.prompt_lines(),
+        id_enum = ids.join("|"),
+    );
     let user = format!("文件內容：\n{content}\n\n請只回傳 JSON 物件。");
-    match llm::complete(ep, &cfg.llm_sampling(), system, &user).await {
+    match llm::complete(ep, &cfg.llm_sampling(), &system, &user).await {
         Ok(resp) => match serde_json::from_str::<LlmVerdict>(&text_to_md::strip_fence(&resp)) {
             Ok(v) => FileClassification {
                 path: p.into(),
-                factory: normalize_factory(&v.factory),
+                factory: pack.normalize(&v.factory).to_string(),
                 confidence: if v.confidence.eq_ignore_ascii_case("high") {
                     Confidence::High
                 } else {
@@ -261,19 +268,19 @@ async fn classify_llm(
                 source: ClassifySource::Llm,
             },
             Err(_) => FileClassification {
-                // 回應非預期 JSON → 不自動跑，預設 inbox 交確認。
+                // 回應非預期 JSON → 不自動跑，預設 capture 型交確認。
                 path: p.into(),
-                factory: "inbox".into(),
+                factory: pack.catchall_id().into(),
                 confidence: Confidence::Low,
-                reason: format!("LLM 回應無法解析，預設 inbox：{}", cap(&resp, 80)),
+                reason: format!("LLM 回應無法解析，預設 {}：{}", pack.catchall_id(), cap(&resp, 80)),
                 source: ClassifySource::Llm,
             },
         },
         Err(e) => FileClassification {
             path: p.into(),
-            factory: "inbox".into(),
+            factory: pack.catchall_id().into(),
             confidence: Confidence::Low,
-            reason: format!("LLM 分類失敗，預設 inbox：{e}"),
+            reason: format!("LLM 分類失敗，預設 {}：{e}", pack.catchall_id()),
             source: ClassifySource::Llm,
         },
     }
@@ -287,18 +294,6 @@ struct LlmVerdict {
     confidence: String,
     #[serde(default)]
     reason: String,
-}
-
-fn normalize_factory(s: &str) -> String {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "people" | "person" | "contact" | "聯絡人" | "联络人" => "people",
-        "companies" | "company" | "公司" => "companies",
-        "meeting" | "meetings" | "會議" | "会议" => "meeting",
-        "concepts" | "concept" | "概念" | "主題" | "主题" => "concepts",
-        "projects" | "project" | "專案" | "项目" => "projects",
-        _ => "inbox",
-    }
-    .into()
 }
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
@@ -333,6 +328,7 @@ fn cap(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::factory_types::{LEGACY_PACK, V2_PACK};
     use std::io::Write;
 
     fn tmp(name: &str, ext: &str, body: &str) -> std::path::PathBuf {
@@ -346,23 +342,25 @@ mod tests {
     #[test]
     fn csv_contacts_header_is_people_high() {
         let p = tmp("contacts", "csv", "Name,Given Name,Phone 1 - Value,E-mail 1 - Value\nAlice,Alice,0911,a@b.c\n");
-        let c = classify_csv(&p, &p.to_string_lossy());
-        assert_eq!(c.factory, "people");
+        let c = classify_csv(&V2_PACK, &p, &p.to_string_lossy());
+        assert_eq!(c.factory, "person");
         assert_eq!(c.confidence, Confidence::High);
+        let c2 = classify_csv(&LEGACY_PACK, &p, &p.to_string_lossy());
+        assert_eq!(c2.factory, "people");
     }
 
     #[test]
     fn csv_non_contact_header_is_not_high() {
         let p = tmp("sales", "csv", "month,revenue,region\n1,100,TW\n");
-        let c = classify_csv(&p, &p.to_string_lossy());
-        assert_eq!(c.factory, "people");
+        let c = classify_csv(&V2_PACK, &p, &p.to_string_lossy());
+        assert_eq!(c.factory, "person");
         assert_ne!(c.confidence, Confidence::High); // Medium/Low → 需確認
     }
 
     #[test]
     fn meeting_text_detected_by_heuristic() {
         let p = tmp("mtg", "txt", "產品周會 會議記錄\n出席者：甲、乙\n議程：檢視進度");
-        match verdict(&p, true) {
+        match verdict(&LEGACY_PACK, &p, true) {
             Verdict::Done(c) => {
                 assert_eq!(c.factory, "meeting");
                 assert_eq!(c.confidence, Confidence::High);
@@ -370,14 +368,20 @@ mod tests {
             }
             _ => panic!("會議特徵應被規則命中"),
         }
+        // v2 無 meeting 型：會議特徵在 v2 pack 交 LLM 判讀（可能落 analysis/note）。
+        assert!(matches!(verdict(&V2_PACK, &p, true), Verdict::Llm(_)));
     }
 
     #[test]
     fn company_text_detected_by_heuristic() {
         let p = tmp("co", "txt", "晶瀚半導體 公司簡介\n統一編號 12345\n資本額 10億");
-        match verdict(&p, true) {
-            Verdict::Done(c) => assert_eq!(c.factory, "companies"),
+        match verdict(&V2_PACK, &p, true) {
+            Verdict::Done(c) => assert_eq!(c.factory, "company"),
             _ => panic!("公司特徵應被規則命中"),
+        }
+        match verdict(&LEGACY_PACK, &p, true) {
+            Verdict::Done(c) => assert_eq!(c.factory, "companies"),
+            _ => panic!("legacy pack 公司特徵應命中 companies"),
         }
     }
 
@@ -385,7 +389,7 @@ mod tests {
     fn heuristic_without_endpoint_downgrades_to_low() {
         // 特徵命中，但無 endpoint → 降為 Low（交確認），避免自動跑卻因無 key 失敗。
         let p = tmp("mtg2", "txt", "產品周會 會議記錄\n出席者：甲、乙");
-        match verdict(&p, false) {
+        match verdict(&LEGACY_PACK, &p, false) {
             Verdict::Done(c) => {
                 assert_eq!(c.factory, "meeting");
                 assert_eq!(c.confidence, Confidence::Low);
@@ -397,20 +401,22 @@ mod tests {
     #[test]
     fn ambiguous_text_escalates_to_llm() {
         let p = tmp("prose", "txt", "今天天氣不錯，我們去散步，順便聊了一下未來的計畫。");
-        assert!(matches!(verdict(&p, true), Verdict::Llm(_)));
+        assert!(matches!(verdict(&V2_PACK, &p, true), Verdict::Llm(_)));
     }
 
     #[test]
-    fn no_endpoint_fallback_is_low_inbox() {
-        let c = no_llm_fallback("x.txt");
-        assert_eq!(c.factory, "inbox");
+    fn no_endpoint_fallback_is_low_catchall() {
+        let c = no_llm_fallback(&V2_PACK, "x.txt");
+        assert_eq!(c.factory, "note");
         assert_eq!(c.confidence, Confidence::Low);
+        let c2 = no_llm_fallback(&LEGACY_PACK, "x.txt");
+        assert_eq!(c2.factory, "inbox");
     }
 
     #[test]
     fn unsupported_extension_is_skipped() {
         let p = tmp("doc", "docx", "fake docx body");
-        match verdict(&p, true) {
+        match verdict(&V2_PACK, &p, true) {
             Verdict::Done(c) => {
                 assert_eq!(c.factory, "");
                 assert_eq!(c.confidence, Confidence::Low);
@@ -422,19 +428,22 @@ mod tests {
     #[test]
     fn project_text_detected_by_heuristic() {
         let p = tmp("proj", "txt", "E-07 機台改善 專案\n里程碑：4/30 試作、5/30 量產\n交付項目：新 recipe");
-        match verdict(&p, true) {
-            Verdict::Done(c) => assert_eq!(c.factory, "projects"),
+        match verdict(&V2_PACK, &p, true) {
+            Verdict::Done(c) => assert_eq!(c.factory, "project"),
             _ => panic!("專案特徵應被規則命中"),
         }
     }
 
     #[test]
-    fn normalize_factory_variants() {
-        assert_eq!(normalize_factory("Person"), "people");
-        assert_eq!(normalize_factory("COMPANY"), "companies");
-        assert_eq!(normalize_factory("會議"), "meeting");
-        assert_eq!(normalize_factory("Concept"), "concepts");
-        assert_eq!(normalize_factory("專案"), "projects");
-        assert_eq!(normalize_factory("agenda"), "inbox");
+    fn llm_prompt_enumerates_pack_types() {
+        let system = format!(
+            "你是檔案分類器。判斷這份文件最適合歸入哪個知識庫分類：\n{}\n{}",
+            V2_PACK.prompt_lines(),
+            V2_PACK.types.iter().map(|t| t.id).collect::<Vec<_>>().join("|")
+        );
+        assert!(system.contains("- person："));
+        assert!(system.contains("- social-digest："));
+        assert!(system.contains("- note："));
+        assert!(system.contains("person|company"));
     }
 }

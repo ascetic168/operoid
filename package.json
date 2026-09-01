@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.3.2",
   "license": "MIT",
-  "author": "朱國棟 (Charlie Chu)",
+  "author": "\u6731\u570b\u68df (Charlie Chu)",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:all": "cargo build -p oserver && npm run dev"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

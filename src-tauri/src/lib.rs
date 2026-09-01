@@ -158,6 +158,7 @@ pub fn run() {
             claude_code::claude_code_status,
             claude_code::claude_code_launch,
             factories::factory_run,
+            factories::factory_types,
             factories::factory_open_dir,
             factories::factory_write_pages,
             factories::factory_save_authored,

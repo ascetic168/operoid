@@ -78,20 +78,22 @@ fn parse_target(target: &str) -> Option<(&str, &str)> {
     Some((dir, stem))
 }
 
-/// 候選「檔案系統子目錄」：六類工廠的輸出目錄（寫死）。用來在 wikilink 的 dir 與實際
-/// 目錄（單複數、未知 dir）對不上時，仍能以 stem 在已知目錄裡找到檔。
-///
-/// v0.42 起 gbrain 的 DIR_PATTERN 不再是丟棄閘（#2576），非白名單目錄也能成邊，故此處
-/// 只需涵蓋本系統工廠會寫入的目錄。注意 meeting 工廠寫到複數 `meetings/`。
-fn candidate_dirs() -> Vec<String> {
-    vec![
-        "people".into(),
-        "companies".into(),
-        "meetings".into(),
-        "concepts".into(),
-        "projects".into(),
-        "inbox".into(),
-    ]
+/// 候選「檔案系統子目錄」：作用中 schema pack 各類型的輸出目錄（`factory_types` 查表）。
+/// 用來在 wikilink 的 dir 與實際目錄對不上時，仍能以 stem 在已知目錄裡找到檔。
+/// v2 與 legacy 的目錄都列入（單複數互通），跨 pack 的舊連結也能解析。
+fn candidate_dirs(cfg: &config::AppConfig) -> Vec<String> {
+    let mut dirs: Vec<String> = ocore::factory_types::active_pack(cfg)
+        .0
+        .types
+        .iter()
+        .map(|t| t.dir.to_string())
+        .collect();
+    for extra in ocore::factory_types::LEGACY_PACK.types.iter().map(|t| t.dir) {
+        if !dirs.iter().any(|d| d == extra) {
+            dirs.push(extra.to_string());
+        }
+    }
+    dirs
 }
 
 /// 在單一 root 下找 `.md`：先試 wikilink 的 dir，再掃已知目錄，最後大小寫寬容比對。
@@ -293,7 +295,7 @@ async fn resolve_note<R: Runtime>(
     let cfg = config::app_config::load(app).map_err(|e| e.to_string())?;
     let (dir, stem) = parse_target(target)
         .ok_or_else(|| AppError::new("note.notFound").p("target", target))?;
-    let dirs = candidate_dirs();
+    let dirs = candidate_dirs(&cfg);
 
     let roots = collect_roots(app, &cfg).await;
     let file = {

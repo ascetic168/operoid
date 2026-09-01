@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent_state::{AppState, EventKind, InboundEvent};
 use crate::app_config::AppConfig;
 use crate::converters::{csv_people, extract_companies, pdf_text, text_to_md};
+use crate::factory_types::{self, FactoryTypeSpec, Pack, Pipeline};
 use crate::gbrain_config;
 use crate::i18n::{AppError, L10n};
 use crate::proc::no_console;
@@ -104,17 +105,15 @@ fn extract_title(markdown: &str) -> String {
     crate::converters::frontmatter::get(fm, "title").unwrap_or_default()
 }
 
-/// 工廠名 → 白名單目錄。
-pub fn target_dir_of(factory: &str) -> Result<String, AppError> {
-    match factory {
-        "people" => Ok("people".into()),
-        "companies" => Ok("companies".into()),
-        "meeting" => Ok("meetings".into()),
-        "inbox" => Ok("inbox".into()),
-        "concepts" => Ok("concepts".into()),
-        "projects" => Ok("projects".into()),
-        other => Err(AppError::new("factory.unknown").p("factory", other)),
-    }
+/// 作用中腦的 schema pack + 工廠 id → 規格（唯一查表入口；未知 id 報錯）。
+pub fn spec_for(cfg: &AppConfig, factory: &str) -> Result<(&'static Pack, &'static FactoryTypeSpec), AppError> {
+    let (pack, _) = factory_types::active_pack(cfg);
+    Ok((pack, pack.spec(factory)?))
+}
+
+/// 舊介面相容：工廠名 → 白名單目錄（以作用中 pack 查表）。
+pub fn target_dir_of(cfg: &AppConfig, factory: &str) -> Result<String, AppError> {
+    Ok(spec_for(cfg, factory)?.1.dir.to_string())
 }
 
 /// 手寫編輯器存檔核心:首次(未命名)以 title 內容為檔名;之後覆蓋同檔。
@@ -129,17 +128,14 @@ pub async fn save_authored_core(
     target_repo: Option<&str>,
 ) -> Result<AuthoredResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
-    let target_dir = target_dir_of(factory)?;
+    let (pack, spec) = spec_for(cfg, factory)?;
+    let target_dir = spec.dir.to_string();
 
     let title = extract_title(markdown);
-    let own_dir = match factory {
-        "people" => "people",
-        "companies" => "companies",
-        "meeting" => "meetings",
-        "concepts" => "concepts",
-        "projects" => "projects",
-        _ => "",
-    };
+    // capture 型無自有目錄（筆記由 gbrain capture 寫入），wikilink 補全範圍為空。
+    let own_dir = if spec.is_capture() { "" } else { spec.dir };
+    let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
+    let company_dir = pack.id_of_kind("company").map(|id| pack.spec(id).unwrap().dir).unwrap_or("company");
     let own_slug = crate::converters::slug::slugify(&title, "");
 
     // LLM 補全 wikilink(best-effort:失敗就寫原文) — 讀「作用中腦」的 config
@@ -148,8 +144,10 @@ pub async fn save_authored_core(
             gbrain_config::resolve_endpoint(&l.config).ok()
         }) {
             Some(endpoint) => {
-                match text_to_md::enrich_wikilinks(markdown, own_dir, &own_slug, cfg, &endpoint)
-                    .await
+                match text_to_md::enrich_wikilinks(
+                    markdown, person_dir, company_dir, own_dir, &own_slug, cfg, &endpoint,
+                )
+                .await
                 {
                     Ok((m, c)) => (m, c, true),
                     Err(_) => (markdown.to_string(), 0, false),
@@ -206,17 +204,17 @@ pub async fn run_core(
 ) -> Result<PreviewResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
 
-    match factory {
-        "people" => run_people(cfg, &notes, paths).await,
-        "companies" | "meeting" | "concepts" | "projects" => {
-            run_textual(factory, cfg, &notes, paths).await
-        }
-        "inbox" => run_inbox(cfg, &notes, paths),
-        other => Err(AppError::new("factory.unknown").p("factory", other)),
+    let (pack, spec) = spec_for(cfg, factory)?;
+    match spec.pipeline {
+        Pipeline::People => run_people(pack, spec, cfg, &notes, paths).await,
+        Pipeline::Textual => run_textual(pack, spec, cfg, &notes, paths).await,
+        Pipeline::Capture => run_inbox(spec, cfg, &notes, paths),
     }
 }
 
 async fn run_people(
+    pack: &'static Pack,
+    spec: &'static FactoryTypeSpec,
     cfg: &AppConfig,
     notes: &Path,
     paths: &[String],
@@ -271,7 +269,7 @@ async fn run_people(
                             .iter()
                             .map(|pg| PreviewPage {
                                 slug: pg.slug.clone(),
-                                target_dir: "people".into(),
+                                target_dir: spec.dir.into(),
                                 name: pg.name.clone(),
                                 markdown: pg.markdown.clone(),
                             })
@@ -283,13 +281,14 @@ async fn run_people(
             }
         } else if ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("md") {
             let ep = endpoint.as_ref().expect("has_text ⇒ endpoint loaded");
+            let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
             match read_text(path) {
-                Ok(raw) => match text_to_md::text_to_page("people", &raw, cfg, ep).await {
+                Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, ep).await {
                     Ok(sp) => {
-                        let (slug, markdown) = text_to_md::render("people", &sp);
+                        let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
                         Ok(vec![PreviewPage {
                             slug,
-                            target_dir: "people".into(),
+                            target_dir: spec.dir.into(),
                             name: sp.title,
                             markdown,
                         }])
@@ -330,11 +329,11 @@ async fn run_people(
             .p("merged", merged)
             .p("written", written.len())
     } else {
-        L10n::new("factory.writtenN").p("factory", "people").p("n", written.len())
+        L10n::new("factory.writtenN").p("factory", spec.id).p("n", written.len())
     };
 
     Ok(PreviewResult {
-        factory: "people".into(),
+        factory: spec.id.into(),
         summary,
         sample,
         total,
@@ -345,7 +344,8 @@ async fn run_people(
 }
 
 async fn run_textual(
-    factory: &str,
+    pack: &'static Pack,
+    spec: &'static FactoryTypeSpec,
     cfg: &AppConfig,
     notes: &Path,
     paths: &[String],
@@ -357,13 +357,8 @@ async fn run_textual(
             .p("provider", &endpoint.provider)
             .p("envKey", gbrain_config::env_key(&endpoint.provider).unwrap_or("?")));
     }
-    let target_dir = match factory {
-        "companies" => "companies".to_string(),
-        "meeting" => "meetings".to_string(),
-        "concepts" => "concepts".to_string(),
-        "projects" => "projects".to_string(),
-        _ => "concepts".to_string(),
-    };
+    let target_dir = spec.dir.to_string();
+    let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
 
     let mut files: Vec<ProcessedFile> = Vec::new();
     let mut written = Vec::new();
@@ -387,9 +382,9 @@ async fn run_textual(
                 continue;
             }
         };
-        match text_to_md::text_to_page(factory, &raw, cfg, &endpoint).await {
+        match text_to_md::text_to_page(spec, &raw, cfg, &endpoint).await {
             Ok(sp) => {
-                let (slug, markdown) = text_to_md::render(factory, &sp);
+                let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
                 match write_page(notes, &target_dir, &slug, &markdown) {
                     Ok(f) => written.push(f.to_string_lossy().into_owned()),
                     Err(e) => {
@@ -417,9 +412,9 @@ async fn run_textual(
     }
     let sample: Vec<PreviewPage> = files.iter().flat_map(|f| f.pages.iter().cloned()).take(10).collect();
     let total: usize = files.iter().map(|f| f.pages.len()).sum();
-    let summary = L10n::new("factory.writtenN").p("factory", factory).p("n", written.len());
+    let summary = L10n::new("factory.writtenN").p("factory", spec.id).p("n", written.len());
     Ok(PreviewResult {
-        factory: factory.into(),
+        factory: spec.id.into(),
         summary,
         sample,
         total,
@@ -430,11 +425,12 @@ async fn run_textual(
 }
 
 fn run_inbox(
+    spec: &'static FactoryTypeSpec,
     cfg: &AppConfig,
     _notes: &Path,
     paths: &[String],
 ) -> Result<PreviewResult, AppError> {
-    // inbox 直接走 gbrain capture(寫 inbox/),不走 notes repo。
+    // capture 型直接走 gbrain capture(寫入知識庫內部儲存),不走 notes repo。
     let mut sample = Vec::new();
     let mut written = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
@@ -455,7 +451,7 @@ fn run_inbox(
                 written.push(if slug.is_empty() { p.clone() } else { slug.clone() });
                 sample.push(PreviewPage {
                     slug,
-                    target_dir: "inbox/".into(),
+                    target_dir: format!("{}/", spec.dir),
                     name,
                     markdown: String::new(),
                 });
@@ -466,7 +462,7 @@ fn run_inbox(
     }
     let total = written.len();
     Ok(PreviewResult {
-        factory: "inbox".into(),
+        factory: spec.id.into(),
         summary: L10n::new("factory.inboxCaptured").p("n", total),
         sample,
         total,
@@ -486,7 +482,7 @@ fn extract_raw(path: &Path) -> anyhow::Result<String> {
     match ext.as_str() {
         "txt" | "md" | "markdown" => read_text(path),
         "pdf" => pdf_text::extract(path),
-        other => Err(anyhow::anyhow!("不支援的副檔名：{other}（people=csv；companies/meeting/projects/concepts=txt,md,pdf）")),
+        other => Err(anyhow::anyhow!("不支援的副檔名：{other}（person/people=csv,txt,md；其餘文字類型=txt,md,pdf；capture 型=txt,md）")),
     }
 }
 

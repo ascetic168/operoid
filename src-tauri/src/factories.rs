@@ -10,7 +10,8 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::agent_state::AppState;
 use crate::config;
-use crate::i18n::AppError;
+use crate::i18n::{AppError, L10n};
+use ocore::factory_types::FactoryTypeInfo;
 use ocore::proc::no_console;
 
 fn app_cfg<R: Runtime>(app: &AppHandle<R>) -> Result<config::AppConfig, String> {
@@ -46,9 +47,34 @@ pub struct OpenDirResult {
     pub path: String,
 }
 
+/// 作用中 pack 的工廠類型清單（給前端動態渲染）＋ pack 資訊與 v1→v2 升級提示。
+#[derive(Debug, Serialize)]
+pub struct FactoryTypesResult {
+    pub pack_name: Option<String>,
+    /// 實際生效的 pack（未知/未設定時為 "gbrain-base-v2"）。
+    pub pack_effective: String,
+    pub is_v2: bool,
+    pub types: Vec<FactoryTypeInfo>,
+    /// 非 v2 pack 時的 unify-types 升級提示（None=已是 v2）。
+    pub v2_hint: Option<L10n>,
+}
+
+#[tauri::command]
+pub fn factory_types<R: Runtime>(app: AppHandle<R>) -> Result<FactoryTypesResult, AppError> {
+    let cfg = app_cfg(&app)?;
+    let (pack, name) = ocore::factory_types::active_pack(&cfg);
+    Ok(FactoryTypesResult {
+        pack_name: name.clone(),
+        pack_effective: pack.name.to_string(),
+        is_v2: pack.name.contains("v2"),
+        types: ocore::factory_types::type_infos(pack),
+        v2_hint: ocore::factory_types::v2_hint(name.clone().as_deref()),
+    })
+}
+
 /// 點工廠卡圖示：以 VS Code 開啟該工廠目錄；沒裝 VS Code 則以系統預設檔案管理員開啟。
-/// 目錄不存在會先建立。inbox 不支援——其筆記由 `gbrain capture` 寫入知識庫內部儲存、
-/// 無可瀏覽資料夾（前端已停用 inbox 圖示）；若被呼叫會回 `factories.openDirInboxHint` 錯誤。
+/// 目錄不存在會先建立。capture 型（note/inbox）不支援——其筆記由 `gbrain capture`
+/// 寫入知識庫內部儲存、無可瀏覽資料夾（前端已停用其圖示）。
 #[tauri::command]
 pub fn factory_open_dir<R: Runtime>(
     app: AppHandle<R>,
@@ -58,15 +84,11 @@ pub fn factory_open_dir<R: Runtime>(
     let cfg = app_cfg(&app)?;
     let notes = PathBuf::from(target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()));
 
-    let subdir = match factory.as_str() {
-        "inbox" => return Err(AppError::new("factories.openDirInboxHint")),
-        "people" => "people".to_string(),
-        "companies" => "companies".to_string(),
-        "meeting" => "meetings".to_string(),
-        "concepts" => "concepts".to_string(),
-        "projects" => "projects".to_string(),
-        other => return Err(AppError::new("factory.unknown").p("factory", other)),
-    };
+    let (_, spec) = spec_for(&cfg, &factory)?;
+    if spec.is_capture() {
+        return Err(AppError::new("factories.openDirInboxHint"));
+    }
+    let subdir = spec.dir.to_string();
     let dir = notes.join(&subdir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 

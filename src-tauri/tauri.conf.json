@@ -3,7 +3,7 @@
   "version": "0.3.2",
   "identifier": "com.operoid.studio",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:all",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build && node scripts/prepare-obridge.mjs",
     "frontendDist": "../dist"
@@ -19,6 +19,7 @@
         "minWidth": 960,
         "minHeight": 640,
         "center": true,
+        "maximized": true,
         "resizable": true,
         "visible": true,
         "backgroundColor": "#09090b"

@@ -13,7 +13,26 @@
 
 ---
 
-## [v0.3.2] - 2026-08-31
+## [v0.3.2] - 2026-09-01（重發布）
+
+### 工廠頁支援 gbrain schema v2（15 類型）＋動態 schema pack
+
+- **單一類型資料表**：新增 `ocore/src/factory_types.rs`，內建 `gbrain-base-v2`（15 型：person/company/media/tweet/social-digest/analysis/atom/concept/source/deal/email/slack/writing/project/note）與 legacy `gbrain-base`（原 6 工廠）兩份定義（目錄、frontmatter 型別/標籤、管線、分類同義詞）。原本散落 5 處的 Rust hardcoded match（`target_dir_of`/`run_core`/`run_textual`/`save_authored_core`/`factory_open_dir`）與 `text_to_md::render` 的型別對照全部改為查表；未知類型明確報錯，移除「誤歸 concepts」的靜默 fallback。
+- **動態 schema pack**：pack 名取自 gbrain config file plane 的 `schema_pack`（未設定 → v2、未知 pack → v2 表）。新增 `factory_types` Tauri command 與 `oserver` `GET /api/factories/types` 路由，回傳 pack 資訊＋類型清單＋v1 升級提示。
+- **工廠頁主從式改版**：自動分類 hero 卡保留；15+ 類型改為緊湊 chip 清單（左側，動態載入），右側為選中類型的單一拖放/預覽工作區——頁面高度固定不捲頁，未來 pack 增減類型自動跟隨。非 v2 pack 顯示橫幅提示（連到設定頁的 unify-types 按鈕）。
+- **分類器 pack 感知**：LLM prompt 的類型枚舉、同義詞正規化（people↔person、meetings↔meeting 等單複數/中文）、heuristic 對應全部改為依作用中 pack 查表；信心分級（高/中自動跑、低交確認）維持不變。v2 無 meeting 型——會議特徵在 v2 pack 交 LLM 判讀。
+- **v2 對齊細節**：mentioned_names wikilink 改用該 pack 的 person/company 目錄（v2=`[[person/slug]]`）；wikilink 解析候選目錄（`note_view.rs`）涵蓋 v2+legacy 目錄，跨 pack 舊連結仍可開啟；v2 的 company 頁不再寫 `subtype`（type 已是 company）。
+- i18n：三語系補齊 15 類型標題/輸出說明與範本（未知/自訂 pack 類型 fallback 顯示 id、通用範本）。
+- 測試：`factory_types`（pack 對應/同義詞/kind 查表）、`classifier`（v2/legacy 雙 pack）、`text_to_md`（v2 render/wikilink 目錄）擴充，全數通過。
+
+### 視窗啟動最大化
+
+- 主視窗（`tauri.conf.json`）加 `"maximized": true`：啟動即最大化，避開 Windows DPI 縮放下 `center: true` 置中計算不準的問題；還原時仍退回 1280×840 置中。
+
+### dev／安裝版的 oserver 舊碼殘留防護
+
+- **dev**：`npm run tauri dev` 的 `beforeDevCommand` 改為新的 `npm run dev:all`（`cargo build -p oserver && npm run dev`）——每次 dev 先確保 `target/debug/oserver.exe` 為最新。此前 `tauri dev` 只編 GUI app crate，不會編 oserver，改過 oserver/ocore 後跑 dev 會出現「GUI 新、服務舊」的路由 404（已遇過一次：背景殘留的舊分離行程 + 未重編的 exe）。
+- **升級安裝**：NSIS hooks 新增 PREINSTALL／POSTINSTALL——服務在跑時（以 `sc stop` 回傳碼偵測）先停服務釋放 `oserver.exe` 檔案鎖，裝完自動 `sc start` 重啟；原本已停止或未安裝服務者不受影響。修復「服務模式 + 升級」時舊服務續用記憶體中舊碼／覆寫 exe 失敗的縫隙。反安裝行為不變。
 
 ### 操作頁 think：輸出末列出全部引註（可點擊連結）
 
