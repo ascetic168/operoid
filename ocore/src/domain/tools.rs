@@ -54,6 +54,11 @@ pub struct ToolCtx {
     /// MCP client（`gbrain serve` stdio；`gbrain_transport = "mcp"` 時注入）。
     /// `None` = 純 CLI 模式。工具實作：MCP 優先、失敗 fallback CLI 子行程。
     pub mcp: Option<std::sync::Arc<crate::gbrain_mcp::GbrainMcpClient>>,
+    /// W3（D-H3）：員工工具 allowlist（建構期閘門——僅列於其中的可選工具會被建構；
+    /// 空＝預設集 think／search／send）。比對鍵如 [`crate::write_note::TOOL_WRITE_NOTE`]。
+    pub allowed_tools: std::collections::HashSet<String>,
+    /// W3（D-H2）：員工產出根目錄（write-note 沙箱＝`cfg.employee_output_path`）。
+    pub employee_output_root: std::path::PathBuf,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -63,6 +68,8 @@ impl std::fmt::Debug for ToolCtx {
             .field("gbrain_home", &self.gbrain_home)
             .field("chat_model", &self.chat_model)
             .field("mcp", &self.mcp.is_some())
+            .field("allowed_tools", &self.allowed_tools)
+            .field("employee_output_root", &self.employee_output_root)
             .finish()
     }
 }

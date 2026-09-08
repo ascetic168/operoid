@@ -13,6 +13,37 @@
 
 ---
 
+## [v0.3.3] - 2026-09-07
+
+> Harness 補強（W0–W3）——計畫 `docs/Operoid-計畫-Harness補強.md`。含兩個**行為變更**（見「⚠️」）。
+
+### 員工可攔截：合作式停止（W1）
+
+- 執行中的員工可被人工停止：`POST /api/employees/{id}/stop` 設旗標，runner 於步驟邊界（PLAN/ACT/EVAL 每輪、對話每步、任務間、承諾間）優雅中止；進行中的單次 LLM 呼叫會跑完（最長約 2 分鐘）。
+- 停止語意：承諾維持 `Active`（人可再觸發）、記 `stopped` 事件、員工轉 **`Paused`**——不再被排程器自動喚醒；**人類傳訊息／交辦／核可＝明示恢復**（Paused→Sleeping）。
+- 前端：監看 modal「停止」鈕（working 時可用）＋右鍵「停止」；`agent_os.employeeNotRunning`（409）等新錯誤碼三語。
+
+### 員工封存與硬刪除（W1，E13）
+
+- ⚠️ **`DELETE /api/employees/{id}` 語意變更**：預設＝**封存**（軟刪除）——`archived=true`、不再被喚醒／不收新訊息與事件，歷史（對話／事件／產出）完整保留可追溯；`POST /api/employees/{id}/unarchive` 解封。
+- `DELETE ...?hard=true`＝**串聯硬刪除**（tasks／messages／events／commitments／artifacts／memory 全清）——僅供開發／測試，無 UI 入口。
+- 封存時若員工執行中，順帶合作式停止。前端：右鍵「封存…」取代「刪除」、主列表過濾、「已封存」檢索區＋右鍵解封。
+
+### 恢復力：LLM 重試＋承諾自動重排（W2，T2）
+
+- LLM 層：**5xx 納入可重試**（原僅網路錯誤／429）；指數退避 5s→10s→20s（3 次上限）；4xx 立即失敗。token 用量（usage）best-effort 記入事件（kind `llm`，含 model＋tokens）。
+- ⚠️ **承諾自動重試**：`run_autonomous` `Errored` 的承諾自動排程重跑——退避 10min·2^n（上限 4h）、最多 3 次，耗盡後記 `retry_exhausted` 事件待人類；`Satisfied`／人工再觸發歸零。排程器每 tick 只喚醒「退避到期」者——健康承諾不重跑、不出錯不排程（backpressure）。
+- 事件匯流排：`dispatch_event` 路由命中時 fire-and-forget `brain_sync`（E8——員工查詢前圖譜已含剛寫入的完整長文；race 由 content 全文兜底）。
+
+### 第一個行動工具：write-note（W3）
+
+- 員工可把完整產出寫成 markdown 筆記：新工具 `write-note`（`ocore/write_note.rs`）——寫到 `employee_output_path`（新設定，預設 `{home}/employee-output`，**在 notes repo 之外、不入圖譜**）；人工 review 後移入 notes repo 走既有 sync 晉升（Handbook Ch.07 §6「衍生知識：產出→驗證→晉升」的最小落地）；收回＝刪檔。
+- 防護：僅接受單一 `.md` 檔名（拒路徑分隔／絕對路徑）、拒覆寫、canonicalize 包含檢查；frontmatter 帶 `origin: operoid-employee`＋produced_by 可批次識別。
+- 權限閘門 v1（建構期 allowlist）：`Employee.tools`／`EmployeeTemplate.tools`（模板部署繼承；建立模板 API 加 `tools` 參數、表單加核取）；對話迴圈 `write` 動作（寫檔＋Committed artifact）與自主循環 PLAN `tool=write` 分支（Draft、Satisfied 才晉升）；無權限回報員工不中斷。
+- 前端：員工右鍵「開啟產出目錄」（新殼層指令 `employee_open_output_dir`）。
+
+**品質**：ocore 152 tests passed（+19）、oserver 4；`cargo check --all-targets --workspace` 0 warning；前端 build 綠燈。
+
 ## [v0.3.2] - 2026-09-01（重發布）
 
 ### 工廠頁支援 gbrain schema v2（15 類型）＋動態 schema pack

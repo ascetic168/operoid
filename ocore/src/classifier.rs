@@ -251,7 +251,7 @@ async fn classify_llm(
     );
     let user = format!("文件內容：\n{content}\n\n請只回傳 JSON 物件。");
     match llm::complete(ep, &cfg.llm_sampling(), &system, &user).await {
-        Ok(resp) => match serde_json::from_str::<LlmVerdict>(&text_to_md::strip_fence(&resp)) {
+        Ok(resp) => match serde_json::from_str::<LlmVerdict>(&text_to_md::strip_fence(&resp.content)) {
             Ok(v) => FileClassification {
                 path: p.into(),
                 factory: pack.normalize(&v.factory).to_string(),
@@ -272,7 +272,7 @@ async fn classify_llm(
                 path: p.into(),
                 factory: pack.catchall_id().into(),
                 confidence: Confidence::Low,
-                reason: format!("LLM 回應無法解析，預設 {}：{}", pack.catchall_id(), cap(&resp, 80)),
+                reason: format!("LLM 回應無法解析，預設 {}：{}", pack.catchall_id(), cap(&resp.content, 80)),
                 source: ClassifySource::Llm,
             },
         },

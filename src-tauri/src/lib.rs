@@ -178,6 +178,7 @@ pub fn run() {
             runtime::agent_seed,
             runtime::agent_recruit,
             runtime::agent_create_template,
+            runtime::employee_open_output_dir,
             runtime::agent_deploy_instance,
             runtime::agent_ensure_workspace,
             runtime::agent_list_templates,

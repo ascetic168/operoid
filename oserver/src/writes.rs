@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path as AxPath, State};
+use axum::extract::{Path as AxPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, post};
@@ -18,11 +18,13 @@ use serde_json::json;
 use ocore::agent_state::AppState;
 use ocore::i18n::AppError;
 use ocore::runtime::{
-    approve_commitment_core, archive_commitment_core, cancel_task_core, clear_messages_core,
-    create_commitment_core, create_template_core, delete_employee_core, delete_template_core,
+    approve_commitment_core, archive_commitment_core, archive_employee_core,
+    cancel_task_core, clear_messages_core,
+    create_commitment_core, create_template_core, delete_template_core,
+    hard_delete_employee_core,
     reject_commitment_core,
     deploy_instance, ensure_workspace_core, rename_employee_core, rename_template_core,
-    send_message_core,
+    send_message_core, stop_employee_core, unarchive_employee_core,
 };
 
 use crate::routes::{err_response, open_store, require_auth, ServerState};
@@ -34,6 +36,8 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/templates/{id}", delete(api_delete_template).patch(api_rename_template))
         .route("/api/employees/{id}", delete(api_delete_employee).patch(api_rename_employee))
         .route("/api/employees/deploy", post(api_deploy))
+        .route("/api/employees/{id}/stop", post(api_stop_employee))
+        .route("/api/employees/{id}/unarchive", post(api_unarchive_employee))
         .route("/api/employees/{id}/messages", post(api_send_message).delete(api_clear_messages))
         .route("/api/commitments", post(api_create_commitment))
         .route("/api/commitments/{id}/approve", post(api_approve))
@@ -73,6 +77,8 @@ struct CreateTemplateBody {
     name: String,
     brain_id: Option<String>,
     role: Option<String>,
+    /// W3（D-H3）：工具 allowlist（如 ["write-note"]；None＝預設集）。
+    tools: Option<Vec<String>>,
 }
 
 async fn api_create_template(
@@ -88,7 +94,17 @@ async fn api_create_template(
     let b = body.0;
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
-        create_template_core(&st.cfg, &store, &ws, &b.name, b.brain_id.as_deref(), b.role.as_deref())
+        let tool_refs: Option<Vec<&str>> =
+            b.tools.as_deref().map(|v| v.iter().map(String::as_str).collect());
+        create_template_core(
+            &st.cfg,
+            &store,
+            &ws,
+            &b.name,
+            b.brain_id.as_deref(),
+            b.role.as_deref(),
+            tool_refs.as_deref(),
+        )
     })
     .await;
     finish(res)
@@ -135,7 +151,34 @@ async fn api_rename_template(
     finish(res)
 }
 
+/// W1（E13）語意變更：DELETE 預設＝**封存**（軟刪除，歷史保留）；`?hard=true`＝
+/// 串聯硬刪除（僅開發／測試情境——正式產品語意是封存）。
 async fn api_delete_employee(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let hard = q.get("hard").map(String::as_str) == Some("true");
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        if hard {
+            hard_delete_employee_core(&store, &id)
+        } else {
+            let as_ = app_state(&st)?.clone();
+            archive_employee_core(&as_, &store, &id)
+        }
+    })
+    .await;
+    finish(res)
+}
+
+/// W1（E13）：解除封存（恢復可喚醒身分；歷史本就保留）。
+async fn api_unarchive_employee(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
@@ -146,7 +189,7 @@ async fn api_delete_employee(
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
-        delete_employee_core(&store, &id)
+        unarchive_employee_core(&store, &id)
     })
     .await;
     finish(res)
@@ -166,6 +209,25 @@ async fn api_rename_employee(
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
         rename_employee_core(&store, &id, &name)
+    })
+    .await;
+    finish(res)
+}
+
+/// W1 合作式停止：對執行中員工設停止旗標（runner 於步驟邊界優雅中止）。
+async fn api_stop_employee(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let as_ = app_state(&st)?.clone();
+        let store = open_store(&st)?;
+        stop_employee_core(&as_, &store, &id)
     })
     .await;
     finish(res)

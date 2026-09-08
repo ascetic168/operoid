@@ -2,10 +2,10 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { Archive, Plus, Loader2, X, UserSquare } from "lucide-vue-next";
+import { Archive, Plus, Loader2, X, UserSquare, Square } from "lucide-vue-next";
 import { useAgentStore } from "@/stores/agent";
 import { useBrainsStore } from "@/stores/brains";
-import { agentWatch, agentApproveCommitment, agentRejectCommitment, agentArchiveCommitment, agentCancelTask, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
+import { agentWatch, agentApproveCommitment, agentRejectCommitment, agentArchiveCommitment, agentCancelTask, employeeOpenOutputDir, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
 import ContextMenu, { type MenuItem } from "@/components/ContextMenu.vue";
 
 const { t } = useI18n();
@@ -42,14 +42,27 @@ const menu = ref<{ x: number; y: number; emp: Employee } | null>(null);
 function openMenu(e: MouseEvent, emp: Employee) {
   menu.value = { x: e.clientX, y: e.clientY, emp };
 }
-const menuItems = computed<MenuItem[]>(() => [
-  { key: "chat", label: t("instances.chat") },
-  { key: "detail", label: t("instances.detail") },
-  { key: "delegate", label: t("instances.delegate") },
-  { key: "watch", label: t("instances.watch") },
-  { key: "rename", label: t("instances.rename") },
-  { key: "delete", label: t("instances.delete"), danger: true },
-]);
+const menuItems = computed<MenuItem[]>(() => {
+  const emp = menu.value?.emp;
+  if (emp?.archived) {
+    // 封存員工：僅歷史追溯（對話／監看）＋解封。
+    return [
+      { key: "chat", label: t("instances.chat") },
+      { key: "watch", label: t("instances.watch") },
+      { key: "unarchive", label: t("instances.unarchive") },
+    ];
+  }
+  return [
+    { key: "chat", label: t("instances.chat") },
+    { key: "detail", label: t("instances.detail") },
+    { key: "delegate", label: t("instances.delegate") },
+    { key: "watch", label: t("instances.watch") },
+    { key: "stop", label: t("instances.stop") },
+    { key: "rename", label: t("instances.rename") },
+    { key: "openOutput", label: t("instances.openOutputDir") },
+    { key: "archive", label: t("instances.archiveEmployee") },
+  ];
+});
 function onMenuSelect(key: string) {
   const emp = menu.value?.emp;
   if (!emp) return;
@@ -57,8 +70,21 @@ function onMenuSelect(key: string) {
   else if (key === "detail") detailTarget.value = emp;
   else if (key === "delegate") openDelegate(emp);
   else if (key === "watch") openWatch(emp);
+  else if (key === "stop") stopEmployeeNow(emp);
   else if (key === "rename") openRename(emp);
-  else if (key === "delete") deleteTarget.value = emp;
+  else if (key === "openOutput") openOutputDir();
+  else if (key === "archive") archiveTarget.value = emp;
+  else if (key === "unarchive") unarchiveEmployee(emp);
+}
+
+// ── W1 停止（合作式：執行中員工於下一個步驟邊界優雅中止、轉 Paused）──
+async function stopEmployeeNow(e: Employee) {
+  try {
+    await store.stopEmployee(e.id);
+    if (watchTarget.value?.id === e.id) await pollWatch();
+  } catch (err) {
+    errorMsg.value = formatError(err);
+  }
 }
 
 // ── 部署新實體 ──
@@ -224,17 +250,37 @@ async function submitDelegate() {
 // ── 詳情 ──
 const detailTarget = ref<Employee | null>(null);
 
-// ── 刪除確認 ──
-const deleteTarget = ref<Employee | null>(null);
-async function confirmDelete() {
-  if (!deleteTarget.value) return;
+// ── W3（D-H2）：開啟員工產出目錄（人工 review 晉升的入口）──
+async function openOutputDir() {
   try {
-    await store.deleteEmployee(deleteTarget.value.id);
-    deleteTarget.value = null;
+    await employeeOpenOutputDir();
   } catch (e) {
     errorMsg.value = formatError(e);
   }
 }
+
+// ── W1（E13）：封存／解封（軟刪除——歷史保留、不再喚醒；取代舊「刪除」語意）──
+const archiveTarget = ref<Employee | null>(null);
+async function confirmArchive() {
+  if (!archiveTarget.value) return;
+  try {
+    await store.archiveEmployee(archiveTarget.value.id);
+    archiveTarget.value = null;
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
+async function unarchiveEmployee(e: Employee) {
+  try {
+    await store.unarchiveEmployee(e.id);
+  } catch (err) {
+    errorMsg.value = formatError(err);
+  }
+}
+
+// W1（E13）：主列表只顯示未封存；封存者移至下方檢索區（歷史可追溯）。
+const activeEmployees = computed(() => store.employees.filter((e) => !e.archived));
+const archivedEmployees = computed(() => store.employees.filter((e) => e.archived));
 </script>
 
 <template>
@@ -257,13 +303,13 @@ async function confirmDelete() {
       </button>
     </div>
 
-    <!-- 卡片網格 -->
+    <!-- 卡片網格（W1：僅未封存員工）-->
     <div
-      v-if="store.employees.length || store.loading"
+      v-if="activeEmployees.length || store.loading"
       class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4"
     >
       <div
-        v-for="emp in store.employees"
+        v-for="emp in activeEmployees"
         :key="emp.id"
         class="cursor-default select-none overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-shadow hover:shadow-md"
         @contextmenu.prevent="openMenu($event, emp)"
@@ -300,12 +346,46 @@ async function confirmDelete() {
 
     <!-- 空狀態 -->
     <div
-      v-else
+      v-else-if="!archivedEmployees.length"
       class="flex flex-col items-center gap-3 py-16 text-center text-sm text-muted-foreground"
     >
       <UserSquare :size="32" class="opacity-40" />
       <p>{{ t("instances.empty") }}</p>
       <p class="text-xs">{{ t("instances.rightClickHint") }}</p>
+    </div>
+
+    <!-- W1（E13）：已封存員工（歷史可追溯：對話／監看仍可用；右鍵解封）-->
+    <div v-if="archivedEmployees.length" class="mt-6">
+      <div class="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        <Archive :size="13" /> {{ t("instances.archivedSection", { n: archivedEmployees.length }) }}
+      </div>
+      <div class="grid grid-cols-2 gap-3 opacity-60 md:grid-cols-3 xl:grid-cols-4">
+        <div
+          v-for="emp in archivedEmployees"
+          :key="emp.id"
+          class="cursor-default select-none overflow-hidden rounded-lg border border-dashed border-border bg-card/50"
+          @contextmenu.prevent="openMenu($event, emp)"
+          @dblclick="detailTarget = emp"
+        >
+          <div class="flex items-center gap-2 border-b border-border bg-accent/40 px-3 py-2">
+            <span class="h-2 w-2 shrink-0 rounded-full bg-zinc-500" />
+            <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ emp.name }}</span>
+            <span class="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+              {{ t("instances.archivedBadge") }}
+            </span>
+          </div>
+          <div class="flex flex-col gap-1 px-3 py-2.5 text-[11px] text-muted-foreground">
+            <div class="flex justify-between gap-2">
+              <span>{{ t("instances.template") }}</span>
+              <span class="truncate font-medium text-foreground">{{ tplName(emp.template_id) }}</span>
+            </div>
+            <div class="flex justify-between gap-2">
+              <span>{{ t("instances.brain") }}</span>
+              <span class="truncate font-medium text-foreground">{{ brainName(emp.brain.brain_id) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 右鍵選單 -->
@@ -457,9 +537,20 @@ async function confirmDelete() {
             {{ watchTarget.name }}
             <span class="text-xs font-normal text-muted-foreground">{{ watchData ? watchData.employee.state : "…" }}</span>
           </h3>
-          <button type="button" class="text-muted-foreground hover:text-foreground" @click="closeWatch">
-            <X :size="16" />
-          </button>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="flex items-center gap-1 rounded-md border border-amber-600/60 px-2 py-1 text-[11px] text-amber-600 hover:bg-amber-600/10 disabled:opacity-40 disabled:hover:bg-transparent"
+              :disabled="!watchData || watchData.employee.state !== 'working'"
+              :title="t('instances.stopHint')"
+              @click="watchTarget && stopEmployeeNow(watchTarget)"
+            >
+              <Square :size="11" /> {{ t("instances.stop") }}
+            </button>
+            <button type="button" class="text-muted-foreground hover:text-foreground" @click="closeWatch">
+              <X :size="16" />
+            </button>
+          </div>
         </div>
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4 text-sm">
           <!-- 待核可提案（獨立於聊天訊息的審核入口：訊息被截斷／清除後仍可核可）-->
@@ -656,30 +747,30 @@ async function confirmDelete() {
 
     <!-- 刪除確認 modal -->
     <div
-      v-if="deleteTarget"
+      v-if="archiveTarget"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      @click.self="deleteTarget = null"
+      @click.self="archiveTarget = null"
     >
       <div class="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-2xl">
-        <h3 class="mb-2 font-semibold">{{ t("instances.delete") }}</h3>
+        <h3 class="mb-2 font-semibold">{{ t("instances.archiveEmployee") }}</h3>
         <p class="text-sm text-muted-foreground">
-          {{ t("instances.confirmDelete", { name: deleteTarget.name }) }}
+          {{ t("instances.confirmArchive", { name: archiveTarget.name }) }}
         </p>
         <p v-if="errorMsg" class="mt-2 text-xs text-destructive">{{ errorMsg }}</p>
         <div class="mt-4 flex justify-end gap-2">
           <button
             type="button"
             class="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent"
-            @click="deleteTarget = null"
+            @click="archiveTarget = null"
           >
             {{ t("common.cancel") }}
           </button>
           <button
             type="button"
-            class="rounded-md bg-destructive px-3 py-1.5 text-xs text-destructive-foreground hover:opacity-90"
-            @click="confirmDelete"
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            @click="confirmArchive"
           >
-            {{ t("instances.delete") }}
+            <Archive :size="13" /> {{ t("instances.archiveEmployee") }}
           </button>
         </div>
       </div>

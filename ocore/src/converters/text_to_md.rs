@@ -168,9 +168,9 @@ pub async fn text_to_page(
     };
     let user = format!("來源類型：{}\n\n文件內容：\n{trimmed}\n\n請只回傳 JSON 物件。", spec.id);
     let resp = llm::complete(endpoint, &cfg.llm_sampling(), &system, &user).await?;
-    let json = strip_fence(&resp);
+    let json = strip_fence(&resp.content);
     let sp: StructuredPage =
-        serde_json::from_str(&json).context(format!("LLM JSON 解析失敗；原始回應：{resp}"))?;
+        serde_json::from_str(&json).context(format!("LLM JSON 解析失敗；原始回應：{}", resp.content))?;
     Ok(sp)
 }
 
@@ -195,9 +195,9 @@ async fn extract_names(body: &str, cfg: &AppConfig, endpoint: &LlmEndpoint) -> R
 不要修改原文。沒有就給空陣列。";
     let user = format!("文字：\n{body}\n\n請只回傳 JSON 物件。");
     let resp = llm::complete(endpoint, &cfg.llm_sampling(), system, &user).await?;
-    let json = strip_fence(&resp);
+    let json = strip_fence(&resp.content);
     let names: NameLists =
-        serde_json::from_str(&json).context(format!("名字 JSON 解析失敗；原始：{resp}"))?;
+        serde_json::from_str(&json).context(format!("名字 JSON 解析失敗；原始：{}", resp.content))?;
     Ok(names)
 }
 

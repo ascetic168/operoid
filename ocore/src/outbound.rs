@@ -226,6 +226,10 @@ mod tests {
             gbrain_home: None,
             chat_model: None,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::path::PathBuf::from(
+                std::env::temp_dir(),
+            ),
         }
     }
 

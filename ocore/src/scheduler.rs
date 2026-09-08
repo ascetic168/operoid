@@ -19,10 +19,12 @@ use futures::future;
 
 use crate::agent_state::{AppState, InboundEvent, WakeSignal};
 use crate::app_config::AppConfig;
-use crate::domain::{EmployeeState, SqliteStore, Store};
+use crate::domain::{Commitment, Employee, EmployeeState, SqliteStore, Store};
 use crate::event_bus;
 use crate::outbound::OutboundConfig;
-use crate::runtime::{build_reasoner, build_tool_ctx, run_commitments_for_employee, run_inbox};
+use crate::runtime::{
+    build_reasoner, build_tool_ctx, run_commitments_for_employee, run_inbox_with_stop,
+};
 
 /// cfg 載入器：殼層以閉包提供（桌面殼讀 tauri-plugin-store；未來 oserver 讀 operoid.toml）。
 pub type CfgLoader = Arc<dyn Fn() -> anyhow::Result<AppConfig> + Send + Sync>;
@@ -53,10 +55,9 @@ pub async fn scheduler_loop(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                if !started {
-                    started = true;
-                    let _ = scan_commitments(&state, &load_cfg, &db_path).await; // 啟動：承諾驅動喚醒
-                }
+                let startup = !started;
+                started = true;
+                let _ = scan_commitments(&state, &load_cfg, &db_path, startup).await;
                 let _ = reset_errored(&load_cfg, &db_path).await; // 復原：Error 死巷→重試
                 let _ = scan_inbox(&state, &load_cfg, &db_path).await;
             }
@@ -80,7 +81,7 @@ async fn reset_errored(load_cfg: &CfgLoader, db_path: &std::path::Path) -> anyho
     for mut e in store
         .list_all_employees()?
         .into_iter()
-        .filter(|e| e.state == EmployeeState::Error)
+        .filter(|e| e.state == EmployeeState::Error && !e.archived) // W1：封存者不復原重試
     {
         let has_work = !store.list_assigned_tasks_by_owner(&e.id)?.is_empty()
             || !store.list_active_commitments_by_owner(&e.id)?.is_empty();
@@ -107,6 +108,7 @@ async fn scan_inbox(
     let mut candidates: Vec<String> = Vec::new();
     for e in store.list_all_employees()? {
         if e.state == EmployeeState::Sleeping
+            && !e.archived // W1（E13）：封存員工不再被喚醒
             && !store.list_assigned_tasks_by_owner(&e.id)?.is_empty()
         {
             candidates.push(e.id);
@@ -122,15 +124,17 @@ async fn scan_inbox(
         url: cfg.event_outbound_url.clone(),
         secret: cfg.event_outbound_secret.clone(),
     };
+    let cancel = crate::agent_state::CancelWatch::from_state(state);
     let futs = candidates.into_iter().filter_map(|id| {
         let guard = state.try_acquire(&id)?; // 已在跑則跳過
         let permits = Arc::clone(&permits);
         let outbound = outbound.clone();
+        let cancel = cancel.clone();
         Some(async move {
             let _guard = guard; // 釋放於此 future 完成（含錯誤路徑）
             if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id) {
                 // Reasoner 為可選：有則訊息走對話回合，無則退回 gbrain 單發（守 6c 行為）。
-                let reasoner = match build_reasoner(cfg, store, &id, permits) {
+                let reasoner = match build_reasoner(cfg, store, &id, permits, db_path) {
                     Ok(r) => Some(r),
                     Err(e) => {
                         eprintln!("[scheduler] build_reasoner({id}) 失敗（退化為 gbrain-only）: {e}");
@@ -141,7 +145,9 @@ async fn scan_inbox(
                     Some(r) => Some(r),
                     None => None,
                 };
-                if let Err(e) = run_inbox(&id, &tool, rref, &ctx, store, &outbound).await {
+                if let Err(e) =
+                    run_inbox_with_stop(&id, &tool, rref, &ctx, store, &outbound, &cancel).await
+                {
                     eprintln!("[scheduler] run_inbox({id}) failed: {e}");
                 }
             }
@@ -151,12 +157,40 @@ async fn scan_inbox(
     Ok(())
 }
 
-/// 承諾掃描（啟動一次）：喚醒 Sleeping＋有 Active commitment 的員工，交給
-/// [`run_commitments_for_employee`]（清 Inbox → 對每個 Active commitment 跑 run_autonomous）。
+/// W2：承諾喚醒候選謂詞。`startup=true`（啟動掃描）：Sleeping＋未封存＋有 Active 承諾
+/// 即喚醒（既有語意）。`startup=false`（每 tick）：另需有「退避到期」的承諾——
+/// `next_retry_at ≤ now` 且 `retry_count < MAX_COMMITMENT_RETRIES`（健康承諾
+/// `next_retry_at=None` 不重跑——只有出錯過的才會被自動再喚醒）。
+fn commitment_wake_due(e: &Employee, commitments: &[Commitment], startup: bool) -> bool {
+    if e.state != EmployeeState::Sleeping || e.archived || commitments.is_empty() {
+        return false;
+    }
+    if startup {
+        return true;
+    }
+    let now = chrono::Utc::now();
+    commitments.iter().any(|c| {
+        if c.retry_count >= crate::runtime::MAX_COMMITMENT_RETRIES {
+            return false; // 耗盡：待人類
+        }
+        match c.next_retry_at.as_deref() {
+            None => false, // 健康承諾（沒出錯過）：不自動重跑
+            Some(t) => match chrono::DateTime::parse_from_rfc3339(t) {
+                Ok(dt) => dt.with_timezone(&chrono::Utc) <= now,
+                Err(_) => true, // 時間戳解析失敗 fail-safe 視為到期——寧可多跑，不可卡死。
+            },
+        }
+    })
+}
+
+/// 承諾掃描：喚醒候選員工，交給 [`run_commitments_for_employee`]（清 Inbox →
+/// 對每個 Active commitment 跑 run_autonomous）。啟動／每 tick 的候選差異見
+/// [`commitment_wake_due`]（W2／T2 backpressure）。
 async fn scan_commitments(
     state: &AppState,
     load_cfg: &CfgLoader,
     db_path: &std::path::Path,
+    startup: bool,
 ) -> anyhow::Result<()> {
     let cfg = load_cfg()?;
     if !cfg.agent_os_enabled {
@@ -165,9 +199,8 @@ async fn scan_commitments(
     let store = SqliteStore::open(db_path)?;
     let mut candidates: Vec<String> = Vec::new();
     for e in store.list_all_employees()? {
-        if e.state == EmployeeState::Sleeping
-            && !store.list_active_commitments_by_owner(&e.id)?.is_empty()
-        {
+        let coms = store.list_active_commitments_by_owner(&e.id)?;
+        if commitment_wake_due(&e, &coms, startup) {
             candidates.push(e.id);
         }
     }
@@ -185,4 +218,72 @@ async fn scan_commitments(
     });
     future::join_all(futs).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{BrainRef, CommitmentStatus};
+
+    fn emp(state: EmployeeState, archived: bool) -> Employee {
+        Employee {
+            id: "e1".into(),
+            workspace_id: "ws".into(),
+            name: "E".into(),
+            brain: BrainRef { brain_id: "b".into() },
+            role: None,
+            template_id: None,
+            state,
+            archived,
+            tools: None,
+            created_at: "t".into(),
+        }
+    }
+
+    fn com(retry_count: u32, next_retry_at: Option<String>) -> Commitment {
+        Commitment {
+            id: "c1".into(),
+            workspace_id: "ws".into(),
+            owner_employee_id: "e1".into(),
+            title: "t".into(),
+            completion_condition: "c".into(),
+            status: CommitmentStatus::Active,
+            retry_count,
+            next_retry_at,
+            created_at: "t".into(),
+            updated_at: "t".into(),
+        }
+    }
+
+    fn in_future() -> Option<String> {
+        Some((chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339())
+    }
+    fn in_past() -> Option<String> {
+        Some((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339())
+    }
+
+    /// W2：候選謂詞——啟動掃描＝有 Active 即喚醒（封存除外）；每 tick＝僅退避到期者。
+    #[test]
+    fn commitment_wake_due_matrix() {
+        let sleeping = emp(EmployeeState::Sleeping, false);
+        assert!(commitment_wake_due(&sleeping, &[com(0, None)], true), "啟動：健康承諾也喚醒");
+        assert!(!commitment_wake_due(&sleeping, &[com(0, None)], false), "每 tick：健康承諾不重跑");
+        assert!(commitment_wake_due(&sleeping, &[com(1, in_past())], false), "退避到期 → 喚醒");
+        assert!(!commitment_wake_due(&sleeping, &[com(1, in_future())], false), "退避未到期 → 不喚醒");
+        assert!(!commitment_wake_due(&sleeping, &[com(3, in_past())], false), "重試耗盡 → 不喚醒");
+        assert!(!commitment_wake_due(&sleeping, &[], true), "無 Active 承諾 → 不喚醒");
+        assert!(
+            !commitment_wake_due(&emp(EmployeeState::Sleeping, true), &[com(0, None)], true),
+            "封存 → 永不喚醒"
+        );
+        assert!(
+            !commitment_wake_due(&emp(EmployeeState::Working, false), &[com(0, None)], true),
+            "非 Sleeping → 不喚醒"
+        );
+        // 員工有多個承諾時，任一到期即喚醒（run_commitments_for_employee 會全部跑）。
+        assert!(
+            commitment_wake_due(&sleeping, &[com(0, None), com(1, in_past())], false),
+            "任一承諾到期即喚醒"
+        );
+    }
 }

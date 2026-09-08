@@ -32,12 +32,14 @@ const addOpen = ref(false);
 const addName = ref("");
 const addBrain = ref("");
 const addRole = ref("");
+const addWriteNote = ref(false);
 const addBusy = ref(false);
 const addError = ref<string | null>(null);
 
 function openAdd() {
   addName.value = "";
   addRole.value = "";
+  addWriteNote.value = false;
   addBrain.value = brains.activeId ?? brains.brains[0]?.id ?? "";
   addError.value = null;
   addOpen.value = true;
@@ -51,6 +53,7 @@ async function submitAdd() {
       addName.value.trim(),
       addBrain.value,
       addRole.value.trim() || null,
+      addWriteNote.value ? ["write-note"] : null,
     );
     addOpen.value = false;
   } catch (e) {
@@ -164,6 +167,13 @@ async function confirmDelete() {
           <dd>{{ brainName(selected.brain.brain_id) }}</dd>
           <dt class="text-muted-foreground">{{ t("templates.role") }}</dt>
           <dd>{{ selected.role ?? "—" }}</dd>
+          <dt class="text-muted-foreground">{{ t("templates.tools") }}</dt>
+          <dd>
+            <span v-if="selected.tools?.length" class="rounded bg-muted px-1.5 py-0.5 text-[11px]">
+              {{ selected.tools.join(", ") }}
+            </span>
+            <span v-else class="text-muted-foreground">{{ t("templates.toolsDefault") }}</span>
+          </dd>
           <dt class="text-muted-foreground">{{ t("templates.createdAt") }}</dt>
           <dd class="font-mono text-xs">{{ selected.created_at }}</dd>
         </dl>
@@ -218,6 +228,10 @@ async function confirmDelete() {
               :placeholder="t('templates.rolePh')"
               class="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
             />
+          </label>
+          <label class="flex items-center gap-2 text-xs">
+            <input v-model="addWriteNote" type="checkbox" class="accent-primary" />
+            {{ t("templates.toolsWriteNote") }}
           </label>
           <p v-if="addError" class="text-xs text-destructive">{{ addError }}</p>
         </div>

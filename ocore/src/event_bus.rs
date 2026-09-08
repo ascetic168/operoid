@@ -36,9 +36,18 @@ pub async fn dispatch_event(
     let store = SqliteStore::open(db_path)?;
 
     // 路由：employee_id 優先；否則 brain_id → 全部共用此腦的員工。
+    // W1（E13）：封存員工不收新事件（歷史保留，解封即恢復）。
     let targets = match (&ev.employee_id, &ev.brain_id) {
-        (Some(id), _) => store.get_employee(id)?.into_iter().collect::<Vec<_>>(),
-        (_, Some(bid)) => store.list_employees_by_brain(bid)?,
+        (Some(id), _) => store
+            .get_employee(id)?
+            .filter(|e| !e.archived)
+            .into_iter()
+            .collect::<Vec<_>>(),
+        (_, Some(bid)) => store
+            .list_employees_by_brain(bid)?
+            .into_iter()
+            .filter(|e| !e.archived)
+            .collect(),
         _ => {
             eprintln!(
                 "[event_bus] 事件〈{}〉無路由資訊（缺 brain_id／employee_id），丟棄",
@@ -54,6 +63,10 @@ pub async fn dispatch_event(
         );
         return Ok(());
     }
+
+    // E8：員工查詢前先同步圖譜（fire-and-forget；sync 完成前的 race 由 content 全文兜底）。
+    maybe_spawn_brain_sync(cfg, ev.brain_id.as_deref(), !targets.is_empty());
+
 
     let prompt = ev.review_prompt();
     for emp in &targets {
@@ -97,4 +110,115 @@ pub async fn dispatch_event(
         ev.source
     );
     Ok(())
+}
+
+/// E8：路由命中且有腦資訊時，fire-and-forget 同步該腦——員工隨後 `knowledge.invoke`
+/// 即可查到剛寫入的完整長文（`content` 全文只是 sync 完成前 race 的兜底）。
+/// 回傳是否已 spawn（gate 條件供單測斷言；spawn 本體 best-effort，失敗僅記 log）。
+fn maybe_spawn_brain_sync(cfg: &AppConfig, brain_id: Option<&str>, has_targets: bool) -> bool {
+    let Some(bid) = brain_id else { return false };
+    if !has_targets {
+        return false;
+    }
+    let cfg = cfg.clone();
+    let bid = bid.to_string();
+    tokio::spawn(async move {
+        if let Err(e) =
+            crate::brains::sync_brain_core(&cfg, &crate::gbrain_cli::noop_sink(), &bid, "all", None)
+                .await
+        {
+            eprintln!("[event_bus] 事件觸發的 brain_sync 失敗（{bid}）：{e}");
+        }
+    });
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// E8 gate：缺 brain_id 或無路由目標都不觸發；兩者皆備才 spawn。
+    /// spawn 本體對不存在的腦會在 config 查找處失敗（brains 為空），僅 eprintln、無副作用。
+    #[tokio::test]
+    async fn brain_sync_gate_requires_brain_and_targets() {
+        let cfg = AppConfig::default();
+        assert!(!maybe_spawn_brain_sync(&cfg, None, true), "缺 brain_id 不觸發");
+        assert!(
+            !maybe_spawn_brain_sync(&cfg, Some("no-such-brain"), false),
+            "0 路由目標不觸發"
+        );
+        assert!(
+            maybe_spawn_brain_sync(&cfg, Some("no-such-brain"), true),
+            "兩者皆備觸發"
+        );
+        // 給背景 spawn 時間走完失敗路徑，避免測試行程提早退出的雜訊。
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    /// W1（E13）：封存員工不收事件——dispatch 不投遞 Message／Task（歷史保留、解封恢復）。
+    #[tokio::test]
+    async fn dispatch_skips_archived_employee() {
+        use crate::agent_state::EventKind;
+        use crate::domain::{
+            Employee, EmployeeState, SqliteStore, Store, Workspace, WorkspaceStatus,
+        };
+        let dir = std::env::temp_dir().join(format!("operoid-evbus-arch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("t.db");
+        {
+            let store = SqliteStore::open(&db).unwrap();
+            store
+                .put_workspace(&Workspace {
+                    id: "ws".into(),
+                    name: "W".into(),
+                    description: None,
+                    status: WorkspaceStatus::Active,
+                    created_at: "t".into(),
+                })
+                .unwrap();
+            store
+                .put_employee(&Employee {
+                    id: "emp-arch".into(),
+                    workspace_id: "ws".into(),
+                    name: "E".into(),
+                    brain: crate::domain::BrainRef { brain_id: "b1".into() },
+                    role: None,
+                    template_id: None,
+                    state: EmployeeState::Sleeping,
+                    archived: true,
+                    tools: None,
+                    created_at: "t".into(),
+                })
+                .unwrap();
+        }
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel(8);
+        let state = AppState::new(tx, etx, 4);
+        let mut cfg = AppConfig::default();
+        cfg.agent_os_enabled = true;
+        let ev = InboundEvent {
+            kind: EventKind::ExternalMessage,
+            source: "email".into(),
+            brain_id: Some("b1".into()),
+            employee_id: None,
+            title: "測試".into(),
+            content: "本體".into(),
+            external_ref: None,
+            occurred_at: None,
+            reply_to: None,
+            category: None,
+        };
+        dispatch_event(&state, &cfg, &db, ev).await.unwrap();
+        let store = SqliteStore::open(&db).unwrap();
+        assert!(
+            store.list_messages_by_employee("emp-arch", 10).unwrap().is_empty(),
+            "封存員工不應收到 Message"
+        );
+        assert!(
+            store.list_assigned_tasks_by_owner("emp-arch").unwrap().is_empty(),
+            "封存員工不應收到 Task"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

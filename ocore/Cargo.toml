@@ -1,6 +1,6 @@
 [package]
 name = "ocore"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 description = "Operoid 核心域 crate — Runtime/Store/Tools/GBrain 能力（零 Tauri 依賴）"
 authors = ["朱國棟 (Charlie Chu)"]
@@ -26,3 +26,4 @@ rmcp = { version = "3", features = ["client", "transport-child-process"] }
 
 [dev-dependencies]
 axum = "0.8"
+tokio = { version = "1", features = ["test-util"] }

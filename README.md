@@ -104,6 +104,15 @@ backend.
   upgrade reaches every Employee; **Teams, Projects, and Task handoff** for
   multi-Employee collaboration; and a **conversational layer** with human–agent
   chat, message-driven waking, and a live observation panel.
+- **Interruptible lifecycle & resilience**: a running Employee can be **stopped
+  gracefully** or **archived** at any moment (history fully preserved, traceable,
+  unarchivable); failed Commitments **retry automatically** with exponential
+  backoff and hand back to the human after repeated failures.
+- **write-note, the first action tool**: Employees write finished output as
+  markdown notes into their own output directory (kept outside the knowledge
+  graph); humans review and promote approved notes into the notes repo, where
+  the existing sync makes them organizational knowledge
+  (output → verification → promotion). Enable per template.
 - **Email in/out** via [obridge](obridge/) (bundled): inbound mail wakes the
   matching Employee through the event ingress; Employees reply through the
   send tool. IM works through WASM plugins.

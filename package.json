@@ -1,7 +1,7 @@
 {
   "name": "operoid",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "license": "MIT",
   "author": "\u6731\u570b\u68df (Charlie Chu)",
   "type": "module",

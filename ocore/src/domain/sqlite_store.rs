@@ -478,6 +478,54 @@ impl Store for SqliteStore {
         .map_err(|e| anyhow!("clear_messages_by_employee: {e}"))?;
         Ok(())
     }
+
+    // ── W1e：串聯刪除（hard-delete 員工用——僅開發／測試情境）──
+
+    fn delete_tasks_by_owner(&self, owner_employee_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM tasks WHERE owner_employee_id = ?1",
+            params![owner_employee_id],
+        )
+        .map_err(|e| anyhow!("delete_tasks_by_owner: {e}"))?;
+        Ok(())
+    }
+    fn delete_events_by_employee(&self, employee_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM events WHERE employee_id = ?1",
+            params![employee_id],
+        )
+        .map_err(|e| anyhow!("delete_events_by_employee: {e}"))?;
+        Ok(())
+    }
+    fn delete_commitments_by_owner(&self, owner_employee_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM commitments WHERE owner_employee_id = ?1",
+            params![owner_employee_id],
+        )
+        .map_err(|e| anyhow!("delete_commitments_by_owner: {e}"))?;
+        Ok(())
+    }
+    fn delete_artifacts_by_producer(&self, produced_by: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM artifacts WHERE produced_by = ?1",
+            params![produced_by],
+        )
+        .map_err(|e| anyhow!("delete_artifacts_by_producer: {e}"))?;
+        Ok(())
+    }
+    fn delete_memory(&self, employee_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM memories WHERE employee_id = ?1",
+            params![employee_id],
+        )
+        .map_err(|e| anyhow!("delete_memory: {e}"))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -516,6 +564,8 @@ mod tests {
             role: None,
             template_id: None,
             state: EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
             created_at: "t".into(),
         }
     }
@@ -575,6 +625,8 @@ mod tests {
             title: "track".into(),
             completion_condition: "done".into(),
             status: CommitmentStatus::Active,
+            retry_count: 0,
+            next_retry_at: None,
             created_at: "t".into(),
             updated_at: "t".into(),
         };

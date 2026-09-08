@@ -46,6 +46,7 @@ pub(crate) fn err_response(e: &AppError) -> Response {
         "agent_os.employeeNotFound" | "agent_os.templateNotFound" | "agent_os.commitmentNotFound"
         | "agent_os.taskNotFound" => StatusCode::NOT_FOUND,
         "agent_os.employeeBusy" => StatusCode::CONFLICT, // busy-lock 快速回絕（API 契約）
+        "agent_os.employeeNotRunning" | "agent_os.employeeArchived" => StatusCode::CONFLICT,
         "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
         "agent_os.invalidTransition" => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,

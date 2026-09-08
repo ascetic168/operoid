@@ -123,6 +123,19 @@ pub trait Store {
     fn list_messages_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Message>>;
     /// 清除某員工的全部對話訊息（不影響 artifact／commitment 等工作產出）。
     fn clear_messages_by_employee(&self, employee_id: &str) -> Result<()>;
+
+    // ── W1e：以 owner 為維度的串聯刪除（硬刪除員工用——僅開發／測試情境）──
+
+    /// 刪除某員工的全部 tasks。
+    fn delete_tasks_by_owner(&self, owner_employee_id: &str) -> Result<()>;
+    /// 刪除某員工的全部生命週期 events。
+    fn delete_events_by_employee(&self, employee_id: &str) -> Result<()>;
+    /// 刪除某員工的全部 commitments。
+    fn delete_commitments_by_owner(&self, owner_employee_id: &str) -> Result<()>;
+    /// 刪除某員工產出的全部 artifacts。
+    fn delete_artifacts_by_producer(&self, produced_by: &str) -> Result<()>;
+    /// 刪除某員工的 working memory。
+    fn delete_memory(&self, employee_id: &str) -> Result<()>;
 }
 
 /// 檔案式 JSON store。所有實體存於 `<base>/domain/{workspaces,employees,
@@ -381,6 +394,34 @@ impl Store for JsonStore {
             .collect();
         write_vec(&path, &remaining)
     }
+
+    // ── W1e：串聯刪除（JsonStore：retain_where）──
+
+    fn delete_tasks_by_owner(&self, owner_employee_id: &str) -> Result<()> {
+        retain_where(&self.path("tasks.json"), |t: &Task| {
+            t.owner_employee_id != owner_employee_id
+        })
+    }
+    fn delete_events_by_employee(&self, employee_id: &str) -> Result<()> {
+        retain_where(&self.path("events.json"), |e: &Event| {
+            e.employee_id != employee_id
+        })
+    }
+    fn delete_commitments_by_owner(&self, owner_employee_id: &str) -> Result<()> {
+        retain_where(&self.path("commitments.json"), |c: &Commitment| {
+            c.owner_employee_id != owner_employee_id
+        })
+    }
+    fn delete_artifacts_by_producer(&self, produced_by: &str) -> Result<()> {
+        retain_where(&self.path("artifacts.json"), |a: &Artifact| {
+            a.produced_by != produced_by
+        })
+    }
+    fn delete_memory(&self, employee_id: &str) -> Result<()> {
+        retain_where(&self.path("memories.json"), |m: &Memory| {
+            m.employee_id != employee_id
+        })
+    }
 }
 
 // ───────────────── IO helpers ─────────────────
@@ -429,6 +470,21 @@ where
     let mut items: Vec<T> = read_vec(path)?;
     let before = items.len();
     items.retain(|x| id_of(x) != id);
+    if items.len() != before {
+        write_vec(path, &items)?;
+    }
+    Ok(())
+}
+
+/// 保留 `keep` 為 true 的列（即刪除其餘；W1e 串聯刪除用）。檔不存在則 no-op。
+fn retain_where<T, F>(path: &Path, keep: F) -> Result<()>
+where
+    T: Serialize + DeserializeOwned,
+    F: Fn(&T) -> bool,
+{
+    let mut items: Vec<T> = read_vec(path)?;
+    let before = items.len();
+    items.retain(keep);
     if items.len() != before {
         write_vec(path, &items)?;
     }
@@ -543,6 +599,8 @@ mod tests {
             role: None,
             template_id: None,
             state: EmployeeState::Created,
+            archived: false,
+            tools: None,
             created_at: "t".into(),
         };
         let mary = Employee {
@@ -555,6 +613,8 @@ mod tests {
             role: None,
             template_id: None,
             state: EmployeeState::Created,
+            archived: false,
+            tools: None,
             created_at: "t".into(),
         };
         s.put_employee(&steve).unwrap();
@@ -587,6 +647,8 @@ mod tests {
                 role: None,
                 template_id: None,
                 state: EmployeeState::Created,
+                archived: false,
+                tools: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -601,6 +663,8 @@ mod tests {
             role: None,
             template_id: None,
             state: EmployeeState::Created,
+            archived: false,
+            tools: None,
             created_at: "t".into(),
         })
         .unwrap();
@@ -664,6 +728,8 @@ mod tests {
             title: "Track PO".into(),
             completion_condition: "goods received".into(),
             status: CommitmentStatus::Active,
+            retry_count: 0,
+            next_retry_at: None,
             created_at: "t".into(),
             updated_at: "t".into(),
         };

@@ -11,6 +11,7 @@
 pub mod agent_state;
 pub mod runtime;
 pub mod scheduler;
+pub mod write_note;
 pub mod app_config;
 pub mod brains;
 pub mod classifier;

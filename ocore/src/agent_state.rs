@@ -51,6 +51,9 @@ pub struct AppState {
     /// E7 ingress 去重：已見 `(source, external_ref)`（session 內；重啟清空——bridge 應自追
     /// last-seen 以避免重啟後重推）。超過 `DEDUP_CAP` 時清空（粗略邊界化，避免無限成長）。
     seen_external_refs: Arc<Mutex<HashSet<(String, String)>>>,
+    /// W1 合作式停止：已請求停止的 employee_ids。`request_stop` 僅對執行中（busy）的員工
+    /// 受理；runner 在步與步之間以 `should_stop` 檢查並**消耗**旗標後優雅中止。
+    cancel: Arc<Mutex<HashSet<String>>>,
 }
 
 /// ingress 去重集合上限（超過即清空、重新計算視窗）。v1 粗略邊界化。
@@ -68,6 +71,7 @@ impl AppState {
             event_tx,
             llm_permits: Arc::new(tokio::sync::Semaphore::new(permits_count.max(1))),
             seen_external_refs: Arc::new(Mutex::new(HashSet::new())),
+            cancel: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -110,9 +114,80 @@ impl AppState {
         self.busy.lock().expect("busy lock poisoned").iter().cloned().collect()
     }
 
+    /// W1 合作式停止：請求停止此員工。僅當員工執行中（busy）才受理——回 `true` 表已插入
+    /// 旗標、runner 會在下一個步驟邊界中止；未執行中回 `false`（無東西可停，呼叫端應
+    /// 報 `agent_os.employeeNotRunning`）。旗標由 `should_stop` 消耗，不會殘留到下一輪。
+    pub fn request_stop(&self, employee_id: &str) -> bool {
+        let busy = self.busy.lock().expect("busy lock poisoned");
+        if !busy.contains(employee_id) {
+            return false;
+        }
+        drop(busy);
+        self.cancel
+            .lock()
+            .expect("cancel lock poisoned")
+            .insert(employee_id.to_string());
+        true
+    }
+
+    /// W1 合作式停止：runner 於步驟邊界檢查——若曾請求停止則**移除旗標**並回 `true`
+    /// （check-and-remove：旗標只對當前這輪執行生效，避免延遲引爆下一輪）。
+    pub fn should_stop(&self, employee_id: &str) -> bool {
+        self.cancel
+            .lock()
+            .expect("cancel lock poisoned")
+            .remove(employee_id)
+    }
+
+    /// W1 合作式停止：僅窺視是否有停止請求（**不消耗**旗標）——對話回合的步間檢查用；
+    /// 旗標由外層 runner（`run_inbox`／`run_autonomous`）消耗，保證單一消耗點。
+    pub fn is_stop_requested(&self, employee_id: &str) -> bool {
+        self.cancel
+            .lock()
+            .expect("cancel lock poisoned")
+            .contains(employee_id)
+    }
+
     /// 全域 LLM 並發 permit（節流「全部喚醒」的尖峰並發 LLM 呼叫；permit 滿則自動排隊等待）。
     pub fn llm_permits(&self) -> Arc<tokio::sync::Semaphore> {
         Arc::clone(&self.llm_permits)
+    }
+}
+
+/// W1 合作式停止的檢查器：runner 於步驟邊界呼叫。`never()` 產生永不停止的實例
+/// （不經 AppState 的呼叫端／測試）；`from_state` 共享 AppState 的停止旗標。
+#[derive(Clone)]
+pub struct CancelWatch {
+    state: Option<AppState>,
+}
+
+impl Default for CancelWatch {
+    fn default() -> Self {
+        Self::never()
+    }
+}
+
+impl CancelWatch {
+    pub fn never() -> Self {
+        Self { state: None }
+    }
+
+    pub fn from_state(state: &AppState) -> Self {
+        Self { state: Some(state.clone()) }
+    }
+
+    /// 消耗式檢查（外層 runner 用）：曾請求停止則吃掉旗標並回 `true`。
+    pub fn should_stop(&self, employee_id: &str) -> bool {
+        self.state
+            .as_ref()
+            .map_or(false, |s| s.should_stop(employee_id))
+    }
+
+    /// 非消耗窺視（對話回合步間用）：旗標由外層消耗。
+    pub fn is_requested(&self, employee_id: &str) -> bool {
+        self.state
+            .as_ref()
+            .map_or(false, |s| s.is_stop_requested(employee_id))
     }
 }
 
@@ -135,6 +210,23 @@ mod tests {
 
         drop(g1); // 釋放 emp-1
         assert!(state.try_acquire("emp-1").is_some(), "釋放後可再次占用");
+    }
+
+    /// W1 停止旗標：僅對執行中（busy）的員工受理；`should_stop` 消耗旗標（不延遲引爆下一輪）。
+    #[test]
+    fn stop_flag_only_for_busy_and_consumed_once() {
+        let (tx, _rx) = mpsc::channel::<WakeSignal>(8);
+        let (etx, _erx) = mpsc::channel::<InboundEvent>(8);
+        let state = AppState::new(tx, etx, 4);
+
+        // 未執行中：請求停止不受理。
+        assert!(!state.request_stop("emp-1"), "未 busy 不受理");
+
+        let _g = state.try_acquire("emp-1").unwrap();
+        assert!(state.request_stop("emp-1"), "busy 中受理");
+        // check-and-remove：第一次檢查吃掉旗標，第二次不再回 true。
+        assert!(state.should_stop("emp-1"), "旗標已插入應回 true");
+        assert!(!state.should_stop("emp-1"), "旗標已被消耗");
     }
 
     /// review_prompt 的 FactoryWritten 分支：含「知識庫新增內容」＋category＋content。

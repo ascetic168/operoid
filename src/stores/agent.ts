@@ -8,9 +8,11 @@ import {
   agentCreateTemplate,
   agentDeployInstance,
   agentDeleteTemplate,
-  agentDeleteEmployee,
+  agentArchiveEmployee,
+  agentUnarchiveEmployee,
   agentRenameTemplate,
   agentRenameEmployee,
+  agentStopEmployee,
   agentCreateCommitment,
   agentSendMessage,
   type EmployeeTemplate,
@@ -47,8 +49,13 @@ export const useAgentStore = defineStore("agent", () => {
     employees.value = await agentListEmployees(workspaceId.value);
   }
 
-  async function createTemplate(name: string, brainId: string | null, role: string | null) {
-    await agentCreateTemplate(name, brainId, role, workspaceId.value);
+  async function createTemplate(
+    name: string,
+    brainId: string | null,
+    role: string | null,
+    tools: string[] | null = null,
+  ) {
+    await agentCreateTemplate(name, brainId, role, tools, workspaceId.value);
     await loadTemplates();
   }
   async function renameTemplate(id: string, name: string) {
@@ -68,8 +75,18 @@ export const useAgentStore = defineStore("agent", () => {
     await agentRenameEmployee(id, name);
     await loadEmployees();
   }
-  async function deleteEmployee(id: string) {
-    await agentDeleteEmployee(id);
+  /** W1（E13）：封存（軟刪除——歷史保留、不再喚醒）／解封。 */
+  async function archiveEmployee(id: string) {
+    await agentArchiveEmployee(id);
+    await loadEmployees();
+  }
+  async function unarchiveEmployee(id: string) {
+    await agentUnarchiveEmployee(id);
+    await loadEmployees();
+  }
+  /** W1 停止：對執行中員工設合作式停止旗標（步驟邊界優雅中止、轉 Paused；訊息／交辦可恢復）。 */
+  async function stopEmployee(id: string) {
+    await agentStopEmployee(id);
     await loadEmployees();
   }
 
@@ -103,7 +120,9 @@ export const useAgentStore = defineStore("agent", () => {
     deleteTemplate,
     deployInstance,
     renameEmployee,
-    deleteEmployee,
+    archiveEmployee,
+    unarchiveEmployee,
+    stopEmployee,
     sendMessage,
     createCommitment,
     templateById,

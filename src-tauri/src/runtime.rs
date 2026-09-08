@@ -4,6 +4,8 @@
 
 pub use ocore::runtime::*;
 
+use serde::Serialize;
+
 use crate::agent_state::AppState;
 use crate::config::app_config;
 use crate::config::DEFAULT_BRAIN_ID;
@@ -49,6 +51,8 @@ pub async fn agent_seed<R: tauri::Runtime>(
         role: Some("general".into()),
         template_id: None,
         state: EmployeeState::Sleeping,
+        archived: false,
+        tools: None,
         created_at: now_rfc3339(),
     })?;
 
@@ -92,6 +96,8 @@ pub async fn agent_recruit<R: tauri::Runtime>(
         role: None,
         template_id: None,
         state: EmployeeState::Sleeping,
+        archived: false,
+        tools: None,
         created_at: now_rfc3339(),
     })?;
     Ok(RecruitResult { employee_id: emp_id })
@@ -105,13 +111,23 @@ pub async fn agent_create_template<R: tauri::Runtime>(
     name: String,
     brain_id: Option<String>,
     role: Option<String>,
+    tools: Option<Vec<String>>,
 ) -> Result<TemplateResult, AppError> {
     let cfg = app_config::load(&app)?;
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
-    create_template_core(&cfg, &store, &workspace_id, &name, brain_id.as_deref(), role.as_deref())
+    let tool_refs = tools.as_deref().map(|v| v.iter().map(String::as_str).collect::<Vec<_>>());
+    create_template_core(
+        &cfg,
+        &store,
+        &workspace_id,
+        &name,
+        brain_id.as_deref(),
+        role.as_deref(),
+        tool_refs.as_deref(),
+    )
 }
 
 
@@ -199,14 +215,17 @@ pub async fn agent_delete_template<R: tauri::Runtime>(
 }
 
 
-/// 刪除員工實體。
+/// 刪除員工實體。W1（E13）語意變更：預設＝**封存**（軟刪除，歷史保留）——
+/// 與 oserver `DELETE /api/employees/{id}` 一致；硬刪除僅留 oserver `?hard=true`。
 #[tauri::command]
 pub async fn agent_delete_employee<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     employee_id: String,
 ) -> Result<(), AppError> {
+    use tauri::Manager;
     let store = agent_store(&app)?;
-    delete_employee_core(&store, &employee_id)
+    let state = app.state::<AppState>();
+    archive_employee_core(&state, &store, &employee_id)
 }
 
 
@@ -460,6 +479,8 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             gbrain_home: entry.env_home().map(|s| s.to_string()),
             chat_model,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
         });
     }
 
@@ -628,3 +649,23 @@ pub async fn agent_recent_events<R: tauri::Runtime>(
     recent_events_payload(&store, limit.unwrap_or(50))
 }
 
+
+/// W3（D-H2）：開啟員工產出目錄（write-note 工具的沙箱根＝`employee_output_path`）。
+/// 目錄不存在會先建立。人工 review 後滿意者移入 notes repo 走既有 sync（衍生知識晉升）。
+#[derive(Serialize)]
+pub struct OpenOutputDirResult {
+    pub path: String,
+}
+
+#[tauri::command]
+pub fn employee_open_output_dir<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<OpenOutputDirResult, AppError> {
+    let cfg = app_config::load(&app)?;
+    let dir = std::path::PathBuf::from(&cfg.employee_output_path);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open::that(&dir).map_err(|e| e.to_string())?;
+    Ok(OpenOutputDirResult {
+        path: dir.to_string_lossy().to_string(),
+    })
+}

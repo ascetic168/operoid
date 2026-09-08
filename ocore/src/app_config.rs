@@ -71,6 +71,10 @@ pub struct AppConfig {
     /// 管理操作（sync/sources/config）一律走 CLI。
     #[serde(default = "default_gbrain_transport")]
     pub gbrain_transport: String,
+    /// W3（D-H2）：員工產出目錄（write-note 工具的沙箱根；在 notes repo 之外——
+    /// 不入圖譜，人工 review 後移入 repo 走既有 sync 晉升）。
+    #[serde(default = "default_employee_output_path")]
+    pub employee_output_path: String,
     /// 作用中腦 id。
     #[serde(default)]
     pub active_brain_id: Option<String>,
@@ -170,6 +174,10 @@ fn default_true() -> bool {
 }
 fn default_gbrain_transport() -> String {
     "mcp".into()
+}
+fn default_employee_output_path() -> String {
+    let home = dirs::home_dir().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+    format!("{home}/employee-output")
 }
 fn default_temp() -> f64 {
     0.2
@@ -296,6 +304,7 @@ impl Default for AppConfig {
             gbrain_home_override: None,
             brains: vec![],
             gbrain_transport: default_gbrain_transport(),
+            employee_output_path: default_employee_output_path(),
             active_brain_id: None,
             active_source_id: None,
             auto_sync: true,

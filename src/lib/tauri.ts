@@ -550,6 +550,8 @@ export interface EmployeeTemplate {
   name: string;
   brain: BrainRef;
   role: string | null;
+  /** W3（D-H3）：工具 allowlist（如 ["write-note"]；null＝預設集）。 */
+  tools?: string[] | null;
   created_at: string;
 }
 
@@ -561,6 +563,10 @@ export interface Employee {
   role: string | null;
   template_id: string | null;
   state: EmployeeState;
+  /** W1（E13）：封存旗標（舊資料可能缺欄 → falsy）。 */
+  archived?: boolean;
+  /** W3（D-H3）：工具 allowlist（null＝預設集）。 */
+  tools?: string[] | null;
   created_at: string;
 }
 
@@ -579,12 +585,16 @@ export const agentCreateTemplate = (
   name: string,
   brainId: string | null,
   role: string | null,
+  tools: string[] | null = null,
   workspaceId: string = AGENT_WS,
 ): Promise<{ template_id: string }> =>
   agentFetch<{ template_id: string }>("/api/templates", {
     method: "POST",
-    body: { workspace_id: workspaceId, name, brain_id: brainId, role },
+    body: { workspace_id: workspaceId, name, brain_id: brainId, role, tools },
   });
+/** W3：開啟員工產出目錄（桌面殼能力——檔案管理員）。 */
+export const employeeOpenOutputDir = (): Promise<{ path: string }> =>
+  invoke<{ path: string }>("employee_open_output_dir");
 export const agentDeployInstance = (
   templateId: string,
   instanceName: string,
@@ -595,8 +605,12 @@ export const agentDeployInstance = (
   });
 export const agentDeleteTemplate = (templateId: string): Promise<void> =>
   agentFetch<void>(`/api/templates/${encodeURIComponent(templateId)}`, { method: "DELETE" });
-export const agentDeleteEmployee = (employeeId: string): Promise<void> =>
+/** W1（E13）：封存員工（軟刪除——server 端 DELETE 的正式語意；歷史保留）。 */
+export const agentArchiveEmployee = (employeeId: string): Promise<void> =>
   agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}`, { method: "DELETE" });
+/** W1（E13）：解除封存（恢復可喚醒身分）。 */
+export const agentUnarchiveEmployee = (employeeId: string): Promise<void> =>
+  agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}/unarchive`, { method: "POST" });
 export const agentRenameTemplate = (templateId: string, name: string): Promise<void> =>
   agentFetch<void>(`/api/templates/${encodeURIComponent(templateId)}`, {
     method: "PATCH",
@@ -607,6 +621,8 @@ export const agentRenameEmployee = (employeeId: string, name: string): Promise<v
     method: "PATCH",
     body: { name },
   });
+export const agentStopEmployee = (employeeId: string): Promise<void> =>
+  agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}/stop`, { method: "POST" });
 export const agentSendMessage = (
   employeeId: string,
   text: string,

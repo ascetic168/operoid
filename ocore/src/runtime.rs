@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_state::{AppState, WakeSignal};
+use crate::agent_state::{AppState, CancelWatch, WakeSignal};
 
 use crate::app_config;
 
@@ -219,6 +219,8 @@ fn create_proposed_commitment(
         title: title.to_string(),
         completion_condition: completion_condition.to_string(),
         status: CommitmentStatus::Proposed,
+        retry_count: 0,
+        next_retry_at: None,
         created_at: now_rfc3339(),
         updated_at: now_rfc3339(),
     })?;
@@ -362,6 +364,7 @@ async fn process_one_inbox_task(
     ctx: &ToolCtx,
     store: &(dyn Store + Send + Sync),
     outbound: &OutboundConfig,
+    cancel: Option<&CancelWatch>,
 ) -> anyhow::Result<bool> {
     // 取一個 Inbox task（Assigned/Created/InProgress）；無則回 false。
     let Some(mut task) = store
@@ -378,7 +381,8 @@ async fn process_one_inbox_task(
     // 訊息任務＋有 Reasoner → 對話回合（回覆＋Out Message，Ch.16）；其餘走 gbrain think→artifact。
     let artifact_id = match (task.objective.as_str(), reasoner) {
         ("Human message", Some(r)) => {
-            run_conversational_turn(employee_id, &task, tool, r, ctx, store, outbound).await?
+            run_conversational_turn(employee_id, &task, tool, r, ctx, store, outbound, cancel)
+                .await?
         }
         _ => {
             let output = tool
@@ -465,6 +469,32 @@ pub async fn run_inbox(
     store: &(dyn Store + Send + Sync),
     outbound: &OutboundConfig,
 ) -> anyhow::Result<()> {
+    run_inbox_inner(employee_id, tool, reasoner, ctx, store, outbound, None).await
+}
+
+/// W1 合作式停止版：任務邊界檢查 `cancel`——請求停止時記 `stopped` 事件、員工轉 `Paused`
+/// （不被排程器自動喚醒；人類傳訊息或交辦即恢復 `Sleeping`），剩餘 inbox 保留待恢復後消化。
+pub async fn run_inbox_with_stop(
+    employee_id: &str,
+    tool: &dyn Tool,
+    reasoner: Option<&dyn Reasoner>,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+    outbound: &OutboundConfig,
+    cancel: &CancelWatch,
+) -> anyhow::Result<()> {
+    run_inbox_inner(employee_id, tool, reasoner, ctx, store, outbound, Some(cancel)).await
+}
+
+async fn run_inbox_inner(
+    employee_id: &str,
+    tool: &dyn Tool,
+    reasoner: Option<&dyn Reasoner>,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+    outbound: &OutboundConfig,
+    cancel: Option<&CancelWatch>,
+) -> anyhow::Result<()> {
     // Wake：整段維持 Working。
     let mut emp = store
         .get_employee(employee_id)?
@@ -474,8 +504,17 @@ pub async fn run_inbox(
     store.put_employee(&emp)?;
     let mut memory = restore_memory(store, employee_id)?;
     record_event(store, &workspace_id, employee_id, "wake", "inbox");
+    let mut stopped = false;
 
     loop {
+        // W1 合作式停止：任務邊界消耗旗標——優雅中止（訊息留在 inbox，恢復後續消化）。
+        if let Some(c) = cancel {
+            if c.should_stop(employee_id) {
+                record_event(store, &workspace_id, employee_id, "stopped", "inbox");
+                stopped = true;
+                break;
+            }
+        }
         if !process_one_inbox_task(
             employee_id,
             &workspace_id,
@@ -485,6 +524,7 @@ pub async fn run_inbox(
             ctx,
             store,
             outbound,
+            cancel,
         )
         .await?
         {
@@ -492,11 +532,18 @@ pub async fn run_inbox(
         }
     }
 
-    // Sleep：Inbox 吃光才睡。
+    // Sleep：Inbox 吃光才睡；W1 停止 → Paused（人工停止態，排程器不再自動喚醒）。
     memory.updated_at = now_rfc3339();
     store.put_memory(&memory)?;
-    emp.state = EmployeeState::Sleeping;
-    store.put_employee(&emp)?;
+    // 重讀最新員工列再寫終態——保留期間的並發欄位變更（如 W1 封存的 archived=true），
+    // 避免以喚醒時的舊 struct 整份覆寫回去。
+    let mut emp_end = store.get_employee(employee_id)?.unwrap_or(emp);
+    emp_end.state = if stopped {
+        EmployeeState::Paused
+    } else {
+        EmployeeState::Sleeping
+    };
+    store.put_employee(&emp_end)?;
     Ok(())
 }
 
@@ -517,6 +564,18 @@ fn now_line() -> String {
 /// 對話回合 tool-loop 的步數上限（E12）：防 LLM 失控循環。簡單回覆 1～2 步即收斂
 /// （think→finish 或直接 finish）；複雜訊息可查多寄多＋順帶提案。用盡 → best-effort 視同 finish。
 const MAX_TURN_STEPS: u32 = 6;
+
+/// W3：對話系統 prompt——具 write-note 權限時追加 write 動作說明（allowlist 閘門）。
+fn turn_system_prompt(ctx: &ToolCtx) -> String {
+    if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
+        format!(
+            "{TURN_SYSTEM}
+  {{\"action\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"}} —— 把一份完整產出寫成筆記檔（落於你的專屬產出目錄，供人類審閱）。"
+        )
+    } else {
+        TURN_SYSTEM.to_string()
+    }
+}
 
 const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外部訊息。你可以連續多步行動，每步只回一個 JSON 動作，不附加其他文字：\n\
   {\"action\": \"search\", \"query\": \"...\"} —— 快速檢索知識圖譜的相關頁面（無合成、省時；查資料/找原文時優先用）。\n\
@@ -542,6 +601,7 @@ async fn run_conversational_turn(
     ctx: &ToolCtx,
     store: &(dyn Store + Send + Sync),
     outbound: &OutboundConfig,
+    cancel: Option<&CancelWatch>,
 ) -> anyhow::Result<Option<String>> {
     let emp = store
         .get_employee(employee_id)?
@@ -571,6 +631,14 @@ async fn run_conversational_turn(
     let mut replied: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for _ in 0..MAX_TURN_STEPS {
+        // W1 合作式停止：步間窺視（不消耗旗標——由外層 runner 消耗），請求停止時
+        // 視同靜默提前結束回合（不外發、不回覆；task 由呼叫端照常收尾）。
+        if let Some(c) = cancel {
+            if c.is_requested(employee_id) {
+                record_event(store, &workspace_id, employee_id, "stopped", "turn");
+                break;
+            }
+        }
         let user = format!(
             "現在時間：{now}。\n訊息：{}\n\n{}\n請決定下一步動作（只回 JSON）。",
             task.input,
@@ -581,7 +649,7 @@ async fn run_conversational_turn(
             },
             now = now_line(),
         );
-        let action = match reasoner.reason(TURN_SYSTEM, &user).await {
+        let action = match reasoner.reason(&turn_system_prompt(ctx), &user).await {
             Ok(v) => v,
             Err(e) => {
                 // Reasoner 失敗（如 LLM rate limit）：若已有 think 證據，退化以最後證據回覆；
@@ -645,6 +713,59 @@ async fn run_conversational_turn(
                 )?);
                 let snippet: String = output.text.chars().take(1200).collect();
                 steps.push(format!("[think「{query}」] 證據（節錄）：{snippet}"));
+            }
+            // W3（D-H2/D-H3）：把完整產出寫成筆記檔——專屬產出目錄（不入圖譜）、
+            // allowlist 閘門（無權限回報員工，仿 SendTool 未啟用語意）。
+            "write" => {
+                if !ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
+                    steps.push("[write] 未啟用：此員工無 write-note 工具權限。".into());
+                    continue;
+                }
+                let mut params = serde_json::Map::new();
+                for key in ["filename", "title", "content"] {
+                    if let Some(v) = action.get(key).and_then(|v| v.as_str()) {
+                        params.insert(key.into(), serde_json::Value::String(v.to_string()));
+                    }
+                }
+                let title = action
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let content = action
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let write_tool = crate::write_note::WriteNoteTool::new(
+                    ctx.employee_output_root.clone(),
+                    employee_id,
+                );
+                let out = write_tool
+                    .invoke(
+                        ToolInput {
+                            query: String::new(),
+                            anchor: None,
+                            params: Some(params),
+                        },
+                        ctx,
+                    )
+                    .await?;
+                if out.meta.get("outcome").and_then(|v| v.as_str()) == Some("written") {
+                    // 檔案是產出副本、Artifact 是 first-class 紀錄（provenance 完整）。
+                    let aid = commit_artifact(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        if title.is_empty() { "寫入筆記" } else { &title },
+                        &content,
+                        Some(&task.id),
+                        task.commitment_id.as_deref(),
+                        task.project_id.as_deref(),
+                    )?;
+                    artifact_id = Some(aid);
+                }
+                steps.push(format!("[write] {}", out.text));
             }
             "send" => {
                 let text = action
@@ -818,10 +939,75 @@ pub enum AutonomousOutcome {
     Errored {
         detail: String,
     },
+    /// 人工停止（W1 合作式）——承諾維持 `Active`（人可再觸發）；員工轉 `Paused`
+    /// （不被排程器自動喚醒），人類傳訊息或交辦即恢復 `Sleeping`。
+    Cancelled {
+        cycles: u32,
+    },
 }
 
 /// notes 環狀緩衝上限（避免無限增長；P8 的「遺忘是錯誤」適用於未提交工作，非無限暫存）。
 const NOTE_CAP: usize = 50;
+
+/// W2（T2）：承諾自動重試上限——`Errored` 累計達此數即停止自動重排
+/// （記 `retry_exhausted` 事件，待人類介入：重新交辦／傳訊息／核可）。
+pub const MAX_COMMITMENT_RETRIES: u32 = 3;
+
+/// W2：`Errored` 承諾的重試退避：10min·2^(retry_count-1)，上限 4h。
+pub fn commitment_retry_backoff(retry_count: u32) -> Duration {
+    Duration::from_secs((600u64 << retry_count.saturating_sub(1)).min(4 * 3600))
+}
+
+/// W2（T2）：`run_autonomous` 結果對承諾重試欄位的更新——
+/// `Satisfied` 歸零；`Errored` 計數 +1 並排退避（達上限則停止排程＋記 `retry_exhausted`）；
+/// `Stalled`／`Cancelled` 不動（非錯誤）。由 `run_commitments_for_employee` 每承諾收尾時呼叫。
+pub fn apply_retry_after_outcome(
+    store: &SqliteStore,
+    employee_id: &str,
+    commitment_id: &str,
+    outcome: &AutonomousOutcome,
+) -> Result<bool, AppError> {
+    let Some(mut com) = store.get_commitment(commitment_id)? else {
+        return Ok(false);
+    };
+    if com.owner_employee_id != employee_id || com.status != CommitmentStatus::Active {
+        return Ok(false);
+    }
+    match outcome {
+        AutonomousOutcome::Satisfied { .. } => {
+            com.retry_count = 0;
+            com.next_retry_at = None;
+            store.put_commitment(&com)?;
+        }
+        AutonomousOutcome::Errored { .. } => {
+            com.retry_count += 1;
+            if com.retry_count >= MAX_COMMITMENT_RETRIES {
+                com.next_retry_at = None; // 耗盡：不再自動重排
+                store.put_commitment(&com)?;
+                let ws = com.workspace_id.clone();
+                record_event(
+                    store,
+                    &ws,
+                    employee_id,
+                    "retry_exhausted",
+                    format!(
+                        "承諾「{}」連續失敗 {} 次，停止自動重試（待人類處理）",
+                        com.title, com.retry_count
+                    ),
+                );
+            } else {
+                let next = chrono::Utc::now()
+                    + chrono::Duration::seconds(
+                        commitment_retry_backoff(com.retry_count).as_secs() as i64,
+                    );
+                com.next_retry_at = Some(next.to_rfc3339());
+                store.put_commitment(&com)?;
+            }
+        }
+        _ => {} // Stalled（非錯誤）／Cancelled（人為）——不動重試欄位。
+    }
+    Ok(matches!(outcome, AutonomousOutcome::Errored { .. }))
+}
 
 /// PLAN 重複偵測上限：連續 `MAX_REPEAT` 次相同 next_query 才判 Stalled（給 LLM 換角度的機會，
 /// 而非一次重複就放棄）。首次重複時不 ACT（不浪費查詢），留 note 重新 PLAN。
@@ -836,6 +1022,18 @@ const BARREN_MIN_CHARS: usize = 30;
 const MAX_BARREN: u32 = 3;
 
 const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。只回 JSON 物件，不附加其他文字。";
+
+/// W3：PLAN 系統 prompt——具 write-note 權限時追加 write 選項說明。
+fn plan_system_prompt(ctx: &ToolCtx) -> String {
+    if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
+        format!(
+            "{PLAN_SYSTEM}
+可選行動除 query（檢索）與 tool=send（外發通知）外，另可 {{\"tool\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"}}——把階段性產出寫成筆記檔（專屬產出目錄，供人類審閱）。"
+        )
+    } else {
+        PLAN_SYSTEM.to_string()
+    }
+}
 
 const EVAL_SYSTEM: &str = "你是一名完成條件評估者。只根據完成條件與已產出的成果，判斷承諾是否已滿足。只回 JSON 物件，不附加其他文字。";
 
@@ -854,6 +1052,60 @@ pub async fn run_autonomous(
     ctx: &ToolCtx,
     store: &(dyn Store + Send + Sync),
     outbound: &OutboundConfig,
+) -> anyhow::Result<AutonomousOutcome> {
+    run_autonomous_inner(
+        employee_id,
+        commitment_id,
+        budget,
+        knowledge,
+        reasoner,
+        ctx,
+        store,
+        outbound,
+        None,
+    )
+    .await
+}
+
+/// W1 合作式停止版：每輪邊界（PLAN 前）檢查 `cancel`——請求停止時回 `Cancelled`
+/// （承諾維持 Active、員工轉 `Paused`、記 `stopped` 事件）。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_autonomous_with_stop(
+    employee_id: &str,
+    commitment_id: &str,
+    budget: &CycleBudget,
+    knowledge: &dyn Tool,
+    reasoner: &dyn Reasoner,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+    outbound: &OutboundConfig,
+    cancel: &CancelWatch,
+) -> anyhow::Result<AutonomousOutcome> {
+    run_autonomous_inner(
+        employee_id,
+        commitment_id,
+        budget,
+        knowledge,
+        reasoner,
+        ctx,
+        store,
+        outbound,
+        Some(cancel),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_autonomous_inner(
+    employee_id: &str,
+    commitment_id: &str,
+    budget: &CycleBudget,
+    knowledge: &dyn Tool,
+    reasoner: &dyn Reasoner,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+    outbound: &OutboundConfig,
+    cancel: Option<&CancelWatch>,
 ) -> anyhow::Result<AutonomousOutcome> {
     // Wake：整段維持 Working。
     let mut emp = store
@@ -885,6 +1137,15 @@ pub async fn run_autonomous(
 
     loop {
         cycles += 1;
+        // W1 合作式停止：輪邊界消耗旗標——優雅中止（本輪未開始，計為 cycles-1）。
+        if let Some(c) = cancel {
+            if c.should_stop(employee_id) {
+                outcome = AutonomousOutcome::Cancelled {
+                    cycles: cycles - 1,
+                };
+                break;
+            }
+        }
         if cycles > budget.max_cycles {
             outcome = AutonomousOutcome::Stalled {
                 reason: "達 cycle 上限".into(),
@@ -912,6 +1173,7 @@ pub async fn run_autonomous(
             ctx,
             store,
             outbound,
+            cancel,
         )
         .await?
         {
@@ -942,7 +1204,7 @@ pub async fn run_autonomous(
             recent = if recent.is_empty() { "(尚無)".into() } else { recent.join("\n") },
             now = now_line(),
         );
-        let plan = match reasoner.reason(PLAN_SYSTEM, &plan_user).await {
+        let plan = match reasoner.reason(&plan_system_prompt(ctx), &plan_user).await {
             Ok(v) => v,
             Err(e) => {
                 outcome = AutonomousOutcome::Errored {
@@ -965,6 +1227,8 @@ pub async fn run_autonomous(
         } else if plan.get("tool").and_then(|v| v.as_str()) == Some("send") {
             let to = plan.get("to").and_then(|v| v.as_str()).unwrap_or("?");
             format!("{{\"tool\": \"send\", \"to\": \"{to}\", \"rationale\": \"{plan_rationale}\"}}")
+        } else if plan.get("tool").and_then(|v| v.as_str()) == Some("write") {
+            format!("{{\"tool\": \"write\", \"rationale\": \"{plan_rationale}\"}}")
         } else {
             let q = plan
                 .get("next_query")
@@ -1073,6 +1337,79 @@ pub async fn run_autonomous(
                 _ => {}
             }
             memory.notes.push(format!("（已主動外發：{}）", out.text));
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            continue;
+        }
+        // W3（D-H2/D-H3）：PLAN 選 write——主動把產出寫成筆記（allowlist 閘門），
+        // 寫成 Draft artifact（探索期產出；Satisfied 才晉升），循環續跑。
+        if plan.get("tool").and_then(|v| v.as_str()) == Some("write") {
+            if !ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
+                memory
+                    .notes
+                    .push("（write 未啟用：此員工無 write-note 工具權限，請改用其他行動）".into());
+                cap_notes(&mut memory);
+                store.put_memory(&memory)?;
+                continue;
+            }
+            let mut params = serde_json::Map::new();
+            for key in ["filename", "title", "content"] {
+                if let Some(v) = plan.get(key).and_then(|v| v.as_str()) {
+                    params.insert(key.into(), serde_json::Value::String(v.to_string()));
+                }
+            }
+            let title = plan
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let content = plan
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let write_tool =
+                crate::write_note::WriteNoteTool::new(ctx.employee_output_root.clone(), employee_id);
+            let out = match write_tool
+                .invoke(
+                    ToolInput {
+                        query: String::new(),
+                        anchor: None,
+                        params: Some(params),
+                    },
+                    ctx,
+                )
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    outcome = AutonomousOutcome::Errored {
+                        detail: format!("write: {e}"),
+                    };
+                    break;
+                }
+            };
+            if out.meta.get("outcome").and_then(|v| v.as_str()) == Some("written") {
+                let aid = commit_artifact_with_status(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    if title.is_empty() { "寫入筆記" } else { &title },
+                    &content,
+                    None,
+                    Some(commitment_id),
+                    None,
+                    ArtifactStatus::Draft,
+                )?;
+                artifact_ids.push(aid.clone());
+                produced_any = true;
+                memory.updated_at = now_rfc3339();
+                store.put_memory(&memory)?;
+                commitment.updated_at = now_rfc3339();
+                store.put_commitment(&commitment)?;
+            }
+            memory.notes.push(format!("（已寫入筆記：{}）", out.text));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
             store.put_memory(&memory)?;
@@ -1246,18 +1583,35 @@ pub async fn run_autonomous(
             store.put_memory(&memory)?;
             store.put_commitment(&commitment)?; // 維持 Active（不進 Error 死巷）
         }
+        AutonomousOutcome::Cancelled { .. } => {
+            memory
+                .notes
+                .push(format!("承諾「{}」被人工停止（人類可隨時再觸發續跑）", commitment.title));
+            cap_notes(&mut memory);
+            memory.updated_at = now_rfc3339();
+            store.put_memory(&memory)?;
+            store.put_commitment(&commitment)?; // 維持 Active
+        }
     }
     // 記錄結果事件（生命週期歷程）。
     let (ekind, edetail) = match &outcome {
         AutonomousOutcome::Satisfied { .. } => ("satisfied", commitment.title.clone()),
         AutonomousOutcome::Stalled { reason, .. } => ("stalled", reason.clone()),
         AutonomousOutcome::Errored { detail } => ("errored", detail.clone()),
+        AutonomousOutcome::Cancelled { .. } => ("stopped", "人工停止".into()),
     };
     record_event(store, &workspace_id, employee_id, ekind, edetail);
 
     // 不再進 Error（死巷、無重試路徑）——軟失敗也睡、下次喚醒重試。
-    emp.state = EmployeeState::Sleeping;
-    store.put_employee(&emp)?;
+    // W1 人工停止 → Paused：排程器不再自動喚醒；人類訊息／交辦會恢復 Sleeping。
+    // 重讀最新員工列再寫終態——保留期間的並發欄位變更（如封存的 archived=true）。
+    let mut emp_end = store.get_employee(employee_id)?.unwrap_or(emp);
+    emp_end.state = if matches!(outcome, AutonomousOutcome::Cancelled { .. }) {
+        EmployeeState::Paused
+    } else {
+        EmployeeState::Sleeping
+    };
+    store.put_employee(&emp_end)?;
     Ok(outcome)
 }
 
@@ -1578,6 +1932,8 @@ pub fn deploy_instance(
         role: tmpl.role.clone(),
         template_id: Some(template_id.to_string()),
         state: EmployeeState::Sleeping,
+        archived: false,
+        tools: tmpl.tools.clone(), // W3（D-H3）：allowlist 隨模板繼承
         created_at: now_rfc3339(),
     })?;
     Ok(emp_id)
@@ -1628,6 +1984,12 @@ pub fn build_tool_ctx(
     } else {
         None
     };
+    // W3：allowlist（空＝預設集——think/search/send 為內建行為，不受閘門限制）＋產出根目錄。
+    let allowed_tools = emp
+        .tools
+        .clone()
+        .map(|list| list.into_iter().collect())
+        .unwrap_or_default();
     Ok((
         GbrainToolset::new(),
         ToolCtx {
@@ -1635,6 +1997,8 @@ pub fn build_tool_ctx(
             gbrain_home,
             chat_model,
             mcp,
+            allowed_tools,
+            employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
         },
     ))
 }
@@ -1650,6 +2014,16 @@ pub struct LlmReasoner {
     endpoint: gbrain_config::LlmEndpoint,
     cfg: app_config::AppConfig,
     permits: Arc<tokio::sync::Semaphore>,
+    /// W2 lite 成本記錄：每次 reason 完成 best-effort 寫一則 Event（kind `llm`，
+    /// detail 含 model＋tokens）。`llm.rs` 回傳 usage、這裡落庫——失敗不影響推理。
+    usage_log: Option<UsageLog>,
+}
+
+/// usage 事件落庫所需的定位資訊。
+struct UsageLog {
+    db_path: std::path::PathBuf,
+    employee_id: String,
+    workspace_id: String,
 }
 
 impl LlmReasoner {
@@ -1662,7 +2036,23 @@ impl LlmReasoner {
             endpoint,
             cfg,
             permits,
+            usage_log: None,
         }
+    }
+
+    /// W2：啟用 usage 事件記錄（建議由 `build_reasoner` 建構——已帶定位資訊）。
+    pub fn with_usage_log(
+        mut self,
+        db_path: &std::path::Path,
+        employee_id: &str,
+        workspace_id: &str,
+    ) -> Self {
+        self.usage_log = Some(UsageLog {
+            db_path: db_path.to_path_buf(),
+            employee_id: employee_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+        });
+        self
     }
 }
 
@@ -1672,19 +2062,40 @@ impl Reasoner for LlmReasoner {
         Box::pin(async move {
             // 並發節流：permit 滿則在此自動排隊等待；完成後隨 `_permit` drop 自動歸還。
             let _permit = permits.acquire().await.expect("llm semaphore closed");
-            let raw = llm::complete(&self.endpoint, &self.cfg.llm_sampling(), system, user).await?;
-            parse_json_value(&raw)
+            let res = llm::complete(&self.endpoint, &self.cfg.llm_sampling(), system, user).await?;
+            // W2：token 用量記錄（best-effort——落庫失敗只 eprintln，不影響推理結果）。
+            if let (Some(log), Some(u)) = (&self.usage_log, &res.usage) {
+                let detail = serde_json::json!({
+                    "model": self.endpoint.model,
+                    "prompt_tokens": u.prompt_tokens,
+                    "completion_tokens": u.completion_tokens,
+                    "total_tokens": u.total_tokens,
+                })
+                .to_string();
+                if let Ok(store) = SqliteStore::open(&log.db_path) {
+                    record_event(
+                        &store,
+                        &log.workspace_id,
+                        &log.employee_id,
+                        "llm",
+                        detail,
+                    );
+                }
+            }
+            parse_json_value(&res.content)
         })
     }
 }
 
 /// 為某員工解析其腦的 LLM endpoint，建構 [`LlmReasoner`]（與 [`build_tool_ctx`] 用同一個腦）。
 /// 缺 API key（且非 ollama）→ `llm.noApiKey`。`permits` 為全域 LLM 並發節流（取自 `AppState`）。
+/// W2：帶 usage 記錄（`db_path` 定位事件落庫處）。
 pub fn build_reasoner(
     cfg: &app_config::AppConfig,
     store: &SqliteStore,
     employee_id: &str,
     permits: Arc<tokio::sync::Semaphore>,
+    db_path: &std::path::Path,
 ) -> Result<LlmReasoner, AppError> {
     let emp = store
         .get_employee(employee_id)?
@@ -1700,7 +2111,8 @@ pub fn build_reasoner(
                 gbrain_config::env_key(&endpoint.provider).unwrap_or("?"),
             ));
     }
-    Ok(LlmReasoner::new(endpoint, cfg.clone(), permits))
+    Ok(LlmReasoner::new(endpoint, cfg.clone(), permits)
+        .with_usage_log(db_path, employee_id, &emp.workspace_id))
 }
 
 #[derive(Serialize)]
@@ -1961,6 +2373,8 @@ mod tests {
                 role: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
+                archived: false,
+                tools: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -1978,7 +2392,21 @@ mod tests {
             gbrain_home: None,
             chat_model: None,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::path::PathBuf::from(
+                std::env::temp_dir(),
+            ),
         }
+    }
+
+    /// W3 測試用：ctx 帶指定產出根目錄＋（可選）write-note 權限。
+    fn ctx_with_write(root: &std::path::Path, allowed: bool) -> ToolCtx {
+        let mut c = ctx();
+        c.employee_output_root = root.to_path_buf();
+        if allowed {
+            c.allowed_tools.insert(crate::write_note::TOOL_WRITE_NOTE.into());
+        }
+        c
     }
 
     #[tokio::test]
@@ -2244,6 +2672,8 @@ mod tests {
                 role: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
+                archived: false,
+                tools: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -2573,6 +3003,8 @@ mod tests {
                 title: "查答案".into(),
                 completion_condition: "找到答案".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -2618,6 +3050,491 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// W1 合作式停止：第 2 次 reason（＝第 1 輪 EVAL）時請求停止 → 下一輪邊界 Cancelled、
+    /// 承諾維持 Active、員工轉 Paused（不被自動喚醒）、記 `stopped` 事件、memory 留 note。
+    #[tokio::test]
+    async fn run_autonomous_stop_midway_cancels() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查答案".into(),
+                completion_condition: "找到答案".into(),
+                status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        // AppState＋busy-lock：模擬 run_commitments_for_employee 先占用
+        // （request_stop 僅對 busy 員工受理）。
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel(8);
+        let state = AppState::new(tx, etx, 4);
+        let _guard = state.try_acquire(&emp_id).unwrap();
+
+        // 第 2 次 reason（第 1 輪 EVAL）時請求停止——模擬人在員工執行中按停。
+        struct StoppingReasoner {
+            state: AppState,
+            emp_id: String,
+            calls: std::sync::atomic::AtomicU32,
+        }
+        impl Reasoner for StoppingReasoner {
+            fn reason<'a>(&'a self, _s: &'a str, _u: &'a str) -> ReasonerFuture<'a> {
+                let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n == 1 {
+                    assert!(self.state.request_stop(&self.emp_id), "busy 中應受理");
+                }
+                // 永遠不判 done——讓循環一直跑到被停止。
+                let resp = r#"{"next_query": "q1"}"#;
+                Box::pin(async move { Ok(serde_json::from_str(resp).unwrap()) })
+            }
+        }
+        let reasoner = StoppingReasoner {
+            state: state.clone(),
+            emp_id: emp_id.clone(),
+            calls: std::sync::atomic::AtomicU32::new(0),
+        };
+        let cancel = CancelWatch::from_state(&state);
+        let tool = StubTool::new("答案：42");
+        let out = run_autonomous_with_stop(
+            &emp_id,
+            "c1",
+            &CycleBudget::default_session(),
+            &tool,
+            &reasoner,
+            &ctx(),
+            &store,
+            &outbound_disabled(),
+            &cancel,
+        )
+        .await
+        .unwrap();
+        // 第 1 輪完整跑（PLAN→ACT→EVAL），第 2 輪開頭被攔 → cycles=1。
+        assert!(matches!(out, AutonomousOutcome::Cancelled { cycles: 1 }), "{out:?}");
+        let com = store.get_commitment("c1").unwrap().unwrap();
+        assert_eq!(com.status, CommitmentStatus::Active, "停止後承諾維持 Active");
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Paused, "停止後員工應轉 Paused");
+        let evs = store.list_events_by_employee(&emp_id, 30).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "stopped"), "{evs:?}");
+        let mem = store.get_memory(&emp_id).unwrap().unwrap();
+        assert!(
+            mem.notes.iter().any(|n| n.contains("被人工停止")),
+            "{:?}",
+            mem.notes
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W1：run_inbox 任務邊界停止——處理完第 1 個 task 後旗標生效，第 2 個保留不處理、
+    /// 員工轉 Paused（恢復後續消化）。
+    #[tokio::test]
+    async fn run_inbox_stop_between_tasks() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        for i in 1..=2 {
+            store
+                .put_task(&Task {
+                    id: format!("t{i}"),
+                    workspace_id: "ws".into(),
+                    owner_employee_id: emp_id.clone(),
+                    objective: "Research".into(),
+                    input: format!("查 {i}"),
+                    status: TaskStatus::Assigned,
+                    output_artifact_id: None,
+                    commitment_id: None,
+                    project_id: None,
+                    external_reply_to: None,
+                    external_source: None,
+                    created_at: "t".into(),
+                })
+                .unwrap();
+        }
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel(8);
+        let state = AppState::new(tx, etx, 4);
+        let _guard = state.try_acquire(&emp_id).unwrap();
+
+        // 第 1 次 invoke（第 1 個 task）時請求停止——下一個任務邊界生效。
+        struct StoppingTool {
+            spec: ToolSpec,
+            state: AppState,
+            emp_id: String,
+        }
+        impl Tool for StoppingTool {
+            fn spec(&self) -> &ToolSpec {
+                &self.spec
+            }
+            fn invoke<'a>(&'a self, _i: ToolInput, _c: &'a ToolCtx) -> ToolFuture<'a> {
+                assert!(self.state.request_stop(&self.emp_id), "busy 中應受理");
+                Box::pin(async move {
+                    Ok(ToolOutput { text: "ok".into(), meta: serde_json::json!({}) })
+                })
+            }
+        }
+        let tool = StoppingTool {
+            spec: ToolSpec { id: "stop-stub".into(), description: "test".into() },
+            state: state.clone(),
+            emp_id: emp_id.clone(),
+        };
+        let cancel = CancelWatch::from_state(&state);
+        run_inbox_with_stop(&emp_id, &tool, None, &ctx(), &store, &outbound_disabled(), &cancel)
+            .await
+            .unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Paused, "停止後應轉 Paused");
+        let tasks = store.list_tasks_by_owner(&emp_id, &[TaskStatus::Completed]).unwrap();
+        assert_eq!(tasks.len(), 1, "只應完成第 1 個 task：{tasks:?}");
+        let pending = store.list_assigned_tasks_by_owner(&emp_id).unwrap();
+        assert_eq!(pending.len(), 1, "第 2 個 task 應保留待恢復：{pending:?}");
+        let evs = store.list_events_by_employee(&emp_id, 30).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "stopped"), "{evs:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W1：人類傳訊息＝明示恢復——Paused 員工回到 Sleeping（排程器可再次喚醒）。
+    #[test]
+    fn send_message_resumes_paused_employee() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        {
+            let mut emp = store.get_employee(&emp_id).unwrap().unwrap();
+            emp.state = EmployeeState::Paused;
+            store.put_employee(&emp).unwrap();
+        }
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel(8);
+        let state = AppState::new(tx, etx, 4);
+        send_message_core(&state, &store, &emp_id, "醒來吧", None).unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping, "訊息應恢復 Paused 員工");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W1：stop_employee_core 三情境——不存在→employeeNotFound、未執行中→employeeNotRunning、
+    /// busy 中→受理（旗標插入，由 runner 消耗）。
+    #[test]
+    fn stop_employee_core_scenarios() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel(8);
+        let state = AppState::new(tx, etx, 4);
+
+        let err = stop_employee_core(&state, &store, "no-such").unwrap_err();
+        assert_eq!(err.code, "agent_os.employeeNotFound");
+        let err = stop_employee_core(&state, &store, &emp_id).unwrap_err();
+        assert_eq!(err.code, "agent_os.employeeNotRunning");
+        let _g = state.try_acquire(&emp_id).unwrap();
+        stop_employee_core(&state, &store, &emp_id).unwrap();
+        assert!(
+            state.is_stop_requested(&emp_id),
+            "受理後旗標應在（待 runner 消耗）"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W1（E13）：封存——archived=true＋睡回、重複封存拒絕、封存者不收訊息、解封恢復。
+    #[test]
+    fn archive_employee_semantics() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel(8);
+        let state = AppState::new(tx, etx, 4);
+
+        archive_employee_core(&state, &store, &emp_id).unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert!(emp.archived, "封存後 archived=true");
+        assert_eq!(emp.state, EmployeeState::Sleeping, "封存即睡回");
+        let err = archive_employee_core(&state, &store, &emp_id).unwrap_err();
+        assert_eq!(err.code, "agent_os.invalidTransition", "重複封存拒絕");
+        let err = send_message_core(&state, &store, &emp_id, "嗨", None)
+            .err()
+            .expect("封存者應被拒絕");
+        assert_eq!(err.code, "agent_os.employeeArchived", "封存者不收訊息");
+        let evs = store.list_events_by_employee(&emp_id, 10).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "archived"), "{evs:?}");
+
+        unarchive_employee_core(&store, &emp_id).unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert!(!emp.archived, "解封恢復");
+        assert!(
+            send_message_core(&state, &store, &emp_id, "嗨", None).is_ok(),
+            "解封後可收訊息"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W1（E13）：串聯硬刪除——該員工的 tasks／messages／events／commitments／
+    /// artifacts／memory 全部清乾淨，不留孤兒。
+    #[test]
+    fn hard_delete_cascades() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "t1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Research".into(),
+                input: "查".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查".into(),
+                completion_condition: "答完".into(),
+                status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        store
+            .put_message(&Message {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                employee_id: emp_id.clone(),
+                direction: MessageDirection::In,
+                text: "hi".into(),
+                source_commitment_id: None,
+                proposed_commitment_id: None,
+                artifact_id: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        store
+            .put_artifact(&Artifact {
+                id: "a1".into(),
+                workspace_id: "ws".into(),
+                title: "產出".into(),
+                artifact_type: "report".into(),
+                content: "…".into(),
+                produced_by: emp_id.clone(),
+                source_task_id: None,
+                source_commitment_id: None,
+                revised_from_id: None,
+                project_id: None,
+                version: 1,
+                status: ArtifactStatus::Committed,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        store
+            .put_memory(&Memory {
+                employee_id: emp_id.clone(),
+                notes: vec!["note".into()],
+                last_artifact_id: None,
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        store
+            .put_event(&Event {
+                id: format!("{emp_id}-wake-1"),
+                workspace_id: "ws".into(),
+                employee_id: emp_id.clone(),
+                kind: "wake".into(),
+                detail: "test".into(),
+                created_at: "t".into(),
+            })
+            .unwrap();
+
+        hard_delete_employee_core(&store, &emp_id).unwrap();
+        assert!(store.get_employee(&emp_id).unwrap().is_none(), "員工列已刪");
+        assert!(store.list_tasks_by_owner(&emp_id, &[TaskStatus::Assigned]).unwrap().is_empty());
+        assert!(store.list_active_commitments_by_owner(&emp_id).unwrap().is_empty());
+        assert!(store.list_messages_by_employee(&emp_id, 10).unwrap().is_empty());
+        assert!(store.list_events_by_employee(&emp_id, 10).unwrap().is_empty());
+        assert!(store.list_artifacts_by_producer(&emp_id).unwrap().is_empty());
+        assert!(store.get_memory(&emp_id).unwrap().is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W2（T2）：承諾重試欄位生命週期——Errored 遞增＋排退避；達上限停止排程＋記
+    /// retry_exhausted；Satisfied 歸零。
+    #[test]
+    fn commitment_retry_schedule_lifecycle() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "查答案".into(),
+                completion_condition: "找到答案".into(),
+                status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+
+        let errored = AutonomousOutcome::Errored { detail: "LLM 掛了".into() };
+        apply_retry_after_outcome(&store, &emp_id, "c1", &errored).unwrap();
+        let c = store.get_commitment("c1").unwrap().unwrap();
+        assert_eq!(c.retry_count, 1, "Errored 後計數 +1");
+        let n1 = c.next_retry_at.clone().expect("應排下次重試");
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&n1).unwrap() > chrono::Utc::now(),
+            "退避應排在未来：{n1}"
+        );
+
+        apply_retry_after_outcome(&store, &emp_id, "c1", &errored).unwrap();
+        apply_retry_after_outcome(&store, &emp_id, "c1", &errored).unwrap(); // 第 3 次 → 上限
+        let c = store.get_commitment("c1").unwrap().unwrap();
+        assert_eq!(c.retry_count, 3);
+        assert_eq!(c.next_retry_at, None, "達上限不再自動排程");
+        let evs = store.list_events_by_employee(&emp_id, 20).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "retry_exhausted"), "{evs:?}");
+
+        // Satisfied → 歸零。
+        let satisfied = AutonomousOutcome::Satisfied { artifact_ids: vec![], cycles: 1 };
+        apply_retry_after_outcome(&store, &emp_id, "c1", &satisfied).unwrap();
+        let c = store.get_commitment("c1").unwrap().unwrap();
+        assert_eq!(c.retry_count, 0);
+        assert_eq!(c.next_retry_at, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W3：對話 write 動作（有權限）——檔案落地（origin frontmatter）＋Committed artifact。
+    #[tokio::test]
+    async fn conversational_write_allowed_creates_file_and_artifact() {
+        let dir = test_dir();
+        let out_root = dir.join("out");
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "幫我把本週重點寫成週報".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("stub");
+        let reasoner = StubReasoner::new(vec![
+            r##"{"action":"write","filename":"weekly.md","title":"週報","content":"# 本週重點\n- 完成 A"}"##,
+            r#"{"action":"finish","text":"週報已寫好。"}"#,
+        ]);
+        let c = ctx_with_write(&out_root, true);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &c, &store, &outbound_disabled())
+            .await
+            .unwrap();
+        let body = std::fs::read_to_string(out_root.join("weekly.md")).unwrap();
+        assert!(body.contains("origin: operoid-employee"), "{body}");
+        assert!(body.contains("produced_by:"), "{body}");
+        assert!(body.contains("# 本週重點"), "{body}");
+        let arts = store.list_artifacts("ws").unwrap();
+        assert_eq!(arts.len(), 1, "寫入成功應 commit 一個 artifact");
+        assert_eq!(arts[0].status, ArtifactStatus::Committed);
+        assert!(arts[0].content.contains("# 本週重點"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W3：對話 write 動作（無權限）——回報員工「未啟用」、不落地任何檔案。
+    #[tokio::test]
+    async fn conversational_write_without_allowlist_reports_only() {
+        let dir = test_dir();
+        let out_root = dir.join("out");
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "幫我寫週報".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("stub");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"write","filename":"weekly.md","title":"週報","content":"x"}"#,
+            r#"{"action":"finish","text":"沒有寫入權限，僅口頭回覆。"}"#,
+        ]);
+        let c = ctx_with_write(&out_root, false);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &c, &store, &outbound_disabled())
+            .await
+            .unwrap();
+        assert!(!out_root.join("weekly.md").exists(), "無權限不應落地檔案");
+        let arts = store.list_artifacts("ws").unwrap();
+        assert!(arts.is_empty(), "無權限不應產 artifact：{arts:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// W3（D-H3）：模板 tools allowlist 部署時繼承到 Instance。
+    #[test]
+    fn template_tools_inherit_on_deploy() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let cfg = app_config::AppConfig::default();
+        create_template_core(
+            &cfg,
+            &store,
+            "ws",
+            "writer",
+            Some("__default__"),
+            None,
+            Some(&[crate::write_note::TOOL_WRITE_NOTE]),
+        )
+        .unwrap();
+        let emp_id = deploy_instance(&store, "writer", "W1").unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(
+            emp.tools,
+            Some(vec![crate::write_note::TOOL_WRITE_NOTE.to_string()]),
+            "Instance 應繼承模板 allowlist"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// Task 舊 JSON（E7 outbound 之前）缺 external_* 欄 → 反序列化 default None（零遷移保證）。
     #[test]
     fn task_old_json_defaults_external_fields() {
@@ -2645,6 +3562,8 @@ mod tests {
                 title: "查答案".into(),
                 completion_condition: "找到答案".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -2692,6 +3611,8 @@ mod tests {
                 title: "不可能的任務".into(),
                 completion_condition: "做不到".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -2786,6 +3707,8 @@ mod tests {
                 title: "查不存在的東西".into(),
                 completion_condition: "找到 X".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -2841,6 +3764,8 @@ mod tests {
                 title: "查會議".into(),
                 completion_condition: "找到會議記錄".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -2887,6 +3812,8 @@ mod tests {
                 title: "查會議".into(),
                 completion_condition: "找到會議".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -2939,6 +3866,8 @@ mod tests {
                 title: "持續追蹤".into(),
                 completion_condition: "條件滿足".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: "t".into(),
                 updated_at: "t".into(),
             })
@@ -3088,6 +4017,8 @@ mod tests {
                 role: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
+                archived: false,
+                tools: None,
                 created_at: now_rfc3339(),
             })
             .unwrap();
@@ -3100,6 +4031,8 @@ mod tests {
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::env::temp_dir(),
         };
         let res = run_cycle(
             &emp_id,
@@ -3182,6 +4115,8 @@ mod tests {
                 role: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
+                archived: false,
+                tools: None,
                 created_at: now_rfc3339(),
             })
             .unwrap();
@@ -3211,6 +4146,8 @@ mod tests {
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::env::temp_dir(),
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -3255,7 +4192,8 @@ mod tests {
             .expect("active_brain_id 未設於 app-settings.json");
 
         let dir = test_dir();
-        let store = SqliteStore::open(dir.join("test.db")).unwrap();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
         store
             .put_workspace(&Workspace {
                 id: "ws".into(),
@@ -3276,6 +4214,8 @@ mod tests {
                 role: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
+                archived: false,
+                tools: None,
                 created_at: now_rfc3339(),
             })
             .unwrap();
@@ -3288,6 +4228,8 @@ mod tests {
                 title: "總結晶瀚半導體會議".into(),
                 completion_condition: "找出晶瀚半導體開過的會議並總結其要點".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: now_rfc3339(),
                 updated_at: now_rfc3339(),
             })
@@ -3295,7 +4237,7 @@ mod tests {
 
         let (tool, ctx) = build_tool_ctx(&cfg, &store, &emp_id).expect("build_tool_ctx");
         let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.llm_concurrency));
-        let reasoner = build_reasoner(&cfg, &store, &emp_id, permits)
+        let reasoner = build_reasoner(&cfg, &store, &emp_id, permits, &db)
             .expect("build_reasoner（缺 LLM API key？檢查作用中腦 chat_model 對應之環境變數）");
 
         let budget = CycleBudget::default_session();
@@ -3357,6 +4299,9 @@ mod tests {
             AutonomousOutcome::Errored { detail } => {
                 panic!("run_autonomous 發生未預期硬錯（Errored）：{detail}");
             }
+            AutonomousOutcome::Cancelled { cycles } => {
+                println!("== Cancelled（{cycles} cycles）==（本測試未請求停止，僅防禦性分支）");
+            }
         }
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -3389,6 +4334,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -3400,6 +4347,8 @@ mod tests {
                     title: "track".into(),
                     completion_condition: "done".into(),
                     status: CommitmentStatus::Active,
+                    retry_count: 0,
+                    next_retry_at: None,
                     created_at: now_rfc3339(),
                     updated_at: now_rfc3339(),
                 })
@@ -3517,6 +4466,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -3568,6 +4519,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -3637,6 +4590,8 @@ mod tests {
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::env::temp_dir(),
         };
 
         let dir = test_dir();
@@ -3662,6 +4617,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -3730,6 +4687,7 @@ mod tests {
                 name: "Procurement Steve".into(),
                 brain: BrainRef { brain_id: "demo".into() },
                 role: Some("procurement".into()),
+                tools: None,
                 created_at: now_rfc3339(),
             })
             .unwrap();
@@ -3768,6 +4726,8 @@ mod tests {
                 title: "tw only".into(),
                 completion_condition: "x".into(),
                 status: CommitmentStatus::Active,
+                retry_count: 0,
+                next_retry_at: None,
                 created_at: now_rfc3339(),
                 updated_at: now_rfc3339(),
             })
@@ -3816,6 +4776,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -3872,6 +4834,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -3953,6 +4917,8 @@ mod tests {
             gbrain_exe: exe,
             gbrain_home: home,
             mcp: None,
+            allowed_tools: Default::default(),
+            employee_output_root: std::env::temp_dir(),
         };
 
         let dir = test_dir();
@@ -3978,6 +4944,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -4041,6 +5009,8 @@ mod tests {
                     role: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
                     created_at: now_rfc3339(),
                 })
                 .unwrap();
@@ -4083,6 +5053,12 @@ pub async fn run_commitments_for_employee(
         return Ok(());
     }
     let store = SqliteStore::open(db_path)?;
+    // W1（E13）：封存員工不再被喚醒（防 spawn 與封存競態——遲到的喚醒直接放棄）。
+    if let Ok(Some(emp)) = store.get_employee(employee_id) {
+        if emp.archived {
+            return Ok(());
+        }
+    }
     let (knowledge, ctx) = match build_tool_ctx(cfg, &store, employee_id) {
         Ok(t) => t,
         Err(e) => {
@@ -4091,33 +5067,63 @@ pub async fn run_commitments_for_employee(
         }
     };
     let permits = state.llm_permits();
-    let reasoner = match build_reasoner(cfg, &store, employee_id, permits) {
+    let reasoner = match build_reasoner(cfg, &store, employee_id, permits, db_path) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[runtime] build_reasoner({employee_id}) failed（缺 LLM API key？）: {e}");
             return Ok(());
         }
     };
-    // 先清 Inbox（訊息／交接），再對每個 Active commitment 自主運行。
+    // 先清 Inbox（訊息／交接），再對每個 Active commitment 自主運行。W1：可被人類停止。
     let outbound = OutboundConfig {
         url: cfg.event_outbound_url.clone(),
         secret: cfg.event_outbound_secret.clone(),
     };
-    let _ = run_inbox(employee_id, &knowledge, Some(&reasoner), &ctx, &store, &outbound).await;
+    let cancel = CancelWatch::from_state(state);
+    let _ = run_inbox_with_stop(
+        employee_id,
+        &knowledge,
+        Some(&reasoner),
+        &ctx,
+        &store,
+        &outbound,
+        &cancel,
+    )
+    .await;
     let commitments = store.list_active_commitments_by_owner(employee_id)?;
     let budget = CycleBudget::default_session();
     for com in commitments {
-        match run_autonomous(employee_id, &com.id, &budget, &knowledge, &reasoner, &ctx, &store, &outbound)
-            .await
+        match run_autonomous_with_stop(
+            employee_id,
+            &com.id,
+            &budget,
+            &knowledge,
+            &reasoner,
+            &ctx,
+            &store,
+            &outbound,
+            &cancel,
+        )
+        .await
         {
-            Ok(AutonomousOutcome::Satisfied { cycles, .. }) => {
-                eprintln!("[runtime] {employee_id} 承諾 {} Satisfied（{cycles} 輪）", com.id)
-            }
-            Ok(AutonomousOutcome::Stalled { reason, .. }) => {
-                eprintln!("[runtime] {employee_id} 承諾 {} 卡住：{reason}", com.id)
-            }
-            Ok(AutonomousOutcome::Errored { detail }) => {
-                eprintln!("[runtime] {employee_id} 承諾 {} 錯誤：{detail}", com.id)
+            Ok(outcome) => {
+                // W2（T2）：Satisfied 歸零／Errored 排退避自動重試（上限 MAX_COMMITMENT_RETRIES）。
+                let _ = apply_retry_after_outcome(&store, employee_id, &com.id, &outcome);
+                match &outcome {
+                    AutonomousOutcome::Satisfied { cycles, .. } => {
+                        eprintln!("[runtime] {employee_id} 承諾 {} Satisfied（{cycles} 輪）", com.id)
+                    }
+                    AutonomousOutcome::Stalled { reason, .. } => {
+                        eprintln!("[runtime] {employee_id} 承諾 {} 卡住：{reason}", com.id)
+                    }
+                    AutonomousOutcome::Errored { detail } => {
+                        eprintln!("[runtime] {employee_id} 承諾 {} 錯誤：{detail}（已排自動重試）", com.id)
+                    }
+                    AutonomousOutcome::Cancelled { .. } => {
+                        eprintln!("[runtime] {employee_id} 被人工停止，跳過剩餘承諾");
+                        break; // 人說停就停整個 session——旗標已被消耗，後續承諾不再啟動。
+                    }
+                }
             }
             Err(e) => eprintln!("[runtime] run_autonomous({employee_id},{}) 失敗：{e}", com.id),
         }
@@ -4280,6 +5286,7 @@ pub fn create_template_core(
     name: &str,
     brain_id: Option<&str>,
     role: Option<&str>,
+    tools: Option<&[&str]>,
 ) -> Result<TemplateResult, AppError> {
     let brain_id = brain_id.map(str::to_string).unwrap_or_else(|| {
         cfg.active_brain_id
@@ -4298,6 +5305,7 @@ pub fn create_template_core(
         name: name.to_string(),
         brain: BrainRef { brain_id },
         role: role.map(str::to_string),
+        tools: tools.map(|v| v.iter().map(|s| s.to_string()).collect()),
         created_at: now_rfc3339(),
     })?;
     Ok(TemplateResult { template_id })
@@ -4323,9 +5331,92 @@ pub fn rename_template_core(
     Ok(())
 }
 
-/// 刪除員工實體。
+/// 刪除員工實體（舊行為：僅刪一列、不留孤兒清理）。**正式語意已改為封存**
+/// （見 [`archive_employee_core`]）；本函式保留給硬刪除情境（[`hard_delete_employee_core`]）。
 pub fn delete_employee_core(store: &SqliteStore, employee_id: &str) -> Result<(), AppError> {
     store.delete_employee(employee_id)?;
+    Ok(())
+}
+
+/// W1（E13）：封存員工（軟刪除）——`archived=true`＋睡回；不再被排程器喚醒、
+/// 不收新訊息／事件（`send_message`／`dispatch_event` 拒絕），歷史完整保留可追溯。
+/// 若正在執行中，順帶請求合作式停止（跑完當前步驟即止）。已封存者拒絕重複封存。
+pub fn archive_employee_core(
+    state: &AppState,
+    store: &SqliteStore,
+    employee_id: &str,
+) -> Result<(), AppError> {
+    let mut emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    if emp.archived {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", employee_id)
+            .p("from", "archived")
+            .p("to", "archived"));
+    }
+    emp.archived = true;
+    let running = state.request_stop(employee_id); // 執行中 → 合作式停止（best-effort）
+    emp.state = if running {
+        EmployeeState::Paused // 與停止路徑的終態一致
+    } else {
+        EmployeeState::Sleeping
+    };
+    store.put_employee(&emp)?;
+    record_event(store, &emp.workspace_id, employee_id, "archived", "員工封存（歷史保留）");
+    Ok(())
+}
+
+/// W1（E13）：解除封存——歷史本就保留，僅恢復可喚醒身分。
+pub fn unarchive_employee_core(store: &SqliteStore, employee_id: &str) -> Result<(), AppError> {
+    let mut emp = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    if !emp.archived {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", employee_id)
+            .p("from", "active")
+            .p("to", "active"));
+    }
+    emp.archived = false;
+    store.put_employee(&emp)?;
+    record_event(store, &emp.workspace_id, employee_id, "unarchived", "員工解除封存");
+    Ok(())
+}
+
+/// W1（E13）：**串聯硬刪除**——該員工的 tasks／messages／events／commitments／
+/// artifacts／memory 全部刪除，最後刪員工列。**僅供開發／測試情境**（產品原則：
+/// 已發生的歷史不可任意刪除；正式語意是封存）。
+pub fn hard_delete_employee_core(
+    store: &SqliteStore,
+    employee_id: &str,
+) -> Result<(), AppError> {
+    store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    store.delete_tasks_by_owner(employee_id)?;
+    store.clear_messages_by_employee(employee_id)?;
+    store.delete_events_by_employee(employee_id)?;
+    store.delete_commitments_by_owner(employee_id)?;
+    store.delete_artifacts_by_producer(employee_id)?;
+    store.delete_memory(employee_id)?;
+    store.delete_employee(employee_id)?;
+    Ok(())
+}
+
+/// W1：請求停止執行中的員工（合作式——runner 於下一個步驟邊界優雅中止、員工轉 Paused）。
+/// 未執行中 → `agent_os.employeeNotRunning`；不存在 → `agent_os.employeeNotFound`。
+pub fn stop_employee_core(
+    state: &AppState,
+    store: &SqliteStore,
+    employee_id: &str,
+) -> Result<(), AppError> {
+    store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    if !state.request_stop(employee_id) {
+        return Err(AppError::new("agent_os.employeeNotRunning").p("id", employee_id));
+    }
     Ok(())
 }
 
@@ -4352,9 +5443,18 @@ pub fn send_message_core(
     text: &str,
     commitment_id: Option<&str>,
 ) -> Result<SendMessageResult, AppError> {
-    let emp = store
+    let mut emp = store
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    // W1（E13）：封存員工不收新訊息（歷史保留，解封即恢復）。
+    if emp.archived {
+        return Err(AppError::new("agent_os.employeeArchived").p("id", employee_id));
+    }
+    // W1：人類傳訊息＝明示恢復——被停止（Paused）的員工回到 Sleeping 讓排程器接手。
+    if emp.state == EmployeeState::Paused {
+        emp.state = EmployeeState::Sleeping;
+        store.put_employee(&emp)?;
+    }
     let ws = emp.workspace_id.clone();
     let existing: Vec<String> = store.list_tasks(&ws)?.into_iter().map(|t| t.id).collect();
     let task_id = next_id("msg", &existing);
@@ -4414,9 +5514,18 @@ pub fn create_commitment_core(
     title: &str,
     completion_condition: &str,
 ) -> Result<CommitmentResult, AppError> {
-    let emp = store
+    let mut emp = store
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    // W1（E13）：封存員工不收新交辦。
+    if emp.archived {
+        return Err(AppError::new("agent_os.employeeArchived").p("id", employee_id));
+    }
+    // W1：交辦＝明示恢復——被停止（Paused）的員工回到 Sleeping。
+    if emp.state == EmployeeState::Paused {
+        emp.state = EmployeeState::Sleeping;
+        store.put_employee(&emp)?;
+    }
     let ws = emp.workspace_id.clone();
     let wake_id = employee_id.to_string();
     let now = now_rfc3339();
@@ -4436,6 +5545,8 @@ pub fn create_commitment_core(
         title: title.to_string(),
         completion_condition: completion_condition.to_string(),
         status: CommitmentStatus::Active,
+        retry_count: 0,
+        next_retry_at: None,
         created_at: now.clone(),
         updated_at: now,
     })?;
@@ -4467,9 +5578,21 @@ pub fn approve_commitment_core(
             .p("to", "active"));
     }
     com.status = CommitmentStatus::Active;
+    com.retry_count = 0; // W2：人工再觸發＝重試歸零
+    com.next_retry_at = None;
     com.updated_at = now_rfc3339();
     let emp_id = com.owner_employee_id.clone();
     store.put_commitment(&com)?;
+    // W1：核可＝明示恢復——被停止（Paused）的員工回到 Sleeping 再喚醒；封存者拒絕。
+    if let Some(mut emp) = store.get_employee(&emp_id)? {
+        if emp.archived {
+            return Err(AppError::new("agent_os.employeeArchived").p("id", emp_id));
+        }
+        if emp.state == EmployeeState::Paused {
+            emp.state = EmployeeState::Sleeping;
+            store.put_employee(&emp)?;
+        }
+    }
     // 喚醒該員工跑承諾（同 7a 交辦後喚醒）。
     let state2 = state.clone();
     let cfg2 = cfg.clone();
@@ -4590,6 +5713,8 @@ mod recovery_tests {
             role: None,
             template_id: None,
             state: EmployeeState::Working,
+            archived: false,
+            tools: None,
             created_at: now_rfc3339(),
         };
         store.put_employee(&emp).unwrap();

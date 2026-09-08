@@ -96,6 +96,14 @@ pub struct Employee {
     pub template_id: Option<String>,
     /// 運行狀態。Phase 0 僅持久化，不驅動行為（Runtime 在 Phase 1）。
     pub state: EmployeeState,
+    /// W1（E13）：封存旗標（軟刪除）。封存後不被排程器喚醒、不收新訊息／事件；
+    /// 歷史（對話／events／artifacts）完整保留可追溯。解封即恢復。
+    #[serde(default)]
+    pub archived: bool,
+    /// W3（D-H3）：工具 allowlist（建構期閘門）。`None`＝預設集（think／search／send）；
+    /// 含 `"write-note"` 才建構寫入工具。Template 部署時抄襲。
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
     pub created_at: Timestamp,
 }
 
@@ -127,6 +135,9 @@ pub struct EmployeeTemplate {
     pub brain: BrainRef,
     #[serde(default)]
     pub role: Option<String>,
+    /// W3（D-H3）：工具 allowlist——部署（deploy）時抄襲到 Instance。
+    #[serde(default)]
+    pub tools: Option<Vec<String>>,
     pub created_at: Timestamp,
 }
 
@@ -191,6 +202,14 @@ pub struct Commitment {
     /// 完成條件——done 的定義。
     pub completion_condition: String,
     pub status: CommitmentStatus,
+    /// W2（T2 backpressure）：自動重試計數——`run_autonomous` `Errored` 後 +1，
+    /// 達 [`crate::runtime::MAX_COMMITMENT_RETRIES`] 即停止自動重排（記 `retry_exhausted`）。
+    /// Satisfied／人工再觸發時歸零。
+    #[serde(default)]
+    pub retry_count: u32,
+    /// W2：下次自動重試時刻（RFC3339；`None`＝不自動重試——健康或已耗盡）。
+    #[serde(default)]
+    pub next_retry_at: Option<Timestamp>,
     pub created_at: Timestamp,
     /// 最近一次活動時間（task 產生／狀態變更時更新）。
     #[serde(default)]
@@ -380,6 +399,8 @@ mod tests {
             role: None,
             template_id: None,
             state: EmployeeState::Created,
+            archived: false,
+            tools: None,
             created_at: "t".into(),
         };
         let v = serde_json::to_value(&emp).unwrap();
@@ -415,6 +436,8 @@ mod tests {
             title: "Track PO".into(),
             completion_condition: "goods received".into(),
             status: CommitmentStatus::Active,
+            retry_count: 0,
+            next_retry_at: None,
             created_at: "t".into(),
             updated_at: "t".into(),
         };
