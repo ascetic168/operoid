@@ -30,12 +30,12 @@ pub const TIER_NAMES: &[&str] = &["utility", "reasoning", "deep", "subagent"];
 ///
 /// 2026-08-18 曾由 glm-5.2 降為 glm-4-flash（glm-5.x 的 reasoning 輸出使
 /// gbrain think synthesis 隨機失敗，`LLM_OUTPUT_NOT_JSON` → 空輸出）。
-/// 2026-08-27 改為 glm-5.3-flash（gbrain v0.46 起 think 已相容推理模型）；
-/// 2026-08-31 回退為 glm-4-flash：gbrain 對 GLM 未視為 thinking-by-default
-/// （zhipu recipe 缺 `thinking_by_default`，上游 issue garrytan/gbrain#4727），
-/// think/chat 分別被壓在 4000/4096 output tokens，長回應易截斷；glm-4-flash
-/// 為非推理模型，不受此 model-aware cap 影響。
-pub const DEFAULT_CHAT_MODEL: &str = "zhipu:glm-4-flash";
+/// 2026-08-27 改 glm-5.3-flash；2026-08-31 曾回退 glm-4-flash（gbrain 對 GLM
+/// 未視為 thinking-by-default，think/chat 被 cap 在 4000/4096）。
+/// 2026-09-18 再改回 glm-5.3-flash：上游已修（garrytan/gbrain#4727 於
+/// gbrain 0.50.x 為 zhipu recipe 補 `thinking_by_default`），實測 think cap
+/// 16000、chat cap 32000 生效（output_tokens 精確停在 16000 驗證）。
+pub const DEFAULT_CHAT_MODEL: &str = "zhipu:glm-5.3-flash";
 
 /// ~/.gbrain/config.json 的已知欄位（其餘保留於 `raw`）。
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -303,13 +303,13 @@ mod tests {
 
     #[test]
     fn default_chat_model_is_zhipu_glm() {
-        // v0.42 起預設改用智譜 GLM；2026-08-31 回退 glm-4-flash（gbrain 對 GLM
-        // 未視為 thinking-by-default，think/chat 被 cap 在 4000/4096，見常數文檔）。
-        assert_eq!(DEFAULT_CHAT_MODEL, "zhipu:glm-4-flash");
+        // v0.42 起預設改用智譜 GLM；2026-09-18 改回 glm-5.3-flash（上游
+        // garrytan/gbrain#4727 已修 thinking_by_default，cap 恢復 16000/32000）。
+        assert_eq!(DEFAULT_CHAT_MODEL, "zhipu:glm-5.3-flash");
         // 確認它是合法的 provider:model 格式
         assert_eq!(
             split_chat_model(DEFAULT_CHAT_MODEL),
-            Some(("zhipu", "glm-4-flash"))
+            Some(("zhipu", "glm-5.3-flash"))
         );
     }
 

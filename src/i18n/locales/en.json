@@ -387,7 +387,7 @@
     "schemaV2Fail": "unify-types failed (see Operations console)",
     "mainModelTitle": "Main model (applies to all tiers)",
     "mainModelHint": "Writes chat_model + models.default/think + all four tiers to BOTH planes: config.json (file plane, takes precedence at runtime) and the DB plane via gbrain config set.",
-    "mainModelPh": "provider:model (e.g. zhipu:glm-4-flash)",
+    "mainModelPh": "provider:model (e.g. zhipu:glm-5.3-flash)",
     "apply": "Apply",
     "tierUtility": "Utility (haiku-class: drift, synopsis)",
     "tierReasoning": "Reasoning (sonnet-class: think, chat, extraction)",
