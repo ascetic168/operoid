@@ -1,6 +1,6 @@
 [package]
 name = "oserver"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 description = "Operoid 服務 binary — axum HTTP API（前後端分離計畫 P2）"
 authors = ["朱國棟 (Charlie Chu)"]

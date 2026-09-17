@@ -13,6 +13,14 @@
 
 ---
 
+## [v0.3.4] - 2026-09-18
+
+### 預設模型升回 glm-5.3-flash（解 E15）
+
+- 上游 garrytan/gbrain#4727 已於 **gbrain 0.50.x** 為 zhipu recipe 補上 `thinking_by_default`——gbrain 不再把 GLM 5.x 誤判為非 thinking 模型。實測 think/chat 的 model-aware output cap 恢復 **16000/32000**（`output_tokens` 精確停在 16000 驗證），v0.3.1 回退 glm-4-flash 時的長回應截斷（`LLM_OUTPUT_TRUNCATED`）風險解除。
+- `DEFAULT_CHAT_MODEL` 由 `zhipu:glm-4-flash` 升回 `zhipu:glm-5.3-flash`（`ocore/gbrain_config.rs`）；常數文檔與相關測試記錄完整升降級脈絡。
+- 前端同步：三語系「主模型」placeholder 與 BrainsView「新增腦」預設 chat model。
+
 ## [v0.3.3] - 2026-09-07
 
 > Harness 補強（W0–W3）——計畫 `docs/Operoid-計畫-Harness補強.md`。含兩個**行為變更**（見「⚠️」）。
