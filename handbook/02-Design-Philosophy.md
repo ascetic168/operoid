@@ -7,7 +7,7 @@ Status: Draft
 
 ## How to Use These Principles
 
-These ten principles are the constitution of Operoid. Every architectural decision should be measurable against them.
+These eleven principles are the constitution of Operoid. Every architectural decision should be measurable against them.
 
 When a proposed design conflicts with a principle, there are two acceptable outcomes:
 
@@ -120,8 +120,21 @@ Reasoning is the Employee's own, drawn from its Brain. Execution discipline — 
 
 ---
 
+## Principle 11 — The boundary is drawn by humans.
+
+An Employee may be authorized to act without case-by-case human review (delegation), but the boundary itself — which actions are exempt from human review — is always created, modified, and revoked by humans.
+
+- Authorization is granted to **action categories**, not to individual situations, and not to the system. Each category is assessed by three questions — **reversibility, blast radius, named accountability** — and assigned to one of three tiers: **human adjudication** (the Employee proposes; the human decides and signs), **fenced autonomy** (the Employee executes directly within a registered whitelist and its fences; humans sample and review), **owned autonomy** (the Employee acts routinely; a named human bears accountability and retains the stop switch).
+- **Strict by default**: any category not registered by a human falls to human adjudication. Widening requires evidence and a signature; tightening is always cheap.
+- The boundary's current position must be **reconstructable from human documents** (the registry and the event record). If the system's internal traces must be inspected to know where the boundary lies, the boundary has changed hands.
+- An Employee may not take part in deciding its own scope of authority. Metrics with a direct interest in boundary expansion — such as an "automation rate" — must never serve as performance indicators.
+
+Principle 5 and this principle operate on different axes and do not conflict: Principle 5 separates decision (Employee) from execution (Tool) *inside the machine*, and is silent about the human axis; this principle separates line-drawing (humans) from line-application (Employees) *between humans and machines*. Together they state the complete proposition: the power to draw the boundary is never delegated; the application of the boundary may be. Principle 5 guarantees that within the delegated zone there is always an accountable acting agent (Principle 2); this principle guarantees that the radius of that agent always has a human source. Just as a Tool that begins making decisions must be reconceived, an Employee that begins drawing its own boundary is no longer an Employee under mandate.
+
+---
+
 ## A Note on Technology
 
 These principles say nothing about programming languages, databases, models, or tool protocols. That is deliberate.
 
-Today's choices may be replaced. The principles must not be. When a new technology is considered, the only question that matters is whether it honors these ten principles. If it does, it fits. If it does not, no amount of convenience justifies it.
+Today's choices may be replaced. The principles must not be. When a new technology is considered, the only question that matters is whether it honors these eleven principles. If it does, it fits. If it does not, no amount of convenience justifies it.

@@ -65,8 +65,8 @@ Proposed → Active ──────────────► Satisfied → 
                 └─► spawns Tasks repeatedly throughout its life
 ```
 
-- **Proposed** — an Employee identified something worth long-term tracking during a conversation and proactively proposed it (with a completion condition). Awaits human approval. Does not run until approved (no Tasks, no wake).
-- **Active** — after human approval (or direct delegation), the Employee is working it, generating Tasks as needed.
+- **Proposed** — an Employee identified something worth long-term tracking during a conversation and proactively proposed it (with a completion condition). Awaits human approval. Does not run until approved (no Tasks, no wake). Proposals falling under an autonomous-tier category of the Action Registry may enter Active without case-by-case approval (automatic activation); every such activation is recorded as an Event and is visible to the human (Ch.20 §5).
+- **Active** — after human approval, direct delegation, or automatic activation of a registered category, the Employee is working it, generating Tasks as needed.
 - **Suspended** — deliberately paused; not forgotten.
 - **Satisfied** — the completion condition is met.
 - **Rejected** — the human declined the Employee's proposal; it ends without entering Active.

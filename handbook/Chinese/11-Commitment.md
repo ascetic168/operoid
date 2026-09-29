@@ -65,8 +65,8 @@ Proposed → Active ──────────────► Satisfied → 
                 └─► spawns Tasks repeatedly throughout its life
 ```
 
-- **Proposed（提案）** —— Employee 在對話中識別出一件該長期追蹤的事，主動提案（含完成條件）。等待人類核可。未核可前不運行（不產生 Task、不喚醒）。
-- **Active（運作中）** —— 人類核可（或直接交辦）後，Employee 正在處理它，視需要產生 Task。
+- **Proposed（提案）** —— Employee 在對話中識別出一件該長期追蹤的事，主動提案（含完成條件）。等待人類核可。未核可前不運行（不產生 Task、不喚醒）。屬登記表自動層類別的提案，可免個案核可直接進入 Active（自動啟用）；此啟用一律記為事件並對人類可見（Ch.20 §5）。
+- **Active（運作中）** —— 人類核可、直接交辦，或經登記類別自動啟用後，Employee 正在處理它，視需要產生 Task。
 - **Suspended（暫停）** —— 刻意暫停；但未被遺忘。
 - **Satisfied（已滿足）** —— 完成條件已達成。
 - **Rejected（拒絕）** —— 人類拒絕了員工的提案；未進入 Active 即終止。
