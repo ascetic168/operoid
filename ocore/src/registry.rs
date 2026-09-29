@@ -167,6 +167,10 @@ impl ActionRegistry {
     pub fn category(&self, id: &str) -> Option<&ActionCategory> {
         self.categories.iter().find(|c| c.id == id)
     }
+
+    pub fn category_mut(&mut self, id: &str) -> Option<&mut ActionCategory> {
+        self.categories.iter_mut().find(|c| c.id == id)
+    }
 }
 
 /// 類別此刻是否具自動啟用效力——查表時即時判斷（無狀態、不會漂移）：
@@ -187,6 +191,15 @@ pub fn category_auto_active(cat: &ActionCategory, now: &str) -> bool {
     };
     chrono::DateTime::parse_from_rfc3339(expiry)
         .map_or(false, |exp| exp > now_t)
+}
+
+/// 類別是否「已屆期未重簽」（expiry 存在且 ≤ now）——R3 屆期通知的判定。
+/// （效力的判定是 [`category_auto_active`]；本函式只回答「是不是因為逾期而失效」。）
+pub fn expiry_lapsed(cat: &ActionCategory, now: &str) -> bool {
+    let (Some(expiry), Ok(now_t)) = (&cat.expiry, chrono::DateTime::parse_from_rfc3339(now)) else {
+        return false;
+    };
+    chrono::DateTime::parse_from_rfc3339(expiry).map_or(false, |exp| exp <= now_t)
 }
 
 /// 關鍵詞保險絲：提案內容命中任一關鍵詞 → 強制人類通道（回傳命中的詞）。

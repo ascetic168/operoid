@@ -23,8 +23,8 @@ use crate::domain::{Commitment, Employee, EmployeeState, SqliteStore, Store};
 use crate::event_bus;
 use crate::outbound::OutboundConfig;
 use crate::runtime::{
-    build_reasoner, build_tool_ctx, load_registry_for_runs, run_commitments_for_employee,
-    run_inbox_with_stop,
+    build_reasoner, build_tool_ctx, load_registry_for_runs, record_event,
+    run_commitments_for_employee, run_inbox_with_stop, AGENT_WS,
 };
 
 /// cfg 載入器：殼層以閉包提供（桌面殼讀 tauri-plugin-store；未來 oserver 讀 operoid.toml）。
@@ -60,6 +60,7 @@ pub async fn scheduler_loop(
                 started = true;
                 let _ = scan_commitments(&state, &load_cfg, &db_path, startup).await;
                 let _ = reset_errored(&load_cfg, &db_path).await; // 復原：Error 死巷→重試
+                scan_registry_expiry(&db_path); // R3：登記表屆期通知（冪等；效力由查表即時判斷）
                 let _ = scan_inbox(&state, &load_cfg, &db_path).await;
             }
             Some(_sig) = wake_rx.recv() => { let _ = scan_inbox(&state, &load_cfg, &db_path).await; }
@@ -223,10 +224,103 @@ async fn scan_commitments(
     Ok(())
 }
 
+/// R3（Ch.20 §5.3 屆期重簽）：登記表屆期掃描——已逾期的自動層類別記 `category_lapsed`
+/// 事件提醒人類重簽。**冪等**：同 id＋同 expiry 只記一次。注意：類別的失效**不**依賴
+/// 此處（`classify_proposal` 查表即時判斷，R2）——本掃描只做通知，無狀態可漂移。
+fn scan_registry_expiry(db_path: &std::path::Path) {
+    let Some(data_dir) = db_path.parent() else {
+        return;
+    };
+    let Ok(Some(reg)) = crate::registry::load_registry(data_dir) else {
+        return; // 無登記表（或缺檔）→ 無可屆期者
+    };
+    let now = crate::domain::store::now_rfc3339();
+    let lapsed: Vec<(String, String)> = reg
+        .categories
+        .iter()
+        .filter(|c| !matches!(c.tier, crate::registry::DelegationTier::Human))
+        .filter(|c| crate::registry::expiry_lapsed(c, &now))
+        .map(|c| (c.id.clone(), c.expiry.clone().unwrap_or_default()))
+        .collect();
+    if lapsed.is_empty() {
+        return;
+    }
+    let Ok(store) = SqliteStore::open(db_path) else {
+        return;
+    };
+    let existing = store.list_events_by_employee("registry", 1000).unwrap_or_default();
+    for (id, expiry) in lapsed {
+        // 冪等鍵＝類別 id＋expiry 值：重簽（改 expiry）後再次逾期會重新通知。
+        let dup = existing.iter().any(|ev| {
+            ev.kind == "category_lapsed"
+                && ev.detail.contains(&format!("「{id}」"))
+                && ev.detail.contains(&expiry)
+        });
+        if !dup {
+            record_event(
+                &store,
+                AGENT_WS,
+                "registry",
+                "category_lapsed",
+                format!("類別「{id}」已於 {expiry} 逾期，自動啟用失效，待人類重簽（Ch.20 §5.3）"),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::{BrainRef, CommitmentStatus};
+
+    /// R3：屆期掃描——只通知逾期類別（有效類別不通知），且同 id＋同 expiry 冪等。
+    #[test]
+    fn registry_expiry_scan_notifies_once_per_expiry() {
+        let dir = std::env::temp_dir().join(format!(
+            "operoid-sched-reg-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("operoid.db");
+        std::fs::write(
+            dir.join("action-registry.json"),
+            serde_json::json!({
+                "categories": [
+                    { "id": "lapsed-cat", "description": "x",
+                      "questions": { "reversible": true, "blast_radius": "internal", "accountable": "c" },
+                      "tier": "fenced", "expiry": "2020-01-01T00:00:00Z", "evidence": "e" },
+                    { "id": "live-cat", "description": "x",
+                      "questions": { "reversible": true, "blast_radius": "internal", "accountable": "c" },
+                      "tier": "fenced", "expiry": "2099-12-31T00:00:00Z", "evidence": "e" }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        scan_registry_expiry(&db);
+        {
+            let store = SqliteStore::open(&db).unwrap();
+            let evs = store.list_events_by_employee("registry", 100).unwrap();
+            let lapsed: Vec<_> = evs.iter().filter(|e| e.kind == "category_lapsed").collect();
+            assert_eq!(lapsed.len(), 1, "只通知逾期類別（有效類別不通知）");
+            assert!(lapsed[0].detail.contains("lapsed-cat"));
+        }
+        scan_registry_expiry(&db);
+        let store = SqliteStore::open(&db).unwrap();
+        let count = store
+            .list_events_by_employee("registry", 100)
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "category_lapsed")
+            .count();
+        assert_eq!(count, 1, "同 id＋同 expiry 冪等：不重複記");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn emp(state: EmployeeState, archived: bool) -> Employee {
         Employee {

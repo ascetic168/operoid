@@ -162,7 +162,7 @@ fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory
 }
 
 /// 記錄一則生命週期 Event（Handbook Ch.14，Phase 6d 輕量）。best-effort：記錄失敗不中斷循環。
-fn record_event(
+pub(crate) fn record_event(
     store: &dyn Store,
     workspace_id: &str,
     employee_id: &str,
@@ -1110,6 +1110,43 @@ pub fn apply_retry_after_outcome(
         _ => {} // Stalled（非錯誤）／Cancelled（人為）——不動重試欄位。
     }
     Ok(matches!(outcome, AutonomousOutcome::Errored { .. }))
+}
+
+/// R3（Ch.20 §5.3 事故自動收縮）：自動啟用的承諾重試耗盡時，所屬類別**連坐凍結**——
+/// tier 降回人裁決層（收緊方向，V2 免證據即可），evidence 記自動凍結原因；記
+/// `category_frozen` 事件。重新放寬需人工補齊 V1 三件套（具名／未來屆期／新證據）。
+/// 一次事故，收縮的是線，不是只停一筆。承諾不帶 `category_id`（人類交辦／核可）→ 不動。
+fn freeze_category_on_exhaustion(db_path: &std::path::Path, store: &dyn Store, commitment: &Commitment) {
+    let Some(cat_id) = &commitment.category_id else {
+        return;
+    };
+    let Some(data_dir) = db_path.parent() else {
+        return;
+    };
+    let Ok(Some(mut reg)) = crate::registry::load_registry(data_dir) else {
+        return;
+    };
+    let Some(cat) = reg.category_mut(cat_id) else {
+        return;
+    };
+    if matches!(cat.tier, crate::registry::DelegationTier::Human) {
+        return; // 已在人裁決層，無可凍結
+    }
+    cat.tier = crate::registry::DelegationTier::Human;
+    cat.evidence = Some(format!("auto: retry_exhausted of {}", commitment.id));
+    match crate::registry::save_registry(data_dir, reg) {
+        Ok(_) => record_event(
+            store,
+            &commitment.workspace_id,
+            "registry",
+            "category_frozen",
+            format!(
+                "類別「{cat_id}」因承諾「{}」連續失敗耗盡重試，自動凍結（降回人裁決層）；重新放寬需重簽",
+                commitment.title
+            ),
+        ),
+        Err(e) => eprintln!("[runtime] 連坐凍結類別 {cat_id} 失敗（承諾已照常停排）: {e}"),
+    }
 }
 
 /// PLAN 重複偵測上限：連續 `MAX_REPEAT` 次相同 next_query 才判 Stalled（給 LLM 換角度的機會，
@@ -3235,6 +3272,73 @@ mod tests {
             !prompt.contains("lapsed-cat"),
             "過期類別不得出現在清單（查表時即時失效）"
         );
+    }
+
+    /// R3：連坐凍結——自動啟用的承諾重試耗盡 → 所屬類別降回人裁決層（登記表檔案
+    /// 改寫＋category_frozen 事件）；無 category_id（人類交辦/核可）的承諾不動登記表。
+    #[test]
+    fn freeze_category_on_exhaustion_downgrades_tier() {
+        let dir = test_dir();
+        let db = dir.join("operoid.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        std::fs::write(
+            dir.join("action-registry.json"),
+            serde_json::json!({
+                "version": 1,
+                "categories": [{
+                    "id": "internal-report", "description": "x",
+                    "questions": { "reversible": true, "blast_radius": "internal", "accountable": "charlie" },
+                    "tier": "fenced", "expiry": "2099-12-31T00:00:00Z", "evidence": "JOURNEY.md E-test"
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let com = Commitment {
+            id: "c1".into(),
+            workspace_id: "ws".into(),
+            owner_employee_id: emp_id,
+            title: "每日產線摘要".into(),
+            completion_condition: "每天彙整".into(),
+            status: CommitmentStatus::Active,
+            retry_count: 3,
+            next_retry_at: None,
+            created_at: "t".into(),
+            updated_at: "t".into(),
+            category_id: Some("internal-report".into()),
+            gate_reason: None,
+            review_pending: false,
+        };
+        store.put_commitment(&com).unwrap();
+
+        freeze_category_on_exhaustion(&db, &store, &com);
+
+        let reg: crate::registry::ActionRegistry =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("action-registry.json")).unwrap())
+                .unwrap();
+        let cat = reg.category("internal-report").unwrap();
+        assert_eq!(
+            cat.tier,
+            crate::registry::DelegationTier::Human,
+            "連坐凍結降回人裁決層"
+        );
+        assert_eq!(cat.evidence.as_deref(), Some("auto: retry_exhausted of c1"), "凍結證據留痕");
+        let evs = store.list_events_by_employee("registry", 10).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "category_frozen"));
+        let version_after_freeze = reg.version;
+
+        // 無 category_id（人類交辦/核可的承諾）→ 不動登記表（version 不變）。
+        let mut human_com = com.clone();
+        human_com.id = "c2".into();
+        human_com.category_id = None;
+        store.put_commitment(&human_com).unwrap();
+        freeze_category_on_exhaustion(&db, &store, &human_com);
+        let reg2: crate::registry::ActionRegistry =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("action-registry.json")).unwrap())
+                .unwrap();
+        assert_eq!(reg2.version, version_after_freeze, "無類別的承諾不動登記表");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// E12：外發未啟用 → SendTool 回報「外發未啟用」進上下文，員工改以 finish 留內部回覆；
@@ -5455,7 +5559,15 @@ pub async fn run_commitments_for_employee(
                         eprintln!("[runtime] {employee_id} 承諾 {} 卡住：{reason}", com.id)
                     }
                     AutonomousOutcome::Errored { detail } => {
-                        eprintln!("[runtime] {employee_id} 承諾 {} 錯誤：{detail}（已排自動重試）", com.id)
+                        eprintln!("[runtime] {employee_id} 承諾 {} 錯誤：{detail}（已排自動重試）", com.id);
+                        // R3（Ch.20 §5.3 事故自動收縮）：重試耗盡且承諾屬登記類別 → 連坐凍結該類別。
+                        if let Ok(Some(latest)) = store.get_commitment(&com.id) {
+                            if latest.retry_count >= MAX_COMMITMENT_RETRIES
+                                && latest.next_retry_at.is_none()
+                            {
+                                freeze_category_on_exhaustion(db_path, &store, &latest);
+                            }
+                        }
                     }
                     AutonomousOutcome::Cancelled { .. } => {
                         eprintln!("[runtime] {employee_id} 被人工停止，跳過剩餘承諾");
