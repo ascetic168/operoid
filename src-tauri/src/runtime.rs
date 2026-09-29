@@ -273,9 +273,11 @@ pub async fn agent_run<R: tauri::Runtime>(
     let _guard = state
         .try_acquire(&employee_id)
         .ok_or_else(|| AppError::new("agent_os.employeeBusy").p("id", &employee_id))?;
-    let store = SqliteStore::open(agent_db_path(&app)?)?;
+    let db_path = agent_db_path(&app)?;
+    let store = SqliteStore::open(&db_path)?;
 
-    let (tool, ctx) = build_tool_ctx(&cfg, &store, &employee_id)?;
+    let registry = load_registry_for_runs(&db_path, &store);
+    let (tool, ctx) = build_tool_ctx(&cfg, &store, &employee_id, registry)?;
     let result = run_cycle(
         &employee_id,
         query,
@@ -481,6 +483,7 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
+            registry: None,
         });
     }
 
@@ -556,7 +559,8 @@ pub async fn agent_run_task<R: tauri::Runtime>(
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
-    let store = SqliteStore::open(agent_db_path(&app)?)?;
+    let db_path = agent_db_path(&app)?;
+    let store = SqliteStore::open(&db_path)?;
     let mut task = store
         .get_task(&task_id)?
         .ok_or_else(|| AppError::new("agent_os.taskNotFound").p("id", &task_id))?;
@@ -564,7 +568,8 @@ pub async fn agent_run_task<R: tauri::Runtime>(
     let _guard = state
         .try_acquire(&task.owner_employee_id)
         .ok_or_else(|| AppError::new("agent_os.employeeBusy").p("id", &task.owner_employee_id))?;
-    let (tool, ctx) = build_tool_ctx(&cfg, &store, &task.owner_employee_id)?;
+    let registry = load_registry_for_runs(&db_path, &store);
+    let (tool, ctx) = build_tool_ctx(&cfg, &store, &task.owner_employee_id, registry)?;
     let result = run_cycle(
         &task.owner_employee_id,
         task.input.clone(),

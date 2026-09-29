@@ -59,6 +59,9 @@ pub struct ToolCtx {
     pub allowed_tools: std::collections::HashSet<String>,
     /// W3（D-H2）：員工產出根目錄（write-note 沙箱＝`cfg.employee_output_path`）。
     pub employee_output_root: std::path::PathBuf,
+    /// 動作類別登記表（Ch.20 §5；`build_tool_ctx` 載入，propose 分類與圍欄執行查此表）。
+    /// `None`＝無登記表——從嚴預設：全部提案走人類核可。
+    pub registry: Option<std::sync::Arc<crate::registry::ActionRegistry>>,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -70,6 +73,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("mcp", &self.mcp.is_some())
             .field("allowed_tools", &self.allowed_tools)
             .field("employee_output_root", &self.employee_output_root)
+            .field("registry", &self.registry.is_some())
             .finish()
     }
 }

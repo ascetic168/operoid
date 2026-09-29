@@ -191,12 +191,14 @@ fn record_event(
 
 /// 建立員工主動提案的承諾（Proposed），或重用既有的同標題待核可提案（去重）。
 /// 供 `run_inbox` 使用；回傳 commitment id（供 Out Message 帶上，讓聊天頁顯示核可鈕）。
+/// `gate_reason`：為何進人類通道（`classify_proposal` 的機讀原因；核可卡顯示用）。
 fn create_proposed_commitment(
     store: &dyn Store,
     workspace_id: &str,
     employee_id: &str,
     title: &str,
     completion_condition: &str,
+    gate_reason: Option<String>,
 ) -> anyhow::Result<String> {
     let existing = store.list_commitments(workspace_id)?;
     // 去重（缺陷 2）：同 owner + 同標題已有一筆 Proposed → 重用之，更新條件與時間。
@@ -205,6 +207,7 @@ fn create_proposed_commitment(
     }) {
         let mut updated = dup.clone();
         updated.completion_condition = completion_condition.to_string();
+        updated.gate_reason = gate_reason;
         updated.updated_at = now_rfc3339();
         store.put_commitment(&updated)?;
         return Ok(dup.id.clone());
@@ -219,15 +222,66 @@ fn create_proposed_commitment(
         title: title.to_string(),
         completion_condition: completion_condition.to_string(),
         status: CommitmentStatus::Proposed,
-        category_id: None,
-        gate_reason: None,
-        review_pending: false,
         retry_count: 0,
         next_retry_at: None,
         created_at: now_rfc3339(),
         updated_at: now_rfc3339(),
+        category_id: None,
+        gate_reason,
+        review_pending: false,
     })?;
     record_event(store, workspace_id, employee_id, "proposed", title.to_string());
+    Ok(id)
+}
+
+/// 建立員工**自動啟用**的承諾（Ch.20 §5.1 圍欄自動層／有主自動層；Ch.11 §5 自動啟用
+/// 路徑）：`classify_proposal` 判 Auto → 跳過 Proposed 直接 Active。去重同提案路徑
+/// （同 owner+title 已有 Active → 重用更新）。每次啟用記 `auto_activated` 事件（對人類
+/// 可見——watch「自動啟用」區段與 Events 頁）；依類別 `sampling_rate` 決定 `review_pending`
+/// （R6a 抽審旗標）。回傳 commitment id（供 Out Message 帶上——不掛核可鈕）。
+fn create_fenced_commitment(
+    store: &dyn Store,
+    workspace_id: &str,
+    employee_id: &str,
+    title: &str,
+    completion_condition: &str,
+    category_id: &str,
+    sampling_rate: f32,
+) -> anyhow::Result<String> {
+    let existing = store.list_commitments(workspace_id)?;
+    if let Some(dup) = existing.iter().find(|c| {
+        c.owner_employee_id == employee_id && c.title == title && c.status == CommitmentStatus::Active
+    }) {
+        let mut updated = dup.clone();
+        updated.completion_condition = completion_condition.to_string();
+        updated.updated_at = now_rfc3339();
+        store.put_commitment(&updated)?;
+        return Ok(dup.id.clone());
+    }
+    let ids: Vec<String> = existing.iter().map(|c| c.id.clone()).collect();
+    let id = id_from_name(title, &ids);
+    store.put_commitment(&Commitment {
+        id: id.clone(),
+        workspace_id: workspace_id.to_string(),
+        owner_employee_id: employee_id.to_string(),
+        title: title.to_string(),
+        completion_condition: completion_condition.to_string(),
+        status: CommitmentStatus::Active,
+        retry_count: 0,
+        next_retry_at: None,
+        created_at: now_rfc3339(),
+        updated_at: now_rfc3339(),
+        category_id: Some(category_id.to_string()),
+        gate_reason: None,
+        review_pending: crate::registry::sampled_for_review(&id, sampling_rate),
+    })?;
+    record_event(
+        store,
+        workspace_id,
+        employee_id,
+        "auto_activated",
+        format!("承諾「{title}」經登記類別 {category_id} 自動啟用（Ch.20 §5）"),
+    );
     Ok(id)
 }
 
@@ -568,23 +622,40 @@ fn now_line() -> String {
 /// （think→finish 或直接 finish）；複雜訊息可查多寄多＋順帶提案。用盡 → best-effort 視同 finish。
 const MAX_TURN_STEPS: u32 = 6;
 
-/// W3：對話系統 prompt——具 write-note 權限時追加 write 動作說明（allowlist 閘門）。
+/// 對話系統 prompt：基礎 [`TURN_SYSTEM`] ＋ write 動作說明（allowlist 閘門）＋
+/// 已授權類別清單（Ch.20 §5——登記表有效的 Fenced/Owned 類別；員工看不到的類別
+/// 就聲稱不了，封閉白名單的廉價實現）。
 fn turn_system_prompt(ctx: &ToolCtx) -> String {
+    let mut prompt = String::from(TURN_SYSTEM);
     if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
-        format!(
-            "{TURN_SYSTEM}
-  {{\"action\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"}} —— 把一份完整產出寫成筆記檔（落於你的專屬產出目錄，供人類審閱）。"
-        )
-    } else {
-        TURN_SYSTEM.to_string()
+        prompt.push_str(
+            "\n  {\"action\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"} —— 把一份完整產出寫成筆記檔（落於你的專屬產出目錄，供人類審閱）。",
+        );
     }
+    if let Some(reg) = &ctx.registry {
+        let now = now_rfc3339();
+        let active: Vec<String> = reg
+            .categories
+            .iter()
+            .filter(|c| crate::registry::category_auto_active(c, &now))
+            .map(|c| format!("「{}」（{}）", c.id, c.description))
+            .collect();
+        if !active.is_empty() {
+            prompt.push_str(&format!(
+                "\n  propose 的 category 欄可填以下已授權類別之一：{}。\
+                 無適用類別則省略 category——提案將送人類核可。",
+                active.join("、")
+            ));
+        }
+    }
+    prompt
 }
 
 const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外部訊息。你可以連續多步行動，每步只回一個 JSON 動作，不附加其他文字：\n\
   {\"action\": \"search\", \"query\": \"...\"} —— 快速檢索知識圖譜的相關頁面（無合成、省時；查資料/找原文時優先用）。\n\
   {\"action\": \"think\", \"query\": \"...\"} —— 對知識圖譜做多跳引用合成（需要綜合結論/依據才回答時使用）。\n\
   {\"action\": \"send\", \"to\": \"...\"（可省，預設回覆喚醒你的這則訊息）, \"text\": \"要外發的訊息全文\"} —— 把訊息寄給外部對象（經 bridge；內部對話也會留紀錄）。\n\
-  {\"action\": \"propose\", \"title\": \"承諾標題\", \"condition\": \"完成條件\"} —— 提案一個長期承諾，待人類核可。\n\
+  {\"action\": \"propose\", \"title\": \"承諾標題\", \"condition\": \"完成條件\", \"category\": \"類別id（可選）\"} —— 提案一個長期承諾；屬已授權類別者可免核可自動啟用，其餘待人類核可。\n\
   {\"action\": \"finish\", \"text\": \"給人類的最終回覆\"（可省）} —— 結束本回合。\n\
   判斷準則：查資料用 search（快、省）；需要跨頁綜合結論才 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
   回覆人類一個回合只需一次（send 或 finish 擇一，不要重複回覆同一對象）；\
@@ -854,15 +925,44 @@ async fn run_conversational_turn(
                     .get("condition")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                let claimed = action.get("category").and_then(|v| v.as_str());
                 if title.is_empty() || condition.is_empty() {
                     steps.push("[propose] 失敗：title 與 condition 皆必填。".into());
                     continue;
                 }
-                let cid = create_proposed_commitment(
-                    store, &workspace_id, employee_id, title, condition,
-                )?;
-                proposed_commitment_id = Some(cid.clone());
-                steps.push(format!("[propose] 已提案承諾（待核可）：{title}"));
+                // 分類查表（Ch.20 §5.4）：Auto → 自動啟用（記事件、全數可見）；
+                // Human → 現行 Proposed 路徑（gate_reason 記錄為何進人類通道）。
+                let now = now_rfc3339();
+                match crate::registry::classify_proposal(
+                    ctx.registry.as_deref(),
+                    title,
+                    condition,
+                    claimed,
+                    &now,
+                ) {
+                    crate::registry::GateDecision::Auto { category_id } => {
+                        let rate = ctx
+                            .registry
+                            .as_ref()
+                            .and_then(|r| r.category(&category_id))
+                            .map(|c| c.sampling_rate)
+                            .unwrap_or(1.0);
+                        create_fenced_commitment(
+                            store, &workspace_id, employee_id, title, condition,
+                            &category_id, rate,
+                        )?;
+                        steps.push(format!(
+                            "[propose] 已自動啟用承諾（類別 {category_id}）：{title}"
+                        ));
+                    }
+                    crate::registry::GateDecision::Human { reason } => {
+                        let cid = create_proposed_commitment(
+                            store, &workspace_id, employee_id, title, condition, Some(reason),
+                        )?;
+                        proposed_commitment_id = Some(cid.clone());
+                        steps.push(format!("[propose] 已提案承諾（待核可）：{title}"));
+                    }
+                }
             }
             _ => {
                 // finish（含未知 action 的 fail-safe）：有 text → 寫最終 Out Message。
@@ -1964,10 +2064,13 @@ pub fn agent_db_path_in(data_dir: &std::path::Path) -> std::path::PathBuf {
 
 /// 為某員工解析其腦並建構（GbrainToolset, ToolCtx）。`agent_run` 與排程器共用。
 /// transport=mcp（預設）時 ctx 注入 MCP client；exe 仍在 ctx 供 fallback。
+/// `registry`：動作類別登記表（Ch.20 §5）——呼叫端經 [`load_registry_for_runs`]
+/// 載入（每次 run 重新載入＝熱生效）。
 pub fn build_tool_ctx(
     cfg: &app_config::AppConfig,
     store: &SqliteStore,
     employee_id: &str,
+    registry: Option<std::sync::Arc<crate::registry::ActionRegistry>>,
 ) -> Result<(GbrainToolset, ToolCtx), AppError> {
     let emp = store
         .get_employee(employee_id)?
@@ -2002,8 +2105,36 @@ pub fn build_tool_ctx(
             mcp,
             allowed_tools,
             employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
+            registry,
         },
     ))
+}
+
+/// 載入登記表供 run 路徑使用（每次 run 重新載入＝熱生效，與 CfgLoader 同語意）。
+/// 載入失敗 → **fails closed** 視同 `None`（全部提案走人類核可），並記
+/// `registry_invalid` 事件（冪等：同 detail 已存在則不重複記）。
+pub fn load_registry_for_runs(
+    db_path: &std::path::Path,
+    store: &dyn Store,
+) -> Option<std::sync::Arc<crate::registry::ActionRegistry>> {
+    let Some(data_dir) = db_path.parent() else {
+        return None;
+    };
+    match crate::registry::load_registry(data_dir) {
+        Ok(reg) => reg.map(std::sync::Arc::new),
+        Err(e) => {
+            let detail = format!("登記表載入失敗，提案全部走人類核可（fails closed）：{e}");
+            let dup = store
+                .list_events_by_employee("registry", 1000)
+                .unwrap_or_default()
+                .iter()
+                .any(|ev| ev.kind == "registry_invalid" && ev.detail == detail);
+            if !dup {
+                record_event(store, AGENT_WS, "registry", "registry_invalid", detail);
+            }
+            None
+        }
+    }
 }
 
 // ───────────────── Reasoner（推理器，Phase 6b）─────────────────
@@ -2399,6 +2530,7 @@ mod tests {
             employee_output_root: std::path::PathBuf::from(
                 std::env::temp_dir(),
             ),
+            registry: None,
         }
     }
 
@@ -2944,6 +3076,165 @@ mod tests {
             "最終回覆應掛提案 id（核可鈕）"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R2：測試用登記表（一個有效 fenced 類別；sampling_rate 預設 1.0＝全數抽審）。
+    fn registry_fenced_internal_report() -> std::sync::Arc<crate::registry::ActionRegistry> {
+        std::sync::Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "version": 1,
+                "categories": [{
+                    "id": "internal-report",
+                    "description": "內部定期報告／彙整（不含對外寄送）",
+                    "questions": { "reversible": true, "blast_radius": "internal", "accountable": "charlie" },
+                    "tier": "fenced",
+                    "expiry": "2099-12-31T00:00:00Z",
+                    "evidence": "JOURNEY.md E-test"
+                }]
+            }))
+            .unwrap(),
+        )
+    }
+
+    /// R2（Ch.20 §5 自動啟用路徑）：propose 命中登記的 fenced 類別 → 跳過 Proposed
+    /// 直接 Active（帶 category_id、review_pending 依 rate=1.0 抽中），記 auto_activated
+    /// 事件；Out Message 不掛核可鈕（proposed_commitment_id 為 None）。
+    #[tokio::test]
+    async fn conversational_propose_auto_activates_via_registry() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "每天幫我彙整產線狀況。".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let mut c = ctx();
+        c.registry = Some(registry_fenced_internal_report());
+        let tool = StubTool::new("證據");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"propose","title":"每日產線摘要","condition":"每天彙整產線狀況","category":"internal-report"}"#,
+            r#"{"action":"finish","text":"已開始每日彙整。"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &c, &store, &outbound_disabled())
+            .await
+            .unwrap();
+
+        let coms = store.list_commitments("ws").unwrap();
+        assert_eq!(coms.len(), 1);
+        assert_eq!(
+            coms[0].status,
+            CommitmentStatus::Active,
+            "命中 fenced 類別 → 免核可直接 Active"
+        );
+        assert_eq!(coms[0].category_id.as_deref(), Some("internal-report"));
+        assert!(coms[0].review_pending, "rate=1.0 → 全數抽審（R6a 旗標）");
+        assert_eq!(coms[0].gate_reason, None);
+        let evs = store.list_events_by_employee(&emp_id, 10).unwrap();
+        assert!(
+            evs.iter().any(|e| e.kind == "auto_activated"),
+            "自動啟用須記事件（對人類可見）"
+        );
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].proposed_commitment_id, None, "自動啟用不掛核可鈕");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R2：保險絲凌駕類別自評——claimed 合法但 title 含保險絲關鍵詞 → Proposed
+    /// （gate_reason = fuse:{kw}），照舊掛核可鈕。
+    #[tokio::test]
+    async fn conversational_propose_fuse_keyword_gates_to_human() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "客戶那件事幫我追蹤。".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let mut c = ctx();
+        c.registry = Some(registry_fenced_internal_report());
+        let tool = StubTool::new("證據");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"propose","title":"追蹤客戶問題","condition":"結案為止","category":"internal-report"}"#,
+            r#"{"action":"finish","text":"已提案，請核可。"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &c, &store, &outbound_disabled())
+            .await
+            .unwrap();
+
+        let coms = store.list_commitments("ws").unwrap();
+        assert_eq!(coms.len(), 1);
+        assert_eq!(coms[0].status, CommitmentStatus::Proposed, "保險絲觸發 → 人類通道");
+        assert_eq!(
+            coms[0].gate_reason.as_deref(),
+            Some("fuse:客戶"),
+            "核可卡原因行的資料來源"
+        );
+        assert_eq!(coms[0].category_id, None);
+        let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+        assert_eq!(
+            msgs[0].proposed_commitment_id.as_deref(),
+            Some(coms[0].id.as_str()),
+            "人類通道照舊掛核可鈕"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R2：prompt 只列**有效**的自動層類別（員工看不到的類別就聲稱不了——封閉白名單）。
+    #[test]
+    fn turn_system_prompt_lists_only_active_categories() {
+        let mut c = ctx();
+        assert!(
+            !turn_system_prompt(&c).contains("category 欄可填"),
+            "無登記表 → 不附清單（全部走人類核可）"
+        );
+        let reg: crate::registry::ActionRegistry = serde_json::from_value(serde_json::json!({
+            "categories": [
+                {
+                    "id": "internal-report", "description": "內部定期報告",
+                    "questions": { "reversible": true, "blast_radius": "internal", "accountable": "charlie" },
+                    "tier": "fenced", "expiry": "2099-12-31T00:00:00Z", "evidence": "e"
+                },
+                {
+                    "id": "lapsed-cat", "description": "已逾期類別",
+                    "questions": { "reversible": true, "blast_radius": "internal", "accountable": "charlie" },
+                    "tier": "fenced", "expiry": "2020-01-01T00:00:00Z", "evidence": "e"
+                }
+            ]
+        }))
+        .unwrap();
+        c.registry = Some(std::sync::Arc::new(reg));
+        let prompt = turn_system_prompt(&c);
+        assert!(prompt.contains("category 欄可填"));
+        assert!(prompt.contains("internal-report"));
+        assert!(
+            !prompt.contains("lapsed-cat"),
+            "過期類別不得出現在清單（查表時即時失效）"
+        );
     }
 
     /// E12：外發未啟用 → SendTool 回報「外發未啟用」進上下文，員工改以 finish 留內部回覆；
@@ -4066,6 +4357,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            registry: None,
         };
         let res = run_cycle(
             &emp_id,
@@ -4181,6 +4473,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            registry: None,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -4271,7 +4564,7 @@ mod tests {
             })
             .unwrap();
 
-        let (tool, ctx) = build_tool_ctx(&cfg, &store, &emp_id).expect("build_tool_ctx");
+        let (tool, ctx) = build_tool_ctx(&cfg, &store, &emp_id, None).expect("build_tool_ctx");
         let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.llm_concurrency));
         let reasoner = build_reasoner(&cfg, &store, &emp_id, permits, &db)
             .expect("build_reasoner（缺 LLM API key？檢查作用中腦 chat_model 對應之環境變數）");
@@ -4631,6 +4924,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            registry: None,
         };
 
         let dir = test_dir();
@@ -4961,6 +5255,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            registry: None,
         };
 
         let dir = test_dir();
@@ -5101,7 +5396,8 @@ pub async fn run_commitments_for_employee(
             return Ok(());
         }
     }
-    let (knowledge, ctx) = match build_tool_ctx(cfg, &store, employee_id) {
+    let registry = load_registry_for_runs(db_path, &store);
+    let (knowledge, ctx) = match build_tool_ctx(cfg, &store, employee_id, registry) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("[runtime] build_tool_ctx({employee_id}) failed: {e}");

@@ -197,6 +197,67 @@ pub fn fuse_hit<'a>(reg: &'a ActionRegistry, text: &str) -> Option<&'a str> {
         .map(|kw| kw.as_str())
 }
 
+// ───────────────── 分類（執行期適用線；R2） ─────────────────
+
+/// 提案分類決策（Ch.20 §5.4 執行期適用——員工答題、不出題）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum GateDecision {
+    /// 自動啟用：命中登記且有效的自動層類別（Ch.11 §5 自動啟用路徑）。
+    Auto { category_id: String },
+    /// 送人類核可：附機讀原因（存入 `Commitment.gate_reason`）——
+    /// `unclassified`／`fuse:{關鍵詞}`／`expired:{類別}`／`human_tier:{類別}`。
+    Human { reason: String },
+}
+
+/// 分類決策樹（純函式；R6b 植入演練直接呼叫）。順序即優先級：
+/// 保險絲凌駕類別自評（確定性的保守解析，不依賴對分類的信任）；其餘按封閉白名單——
+/// 查無、未聲稱、Human 層、逾期，一律送人類通道（條件二保守解析＋條件四新穎性上送）。
+pub fn classify_proposal(
+    reg: Option<&ActionRegistry>,
+    title: &str,
+    condition: &str,
+    claimed_category: Option<&str>,
+    now: &str,
+) -> GateDecision {
+    let Some(reg) = reg else {
+        return GateDecision::Human { reason: "unclassified".into() };
+    };
+    let text = format!("{title}\n{condition}");
+    if let Some(kw) = fuse_hit(reg, &text) {
+        return GateDecision::Human { reason: format!("fuse:{kw}") };
+    }
+    let Some(claimed) = claimed_category.map(str::trim).filter(|s| !s.is_empty()) else {
+        return GateDecision::Human { reason: "unclassified".into() };
+    };
+    let Some(cat) = reg.category(claimed) else {
+        return GateDecision::Human { reason: "unclassified".into() };
+    };
+    if cat.tier == DelegationTier::Human {
+        return GateDecision::Human { reason: format!("human_tier:{claimed}") };
+    }
+    if !category_auto_active(cat, now) {
+        return GateDecision::Human { reason: format!("expired:{claimed}") };
+    }
+    GateDecision::Auto { category_id: claimed.to_string() }
+}
+
+/// 抽審取樣（R6a）：以承諾 id 的 FNV-1a 雜湊**確定性**判定——同一 id 永遠同一結果，
+/// 事後可稽核「為何這筆被抽中」。`rate >= 1.0` 恆抽（全數，預設）、`<= 0.0` 恆免。
+pub fn sampled_for_review(commitment_id: &str, sampling_rate: f32) -> bool {
+    if sampling_rate >= 1.0 {
+        return true;
+    }
+    if sampling_rate <= 0.0 {
+        return false;
+    }
+    let mut hash: u32 = 0x811c_9dc5;
+    for b in commitment_id.as_bytes() {
+        hash ^= u32::from(*b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    (hash % 10_000) as f32 / 10_000.0 < sampling_rate
+}
+
 // ───────────────── 載入／存檔 ─────────────────
 
 /// 載入登記表。缺檔 → `Ok(None)`（從嚴預設）；解析失敗 → Err（呼叫端 fails closed
@@ -486,5 +547,89 @@ mod tests {
         assert_eq!(fuse_hit(&reg, "每日站會彙整"), None, "內部彙整不觸發保險絲");
         assert_eq!(fuse_hit(&reg, "回覆客戶詢問"), Some("客戶"));
         assert_eq!(fuse_hit(&reg, "刪除暫存"), Some("刪除"));
+    }
+
+    // ── 分類決策樹（R2；封閉白名單——查無即人類通道） ──
+
+    fn classify(reg: Option<&ActionRegistry>, title: &str, claimed: Option<&str>) -> GateDecision {
+        classify_proposal(reg, title, "完成條件", claimed, "2026-09-29T00:00:00Z")
+    }
+
+    #[test]
+    fn classify_without_registry_gates_everything() {
+        assert_eq!(
+            classify(None, "每日產線摘要", Some("internal-report")),
+            GateDecision::Human { reason: "unclassified".into() },
+            "無登記表＝從嚴預設：全部走人類核可"
+        );
+    }
+
+    #[test]
+    fn classify_unclaimed_or_unknown_gates_to_human() {
+        let reg = registry_with(vec![fenced("internal-report")]);
+        assert_eq!(
+            classify(Some(&reg), "每日產線摘要", None),
+            GateDecision::Human { reason: "unclassified".into() },
+            "未聲稱類別 → 人類通道"
+        );
+        assert_eq!(
+            classify(Some(&reg), "每日產線摘要", Some("  ")),
+            GateDecision::Human { reason: "unclassified".into() },
+            "空白類別視同未聲稱"
+        );
+        assert_eq!(
+            classify(Some(&reg), "每日產線摘要", Some("no-such-cat")),
+            GateDecision::Human { reason: "unclassified".into() },
+            "白名單是封閉集合——查無即未授權（新穎性上送）"
+        );
+    }
+
+    #[test]
+    fn classify_human_tier_and_expired_gates() {
+        let mut lapsed = fenced("old-cat");
+        lapsed.expiry = Some("2020-01-01T00:00:00Z".into());
+        let human: ActionCategory =
+            serde_json::from_value(serde_json::json!({ "id": "spend", "tier": "human" })).unwrap();
+        let reg = registry_with(vec![fenced("internal-report"), lapsed, human]);
+        assert_eq!(
+            classify(Some(&reg), "每日產線摘要", Some("spend")),
+            GateDecision::Human { reason: "human_tier:spend".into() }
+        );
+        assert_eq!(
+            classify(Some(&reg), "每日產線摘要", Some("old-cat")),
+            GateDecision::Human { reason: "expired:old-cat".into() },
+            "逾期類別 → 人類通道（屆期未重簽自動失效）"
+        );
+        assert_eq!(
+            classify(Some(&reg), "每日產線摘要", Some("internal-report")),
+            GateDecision::Auto { category_id: "internal-report".into() }
+        );
+    }
+
+    #[test]
+    fn classify_fuse_overrides_valid_claim() {
+        let reg = registry_with(vec![fenced("internal-report")]);
+        assert_eq!(
+            classify(Some(&reg), "回覆客戶詢問的彙整", Some("internal-report")),
+            GateDecision::Human { reason: "fuse:客戶".into() },
+            "保險絲凌駕類別自評——確定性的保守解析"
+        );
+    }
+
+    #[test]
+    fn sampled_for_review_is_deterministic_with_boundaries() {
+        assert!(sampled_for_review("x", 1.0), "rate=1.0 恆抽（全數）");
+        assert!(sampled_for_review("x", 1.5), "超界上界同樣恆抽");
+        assert!(!sampled_for_review("x", 0.0), "rate=0 恆免");
+        assert!(!sampled_for_review("x", -0.1));
+        assert_eq!(
+            sampled_for_review("commit-42", 0.5),
+            sampled_for_review("commit-42", 0.5),
+            "同一 id 永遠同一判定（可稽核）"
+        );
+        let mixed = (0..50)
+            .map(|i| sampled_for_review(&format!("c{i}"), 0.5))
+            .collect::<Vec<_>>();
+        assert!(mixed.iter().any(|b| *b) && mixed.iter().any(|b| !*b), "0.5 應兩種結果皆出現");
     }
 }

@@ -23,7 +23,8 @@ use crate::domain::{Commitment, Employee, EmployeeState, SqliteStore, Store};
 use crate::event_bus;
 use crate::outbound::OutboundConfig;
 use crate::runtime::{
-    build_reasoner, build_tool_ctx, run_commitments_for_employee, run_inbox_with_stop,
+    build_reasoner, build_tool_ctx, load_registry_for_runs, run_commitments_for_employee,
+    run_inbox_with_stop,
 };
 
 /// cfg 載入器：殼層以閉包提供（桌面殼讀 tauri-plugin-store；未來 oserver 讀 operoid.toml）。
@@ -120,6 +121,7 @@ async fn scan_inbox(
     let permits = state.llm_permits();
     let cfg = &cfg;
     let store = &store;
+    let registry = load_registry_for_runs(db_path, store);
     let outbound = OutboundConfig {
         url: cfg.event_outbound_url.clone(),
         secret: cfg.event_outbound_secret.clone(),
@@ -130,9 +132,10 @@ async fn scan_inbox(
         let permits = Arc::clone(&permits);
         let outbound = outbound.clone();
         let cancel = cancel.clone();
+        let registry = registry.clone();
         Some(async move {
             let _guard = guard; // 釋放於此 future 完成（含錯誤路徑）
-            if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id) {
+            if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id, registry) {
                 // Reasoner 為可選：有則訊息走對話回合，無則退回 gbrain 單發（守 6c 行為）。
                 let reasoner = match build_reasoner(cfg, store, &id, permits, db_path) {
                     Ok(r) => Some(r),

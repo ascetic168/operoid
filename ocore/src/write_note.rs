@@ -179,6 +179,7 @@ mod tests {
             chat_model: None,
             mcp: None,
             employee_output_root: std::path::PathBuf::from("/tmp"),
+            registry: None,
             allowed_tools: Default::default(),
         }
     }
