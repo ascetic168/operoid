@@ -13,6 +13,34 @@
 
 ---
 
+## [v0.3.5] - 2026-09-29
+
+> **動作類別登記表（委任界線）**——治理理論見 `docs/界線的形狀.md`；計畫 `docs/Operoid-計畫-動作類別登記表.md`（R0–R6）。配套**憲章修正 v1**（Handbook 中英：Ch.02 增補原則 11「界線由人類畫定」、Ch.20 §5 重寫為「委任界線」、Ch.11 §5 自動啟用路徑、Ch.20 §3 人類邊界含畫線）。**預設行為不變**：未建立登記表時，一切員工提案照舊送人類核可（從嚴預設）。
+
+### 畫線器具：動作類別登記表（R1–R2）
+
+- 新檔 `ocore/src/registry.rs`：ActionRegistry／ActionCategory 三層委任模型（人裁決層／圍欄自動層／有主自動層）。**存檔驗證 V1–V5＝不對稱修正的程式碼化**：放寬（fenced/owned）須具名課責＋未來屆期＋放寬證據，缺一拒存；收緊永遠允許。原子寫；缺檔／壞檔 fails closed（全部走人類核可，並記 `registry_invalid` 事件）。
+- 員工提案分類決策樹（`classify_proposal`）：命中登記的自動層類別 → 跳過 Proposed 直接 Active（`auto_activated` 事件、watch「自動啟用」區段全數可見）；**關鍵詞保險絲**（對外/客戶/報價/金額/交期/合約/刪除）凌駕類別自評；系統 prompt 只列有效類別——員工看不到的類別就聲稱不了（封閉白名單＝保守解析＋新穎性上送）。
+- `Commitment` 新增 `category_id`／`gate_reason`／`review_pending`（JSON blob 零遷移）。
+
+### 時間性與圍欄（R3–R4）
+
+- **屆期重簽**：逾期自動層類別記 `category_lapsed`（冪等）；自動啟用效力查表即時判斷——過期即失效，無狀態可漂移。
+- **事故自動收縮**：承諾重試耗盡 → 所屬類別**連坐凍結**（`category_frozen`，降回人裁決層待重簽）——一次事故，收縮的是線，不是只停一筆。
+- **圍欄執行**：登記類別 `no_outbound`（預設 true）→ 自主循環禁外發，兩層防護——PLAN 選項抑制（看不到就不會選）＋send 分支硬閘（`send_blocked` 事件）；對話回合的回覆外發不受限。
+
+### 審核端治理（R5–R6）
+
+- API：`GET /api/registry`（含 30 天分歧率）、`POST /api/registry`、`POST /api/commitments/{id}/review`、`POST /api/registry/drill`。
+- 前端（i18n 三語）：設定頁「動作類別登記表」原始編輯器（version／逾期警告條／分歧率顯示）；watch 彈窗「自動啟用」區段＋抽審「歸類正確/錯誤」判定鈕；核可卡「為何待核可」原因行（M2 呈現設計——讓賭注可見）；Events 治理事件配色。
+- **盲抽校準**：抽審判定（`sample_verdict`）＋分歧率超門檻警報（`divergence_alarm`，樣本 ≥5、每週冪等）；植入演練 v1（`drill_result`——直接呼叫分類函式，不經 LLM，只測確定性閘門）；流量預算（`budget_exceeded`＝白名單過窄警報／`gate_bypass_warning`＝零核可但大量自動啟用）；月度回饋（`monthly_feedback` 放對/放錯/攔截啟發式）。
+
+### 其他
+
+- fix(config)：登記表載入失敗時補重試按鈕。
+- docs：JOURNEY 補 R0–R6 紀錄與 v0.3.4 release 狀態；設計／計畫／憲章修正案三份文件入 `docs/`。
+- 驗證基準：ocore 184 測試（+32）、oserver 4、workspace 0 warning、npm build 0 error。
+
 ## [v0.3.4] - 2026-09-18
 
 ### 預設模型升回 glm-5.3-flash（解 E15）
