@@ -314,6 +314,7 @@ onMounted(loadObridge);
 const registryText = ref("");
 const registryVersion = ref<number | null>(null);
 const registryLapsed = ref<string[]>([]);
+const registryDivergence = ref<{ samples?: number; ratio_30d?: number } | null>(null);
 const registryLoadError = ref<string | null>(null);
 const registryError = ref<string | null>(null);
 const registrySaved = ref(false);
@@ -334,6 +335,7 @@ async function loadRegistry() {
     const snap = await agentRegistryLoad();
     registryVersion.value = snap.registry?.version ?? null;
     registryLapsed.value = lapsedCategories(snap.registry);
+    registryDivergence.value = snap.divergence ?? null;
     registryText.value = snap.registry
       ? JSON.stringify(snap.registry, null, 2)
       : JSON.stringify({ version: 0, categories: [] }, null, 2);
@@ -767,6 +769,14 @@ async function onLocaleChange(v: string) {
       <p v-if="registryLapsed.length" class="mb-3 flex items-center gap-1 text-xs text-amber-500">
         <AlertTriangle :size="13" />
         {{ $t("configView.registryLapsedWarn", { n: registryLapsed.length }) }}
+      </p>
+      <p v-if="registryDivergence && registryDivergence.samples" class="mb-3 text-xs text-muted-foreground">
+        {{
+          $t("configView.registryDivergence", {
+            ratio: Math.round((registryDivergence.ratio_30d ?? 0) * 100),
+            n: registryDivergence.samples,
+          })
+        }}
       </p>
       <p v-if="registryLoadError" class="text-xs text-destructive">{{ registryLoadError }}</p>
       <template v-else>

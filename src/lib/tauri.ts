@@ -723,6 +723,8 @@ export interface RegistrySnapshot {
   registry: ActionRegistry | null;
   path: string;
   error?: string;
+  /** R6a：近 30 天抽審分歧（GET /api/registry 併入）。 */
+  divergence?: { samples: number; misclassified: number; ratio_30d: number };
 }
 export const agentRegistryLoad = (): Promise<RegistrySnapshot> =>
   agentFetch<RegistrySnapshot>("/api/registry");
@@ -748,6 +750,12 @@ export const agentRejectCommitment = (commitmentId: string): Promise<void> =>
   agentFetch<void>(`/api/commitments/${encodeURIComponent(commitmentId)}/reject`, { method: "POST" });
 export const agentArchiveCommitment = (commitmentId: string): Promise<void> =>
   agentFetch<void>(`/api/commitments/${encodeURIComponent(commitmentId)}/archive`, { method: "POST" });
+/** R6a 抽審：人類判定自動啟用的歸類對／錯（清除 review_pending、記 sample_verdict）。 */
+export const agentReviewCommitment = (commitmentId: string, misclassified: boolean): Promise<void> =>
+  agentFetch<void>(`/api/commitments/${encodeURIComponent(commitmentId)}/review`, {
+    method: "POST",
+    body: { misclassified },
+  });
 export const agentCancelTask = (taskId: string): Promise<void> =>
   agentFetch<void>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
 

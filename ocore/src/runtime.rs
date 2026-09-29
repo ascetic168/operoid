@@ -3491,6 +3491,173 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// R6a：抽審流程——verdict 清除 review_pending＋記 sample_verdict；重複判定被
+    /// 守衛拒絕；分歧超門檻（樣本 ≥5）→ divergence_alarm。
+    #[tokio::test]
+    async fn review_commitment_verdict_and_divergence_alarm() {
+        let dir = test_dir();
+        let db = dir.join("operoid.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let emp_id = seed(&store);
+        let mut c = ctx();
+        c.registry = Some(registry_fenced_internal_report());
+        store
+            .put_task(&Task {
+                id: "m1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "每天幫我彙整產線狀況。".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = StubTool::new("證據");
+        let reasoner = StubReasoner::new(vec![
+            r#"{"action":"propose","title":"每日產線摘要","condition":"每天彙整","category":"internal-report"}"#,
+            r#"{"action":"finish","text":"ok"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner), &c, &store, &outbound_disabled())
+            .await
+            .unwrap();
+        let com = &store.list_commitments("ws").unwrap()[0].clone();
+        assert!(com.review_pending, "rate=1.0 → 抽中");
+
+        review_commitment_core(&db, &store, &com.id, false).unwrap();
+        let com = store.get_commitment(&com.id).unwrap().unwrap();
+        assert!(!com.review_pending, "判定後清除旗標");
+        let evs = store.list_events_by_employee("registry", 100).unwrap();
+        assert!(
+            evs.iter().any(|e| e.kind == "sample_verdict" && e.detail.contains("歸類正確")),
+            "{evs:?}"
+        );
+        assert!(
+            review_commitment_core(&db, &store, &com.id, false).is_err(),
+            "重複判定 → invalidTransition"
+        );
+
+        // 分歧警報：再種 5 筆歸類錯誤樣本（合計 6 筆、5 錯 > 預設門檻 0.2）→
+        // 下一次判定觸發 divergence_alarm。
+        for i in 0..5 {
+            record_event(
+                &store,
+                "ws",
+                "registry",
+                "sample_verdict",
+                format!("抽審判定：演練{i}（類別 x）歸類錯誤"),
+            );
+        }
+        store
+            .put_task(&Task {
+                id: "m2".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "Human message".into(),
+                input: "每週也幫我彙整。".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let reasoner2 = StubReasoner::new(vec![
+            r#"{"action":"propose","title":"每週品質摘要","condition":"每週彙整","category":"internal-report"}"#,
+            r#"{"action":"finish","text":"ok"}"#,
+        ]);
+        run_inbox(&emp_id, &tool, Some(&reasoner2), &c, &store, &outbound_disabled())
+            .await
+            .unwrap();
+        let com2 = store
+            .list_commitments("ws")
+            .unwrap()
+            .into_iter()
+            .find(|x| x.title == "每週品質摘要")
+            .unwrap();
+        review_commitment_core(&db, &store, &com2.id, true).unwrap();
+        let evs = store.list_events_by_employee("registry", 100).unwrap();
+        assert!(
+            evs.iter().any(|e| e.kind == "divergence_alarm"),
+            "分歧率超門檻應觸發警報：{evs:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R6b：植入演練——無登記表時三樣板皆應被攔（unclassified）；登記 internal-report
+    /// fenced 後乾淨樣板應通過（預期翻轉）。兩種情況都應全數通過＋記 drill_result。
+    #[test]
+    fn registry_drill_reports_passes() {
+        let dir = test_dir();
+        let db = dir.join("operoid.db");
+        let store = SqliteStore::open(&db).unwrap();
+        seed(&store);
+        let out = registry_drill_core(&db, &store).unwrap();
+        assert_eq!(out["passed"], 3);
+        assert_eq!(out["all_pass"], true);
+        let evs = store.list_events_by_employee("registry", 10).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "drill_result"));
+
+        std::fs::write(
+            dir.join("action-registry.json"),
+            serde_json::json!({
+                "categories": [{
+                    "id": "internal-report", "description": "內部定期報告",
+                    "questions": { "reversible": true, "blast_radius": "internal", "accountable": "charlie" },
+                    "tier": "fenced", "expiry": "2099-12-31T00:00:00Z", "evidence": "e"
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let out2 = registry_drill_core(&db, &store).unwrap();
+        assert_eq!(out2["passed"], 3, "登記後乾淨樣板預期翻轉為通過——閘門不過度阻擋");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R6d：月度彙整啟發式——人類通道（gate_reason 有值）才計入放對/放錯；Rejected
+    /// 計攔截；出月不計；重試耗盡的活承諾計放錯。
+    #[test]
+    fn build_monthly_feedback_heuristics() {
+        let mk = |id: &str, status: CommitmentStatus, gate: Option<&str>, retry: u32, updated: &str| {
+            Commitment {
+                id: id.into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: "e".into(),
+                title: format!("t-{id}"),
+                completion_condition: "c".into(),
+                status,
+                retry_count: retry,
+                next_retry_at: None,
+                created_at: "t".into(),
+                updated_at: updated.into(),
+                category_id: None,
+                gate_reason: gate.map(|s| s.to_string()),
+                review_pending: false,
+            }
+        };
+        let coms = vec![
+            mk("a", CommitmentStatus::Satisfied, Some("unclassified"), 0, "2026-08-15T00:00:00Z"),
+            mk("b", CommitmentStatus::Satisfied, None, 0, "2026-08-15T00:00:00Z"),
+            mk("c", CommitmentStatus::Archived, Some("unclassified"), 0, "2026-08-20T00:00:00Z"),
+            mk("d", CommitmentStatus::Active, Some("fuse:客戶"), 3, "2026-08-21T00:00:00Z"),
+            mk("e", CommitmentStatus::Rejected, Some("unclassified"), 0, "2026-08-22T00:00:00Z"),
+            mk("f", CommitmentStatus::Satisfied, Some("unclassified"), 0, "2026-09-01T00:00:00Z"),
+        ];
+        let fb = build_monthly_feedback(&coms, 2026, 8);
+        assert_eq!(fb.approved_satisfied, 1, "自動啟用（無 gate_reason）不計放對");
+        assert_eq!(fb.approved_failed, 2, "Archived＋重試耗盡皆計放錯");
+        assert_eq!(fb.rejected, 1);
+        assert_eq!(fb.example_satisfied.as_ref().unwrap().0, "a");
+        assert_eq!(fb.example_failed.as_ref().unwrap().0, "c");
+    }
+
     /// E12：外發未啟用 → SendTool 回報「外發未啟用」進上下文，員工改以 finish 留內部回覆；
     /// 不記 outbound 事件、不寫 send 的 Out message。
     #[tokio::test]
@@ -5881,6 +6048,260 @@ pub fn registry_save_core(
         ),
     );
     Ok(saved)
+}
+
+/// R6a（條件三 盲抽校準）：人類對抽審中的自動啟用承諾判定歸類對／錯。
+/// 清除 `review_pending`、記 `sample_verdict` 事件；近 30 天分歧率（樣本 ≥5）超過
+/// 登記表 `divergence_threshold` → `divergence_alarm`（每週冪等一次）。
+pub fn review_commitment_core(
+    db_path: &std::path::Path,
+    store: &SqliteStore,
+    commitment_id: &str,
+    misclassified: bool,
+) -> Result<(), AppError> {
+    let mut com = store
+        .get_commitment(commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", commitment_id))?;
+    if !com.review_pending {
+        return Err(AppError::new("agent_os.invalidTransition")
+            .p("id", commitment_id)
+            .p("from", format!("review_pending={}", com.review_pending))
+            .p("to", "reviewed"));
+    }
+    com.review_pending = false;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    let cat = com.category_id.clone().unwrap_or_default();
+    record_event(
+        store,
+        AGENT_WS,
+        "registry",
+        "sample_verdict",
+        format!(
+            "抽審判定：承諾「{}」（類別 {cat}）歸類{}",
+            com.title,
+            if misclassified { "錯誤" } else { "正確" }
+        ),
+    );
+    // 分歧率警報（樣本 ≥5 才有意義；每週冪等）。
+    if let Some(data_dir) = db_path.parent() {
+        let reg = crate::registry::load_registry(data_dir).ok().flatten();
+        let threshold = reg.as_ref().map_or(0.2, |r| r.divergence_threshold);
+        let div = registry_divergence(store, &now_rfc3339());
+        if div.samples >= 5 && div.ratio > threshold {
+            let week = week_key();
+            let dup = store
+                .list_events_by_employee("registry", 1000)
+                .unwrap_or_default()
+                .iter()
+                .any(|e| e.kind == "divergence_alarm" && e.detail.contains(&week));
+            if !dup {
+                record_event(
+                    store,
+                    AGENT_WS,
+                    "registry",
+                    "divergence_alarm",
+                    format!(
+                        "近 30 天抽審分歧率 {:.0}%（{}/{}）超過門檻 {:.0}%——考慮收緊白名單（週 {week}）",
+                        div.ratio * 100.0,
+                        div.misclassified,
+                        div.samples,
+                        threshold * 100.0
+                    ),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// R6a：近 30 天抽審分歧統計（`sample_verdict` 事件）。
+pub struct RegistryDivergence {
+    pub samples: u32,
+    pub misclassified: u32,
+    pub ratio: f32,
+}
+
+fn registry_divergence(store: &dyn Store, now: &str) -> RegistryDivergence {
+    let Ok(now_t) = chrono::DateTime::parse_from_rfc3339(now) else {
+        return RegistryDivergence { samples: 0, misclassified: 0, ratio: 0.0 };
+    };
+    let cutoff = now_t - chrono::Duration::days(30);
+    let mut samples = 0u32;
+    let mut misclassified = 0u32;
+    for ev in store.list_events_by_employee("registry", 1000).unwrap_or_default() {
+        if ev.kind != "sample_verdict" {
+            continue;
+        }
+        let Ok(t) = chrono::DateTime::parse_from_rfc3339(&ev.created_at) else {
+            continue;
+        };
+        if t < cutoff || t > now_t {
+            continue;
+        }
+        samples += 1;
+        if ev.detail.contains("歸類錯誤") {
+            misclassified += 1;
+        }
+    }
+    let ratio = if samples > 0 { misclassified as f32 / samples as f32 } else { 0.0 };
+    RegistryDivergence { samples, misclassified, ratio }
+}
+
+/// R6a：分歧率現況（併入 `GET /api/registry` 回應，設定頁顯示）。
+pub fn registry_divergence_payload(store: &dyn Store) -> serde_json::Value {
+    let d = registry_divergence(store, &now_rfc3339());
+    serde_json::json!({
+        "samples": d.samples,
+        "misclassified": d.misclassified,
+        "ratio_30d": d.ratio,
+    })
+}
+
+fn week_key() -> String {
+    use chrono::Datelike;
+    let today = chrono::Utc::now().date_naive();
+    (today - chrono::Duration::days(today.weekday().num_days_from_monday() as i64)).to_string()
+}
+
+/// R6b（M3 植入演練 v1）：對**確定性閘門**（保險絲＋決策樹）自我測試——內建已知答案的
+/// 合成提案，直接呼叫 [`crate::registry::classify_proposal`]（**不經 LLM**；LLM 標籤
+/// 誠實度靠真實抽審 R6a）。結果記 `drill_result` 事件；歸因閘門健康度，不綁員工。
+pub fn registry_drill_core(
+    db_path: &std::path::Path,
+    store: &dyn Store,
+) -> Result<serde_json::Value, AppError> {
+    let Some(data_dir) = db_path.parent() else {
+        return Err(AppError::new("agent_os.registryWriteFailed").p("detail", "無 data_dir"));
+    };
+    let reg = crate::registry::load_registry(data_dir).map_err(|e| {
+        AppError::new("agent_os.registryInvalid")
+            .p("rule", "load")
+            .p("detail", e.to_string())
+    })?;
+    // internal-report 已登記為 fenced → 樣板 3（乾淨內部彙整）應**通過**（測閘門不會
+    // 過度阻擋）；未登記 → 應被攔（unclassified）。
+    let internal_registered = reg.as_ref().is_some_and(|r| {
+        r.category("internal-report")
+            .is_some_and(|c| c.tier == crate::registry::DelegationTier::Fenced)
+    });
+    let cases: [(&str, &str, Option<&str>, bool); 3] = [
+        ("演練：向客戶報價彙整", "含報價單金額", Some("internal-report"), true),
+        ("演練：刪除並重整暫存彙整", "整理暫存", Some("internal-report"), true),
+        ("演練：每日產線摘要", "每天彙整產線狀況", Some("internal-report"), !internal_registered),
+    ];
+    let now = now_rfc3339();
+    let mut passed = 0u32;
+    let mut details = Vec::new();
+    for (title, cond, claimed, expect_intercept) in cases {
+        let intercepted = matches!(
+            crate::registry::classify_proposal(reg.as_ref(), title, cond, claimed, &now),
+            crate::registry::GateDecision::Human { .. }
+        );
+        let pass = intercepted == expect_intercept;
+        if pass {
+            passed += 1;
+        }
+        details.push(serde_json::json!({
+            "title": title,
+            "intercepted": intercepted,
+            "expected_intercepted": expect_intercept,
+            "pass": pass,
+        }));
+    }
+    let total = cases.len() as u32;
+    record_event(
+        store,
+        AGENT_WS,
+        "registry",
+        "drill_result",
+        format!("閘門演練 {passed}/{total} 通過（確定性閘門自我測試）"),
+    );
+    Ok(serde_json::json!({
+        "passed": passed,
+        "total": total,
+        "all_pass": passed == total,
+        "cases": details,
+    }))
+}
+
+/// R6d（M5 回饋閉環）月度彙整結果（純函式，便於單測）。
+pub struct MonthlyFeedback {
+    pub approved_satisfied: u32,
+    pub approved_failed: u32,
+    pub rejected: u32,
+    pub example_satisfied: Option<(String, String)>,
+    pub example_failed: Option<(String, String)>,
+    pub example_rejected: Option<(String, String)>,
+}
+
+/// R6d（M5）：月度核可品質**啟發式**（明訂限制：供校準參考，不做攔對因果判定）——
+/// 放對候選＝人類通道提案（gate_reason 有值）且 Satisfied；放錯候選＝人類通道提案且
+/// Archived 或重試耗盡；攔截＝Rejected。統計範圍＝`updated_at` 落於指定年月，各取第一例。
+pub fn build_monthly_feedback(commitments: &[Commitment], year: i32, month: u32) -> MonthlyFeedback {
+    let prefix = format!("{year:04}-{month:02}");
+    let mut fb = MonthlyFeedback {
+        approved_satisfied: 0,
+        approved_failed: 0,
+        rejected: 0,
+        example_satisfied: None,
+        example_failed: None,
+        example_rejected: None,
+    };
+    for c in commitments {
+        if !c.updated_at.starts_with(&prefix) {
+            continue;
+        }
+        let human_channeled = c.gate_reason.is_some();
+        let exhausted = c.retry_count >= MAX_COMMITMENT_RETRIES;
+        match c.status {
+            CommitmentStatus::Satisfied if human_channeled => {
+                fb.approved_satisfied += 1;
+                if fb.example_satisfied.is_none() {
+                    fb.example_satisfied = Some((c.id.clone(), c.title.clone()));
+                }
+            }
+            CommitmentStatus::Archived if human_channeled => {
+                fb.approved_failed += 1;
+                if fb.example_failed.is_none() {
+                    fb.example_failed = Some((c.id.clone(), c.title.clone()));
+                }
+            }
+            CommitmentStatus::Rejected => {
+                fb.rejected += 1;
+                if fb.example_rejected.is_none() {
+                    fb.example_rejected = Some((c.id.clone(), c.title.clone()));
+                }
+            }
+            _ if human_channeled && exhausted => {
+                fb.approved_failed += 1;
+                if fb.example_failed.is_none() {
+                    fb.example_failed = Some((c.id.clone(), c.title.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    fb
+}
+
+/// R6d：上月彙整 payload（`monthly_feedback` 事件的資料源）。
+pub fn registry_monthly_feedback_payload(
+    store: &SqliteStore,
+    year: i32,
+    month: u32,
+) -> serde_json::Value {
+    let coms = store.list_all_commitments().unwrap_or_default();
+    let fb = build_monthly_feedback(&coms, year, month);
+    serde_json::json!({
+        "month": format!("{year:04}-{month:02}"),
+        "approved_satisfied": fb.approved_satisfied,
+        "approved_failed": fb.approved_failed,
+        "rejected": fb.rejected,
+        "example_satisfied": fb.example_satisfied,
+        "example_failed": fb.example_failed,
+        "example_rejected": fb.example_rejected,
+    })
 }
 
 /// Workspace 全景摘要（`agent_list_state`／`GET /api/state?workspace=`）。

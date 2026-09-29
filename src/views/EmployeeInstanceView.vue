@@ -5,7 +5,7 @@ import { useRouter } from "vue-router";
 import { Archive, Plus, Loader2, X, UserSquare, Square } from "lucide-vue-next";
 import { useAgentStore } from "@/stores/agent";
 import { useBrainsStore } from "@/stores/brains";
-import { agentWatch, agentApproveCommitment, agentRejectCommitment, agentArchiveCommitment, agentCancelTask, employeeOpenOutputDir, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
+import { agentWatch, agentApproveCommitment, agentRejectCommitment, agentArchiveCommitment, agentCancelTask, agentReviewCommitment, employeeOpenOutputDir, formatError, type Employee, type WatchSnapshot } from "@/lib/tauri";
 import ContextMenu, { type MenuItem } from "@/components/ContextMenu.vue";
 
 const { t } = useI18n();
@@ -157,6 +157,16 @@ let watchTimer: ReturnType<typeof setInterval> | null = null;
 
 // R5（Ch.20 §5）：自動啟用的承諾——帶 category_id 者單獨列出（強制可見、全數上送）。
 const autoActivated = computed(() => watchData.value?.commitments.filter((c) => c.category_id) ?? []);
+
+// R6a（盲抽校準）：對抽審中的自動啟用判定歸類對／錯（sample_verdict）。
+async function reviewCategory(cid: string, misclassified: boolean) {
+  try {
+    await agentReviewCommitment(cid, misclassified);
+    await pollWatch();
+  } catch (e) {
+    errorMsg.value = formatError(e);
+  }
+}
 
 async function pollWatch() {
   if (!watchTarget.value) return;
@@ -585,13 +595,25 @@ const archivedEmployees = computed(() => store.employees.filter((e) => e.archive
           <div>
             <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchAuto") }}</div>
             <div v-if="watchData && autoActivated.length" class="flex flex-col gap-0.5">
-              <div v-for="c in autoActivated" :key="c.id" class="flex items-center gap-1">
-                <span class="truncate flex-1">
-                  • {{ c.title }}
-                  <span class="ml-1 rounded bg-violet-500/15 px-1 text-[10px] text-violet-500">{{ c.category_id }}</span>
-                  <span v-if="c.review_pending" class="ml-0.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-500">{{ t("instances.watchReview") }}</span>
-                  <span class="text-xs text-muted-foreground">[{{ c.status }}]</span>
-                </span>
+              <div v-for="c in autoActivated" :key="c.id" class="flex items-start gap-1">
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1 truncate">
+                    <span>• {{ c.title }}</span>
+                    <span class="rounded bg-violet-500/15 px-1 text-[10px] text-violet-500">{{ c.category_id }}</span>
+                    <span v-if="c.review_pending" class="rounded bg-amber-500/15 px-1 text-[10px] text-amber-500">{{ t("instances.watchReview") }}</span>
+                    <span class="text-xs text-muted-foreground">[{{ c.status }}]</span>
+                  </div>
+                  <div v-if="c.review_pending" class="mt-1 flex gap-1">
+                    <button
+                      class="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] text-white hover:opacity-90"
+                      @click="reviewCategory(c.id, false)"
+                    >{{ t("instances.watchReviewOk") }}</button>
+                    <button
+                      class="rounded border border-destructive/50 px-1.5 py-0.5 text-[10px] text-destructive hover:bg-destructive/10"
+                      @click="reviewCategory(c.id, true)"
+                    >{{ t("instances.watchReviewBad") }}</button>
+                  </div>
+                </div>
                 <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.archive')" @click="archiveCommitment(c.id)">
                   <Archive :size="12" />
                 </button>

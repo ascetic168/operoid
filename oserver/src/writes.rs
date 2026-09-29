@@ -22,7 +22,7 @@ use ocore::runtime::{
     cancel_task_core, clear_messages_core,
     create_commitment_core, create_template_core, delete_template_core,
     hard_delete_employee_core,
-    reject_commitment_core, registry_save_core,
+    reject_commitment_core, registry_drill_core, registry_save_core, review_commitment_core,
     deploy_instance, ensure_workspace_core, rename_employee_core, rename_template_core,
     send_message_core, stop_employee_core, unarchive_employee_core,
 };
@@ -43,6 +43,8 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/commitments/{id}/approve", post(api_approve))
         .route("/api/commitments/{id}/reject", post(api_reject))
         .route("/api/commitments/{id}/archive", post(api_archive))
+        .route("/api/commitments/{id}/review", post(api_review_commitment))
+        .route("/api/registry/drill", post(api_registry_drill))
         .route("/api/tasks/{id}/cancel", post(api_cancel_task))
         .route("/api/registry", post(api_registry_save))
         .layer(CorsLayer::very_permissive())
@@ -51,6 +53,70 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
 #[derive(Deserialize)]
 struct RegistrySaveBody {
     raw_json: String,
+}
+
+#[derive(Deserialize)]
+struct ReviewBody {
+    misclassified: bool,
+}
+
+async fn api_review_commitment(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Json<ReviewBody>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let mis = body.0.misclassified;
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        review_commitment_core(&data_dir, &store, &id, mis)
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => Json(json!({ "ok": true })).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_registry_drill(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        registry_drill_core(&data_dir, &store)
+    })
+    .await;
+    match res {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn api_registry_save(

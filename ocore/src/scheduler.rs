@@ -23,7 +23,7 @@ use crate::domain::{Commitment, Employee, EmployeeState, SqliteStore, Store};
 use crate::event_bus;
 use crate::outbound::OutboundConfig;
 use crate::runtime::{
-    build_reasoner, build_tool_ctx, load_registry_for_runs, record_event,
+    build_monthly_feedback, build_reasoner, build_tool_ctx, load_registry_for_runs, record_event,
     run_commitments_for_employee, run_inbox_with_stop, AGENT_WS,
 };
 
@@ -53,6 +53,8 @@ pub async fn scheduler_loop(
 ) {
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     let mut started = false;
+    let mut last_day: Option<String> = None; // R6c：日界偵測（流量預算）
+    let mut last_month: Option<String> = None; // R6d：月界偵測（月度回饋）
     loop {
         tokio::select! {
             _ = tick.tick() => {
@@ -61,6 +63,17 @@ pub async fn scheduler_loop(
                 let _ = scan_commitments(&state, &load_cfg, &db_path, startup).await;
                 let _ = reset_errored(&load_cfg, &db_path).await; // 復原：Error 死巷→重試
                 scan_registry_expiry(&db_path); // R3：登記表屆期通知（冪等；效力由查表即時判斷）
+                // R6c/R6d：日界／月界觸發（事件鍵冪等——重啟不重複記）。
+                let today = chrono::Utc::now().date_naive().to_string();
+                if last_day.as_deref() != Some(today.as_str()) {
+                    scan_registry_budget(&db_path);
+                    last_day = Some(today);
+                }
+                let this_month = chrono::Utc::now().format("%Y-%m").to_string();
+                if last_month.as_deref() != Some(this_month.as_str()) {
+                    scan_registry_monthly_feedback(&db_path);
+                    last_month = Some(this_month);
+                }
                 let _ = scan_inbox(&state, &load_cfg, &db_path).await;
             }
             Some(_sig) = wake_rx.recv() => { let _ = scan_inbox(&state, &load_cfg, &db_path).await; }
@@ -268,6 +281,104 @@ fn scan_registry_expiry(db_path: &std::path::Path) {
     }
 }
 
+/// R6c（M4 流量預算）：每日首 tick 統計近 7 天——`proposed` 超過登記表
+/// `weekly_proposal_budget` → `budget_exceeded`（白名單過窄警報）；零人類核可但
+/// `auto_activated`≥10 → `gate_bypass_warning`（檢查是否被不當繞過）。以週一日期為冪等鍵。
+fn scan_registry_budget(db_path: &std::path::Path) {
+    let Some(data_dir) = db_path.parent() else {
+        return;
+    };
+    let Ok(Some(reg)) = crate::registry::load_registry(data_dir) else {
+        return;
+    };
+    let Ok(store) = SqliteStore::open(db_path) else {
+        return;
+    };
+    let now_t = chrono::Utc::now();
+    let cutoff = now_t - chrono::Duration::days(7);
+    let evs = store.list_recent_events(5000).unwrap_or_default();
+    let in_window = |kind: &str| {
+        evs.iter()
+            .filter(|e| e.kind == kind)
+            .filter(|e| {
+                chrono::DateTime::parse_from_rfc3339(&e.created_at).map_or(false, |t| t >= cutoff)
+            })
+            .count()
+    };
+    let proposed = in_window("proposed");
+    let auto = in_window("auto_activated");
+    let week: String = {
+        use chrono::Datelike;
+        (now_t.date_naive() - chrono::Duration::days(now_t.weekday().num_days_from_monday() as i64))
+            .to_string()
+    };
+    let registry_evs = store.list_events_by_employee("registry", 1000).unwrap_or_default();
+    let already =
+        |kind: &str| registry_evs.iter().any(|e| e.kind == kind && e.detail.contains(&week));
+    if let Some(budget) = reg.weekly_proposal_budget {
+        if proposed > budget as usize && !already("budget_exceeded") {
+            record_event(
+                &store,
+                AGENT_WS,
+                "registry",
+                "budget_exceeded",
+                format!("近 7 天人類核可提案 {proposed} 件超過預算 {budget}——白名單可能過窄（週 {week}）"),
+            );
+        }
+    }
+    if proposed == 0 && auto >= 10 && !already("gate_bypass_warning") {
+        record_event(
+            &store,
+            AGENT_WS,
+            "registry",
+            "gate_bypass_warning",
+            format!("近 7 天零人類核可但自動啟用 {auto} 筆——請抽審確認歸類正當（週 {week}）"),
+        );
+    }
+}
+
+/// R6d（M5 回饋閉環）：彙整**上一個月**的核可品質啟發式（放對／放錯候選＋攔截數，
+/// 各取一例）→ `monthly_feedback` 事件（冪等：同月只記一次）。啟發式供校準參考——
+/// 不做攔對因果判定。
+fn scan_registry_monthly_feedback(db_path: &std::path::Path) {
+    use chrono::Datelike;
+    let Ok(store) = SqliteStore::open(db_path) else {
+        return;
+    };
+    let now = chrono::Utc::now();
+    let (year, month) = if now.month() == 1 {
+        (now.year() - 1, 12)
+    } else {
+        (now.year(), now.month() - 1)
+    };
+    let month_key = format!("{year:04}-{month:02}");
+    let dup = store
+        .list_events_by_employee("registry", 1000)
+        .unwrap_or_default()
+        .iter()
+        .any(|e| e.kind == "monthly_feedback" && e.detail.contains(&month_key));
+    if dup {
+        return;
+    }
+    let all = store.list_all_commitments().unwrap_or_default();
+    let fb = build_monthly_feedback(&all, year, month);
+    record_event(
+        &store,
+        AGENT_WS,
+        "registry",
+        "monthly_feedback",
+        format!(
+            "{month_key} 核可品質（啟發式）：放對候選 {}、放錯候選 {}、攔截 {}；例：放對 {:?}／放錯 {:?}／攔截 {:?}",
+            fb.approved_satisfied,
+            fb.approved_failed,
+            fb.rejected,
+            fb.example_satisfied,
+            fb.example_failed,
+            fb.example_rejected
+        ),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +430,47 @@ mod tests {
             .filter(|e| e.kind == "category_lapsed")
             .count();
         assert_eq!(count, 1, "同 id＋同 expiry 冪等：不重複記");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R6c：流量預算——proposed 超過 weekly_proposal_budget → budget_exceeded
+    /// （週冪等：再掃不重複記）。
+    #[test]
+    fn registry_budget_scan_flags_over_budget_once() {
+        let dir = std::env::temp_dir().join(format!(
+            "operoid-sched-budget-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("operoid.db");
+        std::fs::write(
+            dir.join("action-registry.json"),
+            serde_json::json!({ "weekly_proposal_budget": 1, "categories": [] }).to_string(),
+        )
+        .unwrap();
+        {
+            let store = SqliteStore::open(&db).unwrap();
+            for i in 0..2 {
+                record_event(&store, "ws", &format!("e{i}"), "proposed", format!("p{i}"));
+            }
+        }
+        scan_registry_budget(&db);
+        let count = || {
+            SqliteStore::open(&db)
+                .unwrap()
+                .list_events_by_employee("registry", 100)
+                .unwrap()
+                .iter()
+                .filter(|e| e.kind == "budget_exceeded")
+                .count()
+        };
+        assert_eq!(count(), 1, "超預算須記警報");
+        scan_registry_budget(&db);
+        assert_eq!(count(), 1, "同週冪等：不重複記");
         std::fs::remove_dir_all(&dir).ok();
     }
 

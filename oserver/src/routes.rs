@@ -19,8 +19,8 @@ use ocore::app_config::AppConfig;
 use ocore::domain::{SqliteStore, Store};
 use ocore::i18n::AppError;
 use ocore::runtime::{
-    inbox_summary_payload, list_state_payload, recent_events_payload, registry_load_payload,
-    watch_payload,
+    inbox_summary_payload, list_state_payload, recent_events_payload, registry_divergence_payload,
+    registry_load_payload, watch_payload,
 };
 
 use crate::auth::{AuthProvider, AuthError};
@@ -225,8 +225,16 @@ async fn api_registry(
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         check_enabled(&st)?;
-        let data_dir = st.db_path.parent().map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
-        Ok(registry_load_payload(&data_dir))
+        let store = open_store(&st)?;
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        let mut payload = registry_load_payload(&data_dir);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("divergence".into(), registry_divergence_payload(&store));
+        }
+        Ok(payload)
     })
     .await;
     finish(res)
