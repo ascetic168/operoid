@@ -214,6 +214,18 @@ pub struct Commitment {
     /// 最近一次活動時間（task 產生／狀態變更時更新）。
     #[serde(default)]
     pub updated_at: Timestamp,
+    /// 動作類別登記表（`crate::registry`，Ch.20 §5）命中的類別 id——僅「自動啟用」的
+    /// 承諾帶有；人類核可／交辦的承諾為 None（故不觸發事故連坐凍結，R3）。
+    #[serde(default)]
+    pub category_id: Option<String>,
+    /// 為何進入人類核可通道：`unclassified`／`fuse:{關鍵詞}`／`expired:{類別}`／
+    /// `human_tier:{類別}`（核可卡顯示，前端 i18n 映射）。僅 Proposed 帶有。
+    #[serde(default)]
+    pub gate_reason: Option<String>,
+    /// R6a 抽審旗標：自動啟用時被抽中（依類別 sampling_rate），待人類判定歸類
+    /// 對錯（`sample_verdict` 事件）後清除。
+    #[serde(default)]
+    pub review_pending: bool,
 }
 
 /// Commitment 生命週期狀態（Ch.11 §5）。
@@ -436,6 +448,9 @@ mod tests {
             title: "Track PO".into(),
             completion_condition: "goods received".into(),
             status: CommitmentStatus::Active,
+            category_id: None,
+            gate_reason: None,
+            review_pending: false,
             retry_count: 0,
             next_retry_at: None,
             created_at: "t".into(),

@@ -29,4 +29,5 @@ pub mod llm;
 pub mod outbound;
 pub mod prereq;
 pub mod proc;
+pub mod registry;
 pub mod slug;
