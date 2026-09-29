@@ -778,7 +778,15 @@ async function onLocaleChange(v: string) {
           })
         }}
       </p>
-      <p v-if="registryLoadError" class="text-xs text-destructive">{{ registryLoadError }}</p>
+      <p v-if="registryLoadError" class="text-xs text-destructive">
+        {{ registryLoadError }}
+        <button
+          class="ml-2 inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 hover:opacity-80"
+          @click="loadRegistry"
+        >
+          <RefreshCw :size="12" /> {{ $t("configView.registryReload") }}
+        </button>
+      </p>
       <template v-else>
         <textarea
           v-model="registryText"
