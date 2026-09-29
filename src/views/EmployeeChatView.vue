@@ -10,6 +10,7 @@ import {
   agentSendMessage,
   agentWatch,
   formatError,
+  gateReasonText,
   type WatchSnapshot,
 } from "@/lib/tauri";
 
@@ -38,6 +39,12 @@ function formatTime(iso: string): string {
 const proposedIds = computed(
   () => new Set((data.value?.proposals ?? []).map((p) => p.id)),
 );
+
+/** R5（Ch.20 §5.4）：為何進到人類通道——把 gate_reason 機讀碼翻成可讀文字（M2 呈現設計：讓賭注可見）。 */
+function whyPending(cid: string): string | null {
+  const p = (data.value?.proposals ?? []).find((x) => x.id === cid);
+  return gateReasonText(p?.gate_reason ?? null, t);
+}
 
 /** 動作中的 commitment id（防重入、期間 disable 按鈕）。 */
 const pending = ref<string | null>(null);
@@ -206,8 +213,13 @@ function stateColor(s: string | undefined): string {
         <!-- 提案核可鈕（僅 Out message 帶待核可提案、且尚未決策時顯示） -->
         <div
           v-else-if="m.direction === 'out' && m.proposed_commitment_id && proposedIds.has(m.proposed_commitment_id)"
-          class="mt-1 flex gap-2"
+          class="mt-1"
         >
+          <!-- R5（Ch.20 §5.4）：為何進到人類通道——讓賭注可見（核可卡原因行）-->
+          <div v-if="whyPending(m.proposed_commitment_id!)" class="mb-1 px-1 text-[10px] text-muted-foreground">
+            {{ t("approval.whyPending") }}：{{ whyPending(m.proposed_commitment_id!) }}
+          </div>
+          <div class="flex gap-2">
           <button
             class="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
             :disabled="pending !== null"
@@ -224,6 +236,7 @@ function stateColor(s: string | undefined): string {
             <Loader2 v-if="pending === m.proposed_commitment_id" :size="12" class="animate-spin" />
             ✗ {{ t("approval.reject") }}
           </button>
+          </div>
         </div>
       </div>
     </div>

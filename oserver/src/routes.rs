@@ -19,7 +19,8 @@ use ocore::app_config::AppConfig;
 use ocore::domain::{SqliteStore, Store};
 use ocore::i18n::AppError;
 use ocore::runtime::{
-    inbox_summary_payload, list_state_payload, recent_events_payload, watch_payload,
+    inbox_summary_payload, list_state_payload, recent_events_payload, registry_load_payload,
+    watch_payload,
 };
 
 use crate::auth::{AuthProvider, AuthError};
@@ -89,6 +90,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/employees/{id}/watch", get(api_watch))
         .route("/api/inbox", get(api_inbox))
         .route("/api/events", get(api_events))
+        .route("/api/registry", get(api_registry))
         .layer(CorsLayer::very_permissive())
         .with_state(state)
 }
@@ -208,6 +210,23 @@ async fn api_events(
         check_enabled(&st)?;
         let store = open_store(&st)?;
         recent_events_payload(&store, limit)
+    })
+    .await;
+    finish(res)
+}
+
+async fn api_registry(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        check_enabled(&st)?;
+        let data_dir = st.db_path.parent().map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        Ok(registry_load_payload(&data_dir))
     })
     .await;
     finish(res)

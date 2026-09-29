@@ -77,6 +77,9 @@
     "stopHint": "合作式停止：员工会在下一个步骤边界优雅停止；发消息或交办即可恢复。",
     "openOutputDir": "打开产出目录",
     "watchProposals": "待核可提案",
+    "watchAuto": "自动启用（登记类别）",
+    "watchAutoNone": "无——尚无经登记类别自动启用的承诺",
+    "watchReview": "抽审",
     "watchCommitments": "进行中的承诺",
     "watchTasks": "目前工作",
     "watchArtifacts": "近期产出",
@@ -313,7 +316,14 @@
     "approve": "核可",
     "reject": "拒绝",
     "approved": "已核可",
-    "rejected": "已拒绝"
+    "rejected": "已拒绝",
+    "whyPending": "为何待核可",
+    "why": {
+      "unclassified": "未匹配任何已授权类别（保守解析）",
+      "fuse": "触发保险丝关键词「{kw}」",
+      "expired": "类别「{cat}」已届期未重签",
+      "humanTier": "类别「{cat}」属人裁决层"
+    }
   },
   "operations": {
     "title": "操作 — GBrain CLI",
@@ -375,6 +385,11 @@
     "writeBack": "写回 config.json",
     "saved": "已保存",
     "jsonParseFail": "JSON 解析失败：{e}",
+    "registrySection": "动作类别登记表（委任界线）",
+    "registryDesc": "画线权的画布：登记哪些承诺类别可免个案核可自动启用（Ch.20 §5）。放宽（fenced/owned）须具名问责、未来届期与放宽证据，缺一存档被拒；收紧永远允许。未登记的类别一律送人类核可。",
+    "registryLapsedWarn": "有 {n} 个类别已届期——重签（更新 expiry 与证据）前不会再自动启用。",
+    "registryReload": "重新载入",
+    "registrySaved": "已存档",
     "tierSection": "模型路由（v0.42 tier）",
     "tierDesc": "gbrain v0.42 依 tier 路由任务。设置经 gbrain config set 写入 DB plane（权威层）。",
     "unifyModel": "全部 tier 用同一个模型",
@@ -554,7 +569,9 @@
     "employeeNotFound": "找不到员工：{id}",
     "employeeNotRunning": "{id} 目前不在执行中。",
     "employeeArchived": "{id} 已封存。",
-    "taskNotFound": "找不到任务：{id}"
+    "taskNotFound": "找不到任务：{id}",
+    "registryInvalid": "登记表验证失败（{rule}）[{id}]：{detail}",
+    "registryWriteFailed": "登记表写入失败：{detail}"
   },
   "error": {
     "unexpected": "发生未预期错误：{detail}"

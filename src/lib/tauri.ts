@@ -637,8 +637,15 @@ export const agentClearMessages = (employeeId: string): Promise<void> =>
 export interface WatchSnapshot {
   employee: Employee;
   llm_model: string | null;
-  commitments: unknown[];
-  proposals: { id: string; title: string; completion_condition: string; status: string }[];
+  commitments: CommitmentView[];
+  proposals: {
+    id: string;
+    title: string;
+    completion_condition: string;
+    status: string;
+    category_id?: string | null;
+    gate_reason?: string | null;
+  }[];
   tasks: unknown[];
   resolved_commitments: { id: string; title: string; status: string }[];
   completed_tasks: { id: string; objective: string; status: string }[];
@@ -657,6 +664,73 @@ export interface WatchSnapshot {
 }
 export const agentWatch = (employeeId: string): Promise<WatchSnapshot> =>
   agentFetch<WatchSnapshot>(`/api/employees/${encodeURIComponent(employeeId)}/watch`);
+
+/** 動作類別登記表（Ch.20 §5；R5）——Commitment 的治理欄位（鏡射 ocore domain）。 */
+export interface CommitmentView {
+  id: string;
+  title: string;
+  completion_condition: string;
+  status: string;
+  /** 登記類別 id——僅自動啟用的承諾帶有；人類核可／交辦為 null。 */
+  category_id: string | null;
+  /** 為何進人類通道：unclassified／fuse:{kw}／expired:{cat}／human_tier:{cat}。 */
+  gate_reason: string | null;
+  /** R6a 抽審旗標：待人類判定歸類對錯。 */
+  review_pending: boolean;
+  retry_count?: number;
+  next_retry_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+export const gateReasonText = (
+  reason: string | null,
+  t: (key: string, params?: Record<string, unknown>) => string,
+): string | null => {
+  if (!reason) return null;
+  if (reason === "unclassified") return t("approval.why.unclassified");
+  if (reason.startsWith("fuse:")) return t("approval.why.fuse", { kw: reason.slice(5) });
+  if (reason.startsWith("expired:")) return t("approval.why.expired", { cat: reason.slice(8) });
+  if (reason.startsWith("human_tier:")) return t("approval.why.humanTier", { cat: reason.slice(11) });
+  return reason;
+};
+
+// ── 動作類別登記表（Action Registry；Ch.20 §5）──
+export interface RegistryFences {
+  tools: string[] | null;
+  no_outbound: boolean;
+  template_only: boolean;
+}
+export interface RegistryCategory {
+  id: string;
+  description: string;
+  questions: { reversible: boolean; blast_radius: string; accountable: string };
+  tier: "human" | "fenced" | "owned";
+  fences: RegistryFences;
+  emergency_stop: string | null;
+  expiry: string | null;
+  sampling_rate: number;
+  evidence: string | null;
+  updated_at: string | null;
+}
+export interface ActionRegistry {
+  version: number;
+  fuse_keywords: string[];
+  weekly_proposal_budget: number | null;
+  divergence_threshold: number;
+  categories: RegistryCategory[];
+}
+export interface RegistrySnapshot {
+  registry: ActionRegistry | null;
+  path: string;
+  error?: string;
+}
+export const agentRegistryLoad = (): Promise<RegistrySnapshot> =>
+  agentFetch<RegistrySnapshot>("/api/registry");
+export const agentRegistrySave = (rawJson: string): Promise<{ registry: ActionRegistry }> =>
+  agentFetch<{ registry: ActionRegistry }>("/api/registry", {
+    method: "POST",
+    body: { raw_json: rawJson },
+  });
 export const agentCreateCommitment = (
   employeeId: string,
   title: string,

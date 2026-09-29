@@ -77,6 +77,9 @@
     "stopHint": "Graceful stop: the employee pauses at the next step boundary; message or delegate to resume.",
     "openOutputDir": "Open output directory",
     "watchProposals": "Pending proposals",
+    "watchAuto": "Auto-activated (registered categories)",
+    "watchAutoNone": "None — no commitments auto-activated via registered categories yet",
+    "watchReview": "sampled",
     "watchCommitments": "Active commitments",
     "watchTasks": "Current tasks",
     "watchArtifacts": "Recent artifacts",
@@ -313,7 +316,14 @@
     "approve": "Approve",
     "reject": "Reject",
     "approved": "Approved",
-    "rejected": "Rejected"
+    "rejected": "Rejected",
+    "whyPending": "Why this needs approval",
+    "why": {
+      "unclassified": "No authorized category matched (conservative resolution)",
+      "fuse": "Hit fuse keyword \"{kw}\"",
+      "expired": "Category \"{cat}\" has lapsed without re-signing",
+      "humanTier": "Category \"{cat}\" sits in human adjudication"
+    }
   },
   "operations": {
     "title": "Operations — GBrain CLI",
@@ -375,6 +385,11 @@
     "writeBack": "Write back config.json",
     "saved": "Saved",
     "jsonParseFail": "JSON parse failed: {e}",
+    "registrySection": "Action Registry (delegation boundary)",
+    "registryDesc": "The canvas of the power to draw the line: register which commitment categories may activate without case-by-case approval (Ch.20 §5). Widening (fenced/owned) requires named accountability, a future expiry, and evidence — saving is rejected otherwise; tightening is always allowed. Unregistered categories always go to human approval.",
+    "registryLapsedWarn": "{n} category(ies) have lapsed — they will not auto-activate until re-signed (update expiry and evidence).",
+    "registryReload": "Reload",
+    "registrySaved": "Saved",
     "tierSection": "Model routing (v0.42 tiers)",
     "tierDesc": "gbrain v0.42 routes tasks to model tiers. Settings write to the DB plane (authoritative) via gbrain config set.",
     "unifyModel": "Use one model for all tiers",
@@ -554,7 +569,9 @@
     "employeeNotFound": "Employee not found: {id}",
     "employeeNotRunning": "{id} is not running right now.",
     "employeeArchived": "{id} has been archived.",
-    "taskNotFound": "Task not found: {id}"
+    "taskNotFound": "Task not found: {id}",
+    "registryInvalid": "Registry validation failed ({rule}) [{id}]: {detail}",
+    "registryWriteFailed": "Failed to write registry: {detail}"
   },
   "error": {
     "unexpected": "An unexpected error occurred: {detail}"

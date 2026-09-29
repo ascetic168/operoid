@@ -155,6 +155,9 @@ const watchData = ref<WatchSnapshot | null>(null);
 const eventsEl = ref<HTMLElement | null>(null);
 let watchTimer: ReturnType<typeof setInterval> | null = null;
 
+// R5（Ch.20 §5）：自動啟用的承諾——帶 category_id 者單獨列出（強制可見、全數上送）。
+const autoActivated = computed(() => watchData.value?.commitments.filter((c) => c.category_id) ?? []);
+
 async function pollWatch() {
   if (!watchTarget.value) return;
   try {
@@ -578,12 +581,30 @@ const archivedEmployees = computed(() => store.employees.filter((e) => e.archive
             </div>
             <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchNone") }}</div>
           </div>
+          <!-- 自動啟用（Ch.20 §5：登記類別免核可直接 Active——強制可見、全數上送）-->
+          <div>
+            <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchAuto") }}</div>
+            <div v-if="watchData && autoActivated.length" class="flex flex-col gap-0.5">
+              <div v-for="c in autoActivated" :key="c.id" class="flex items-center gap-1">
+                <span class="truncate flex-1">
+                  • {{ c.title }}
+                  <span class="ml-1 rounded bg-violet-500/15 px-1 text-[10px] text-violet-500">{{ c.category_id }}</span>
+                  <span v-if="c.review_pending" class="ml-0.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-500">{{ t("instances.watchReview") }}</span>
+                  <span class="text-xs text-muted-foreground">[{{ c.status }}]</span>
+                </span>
+                <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.archive')" @click="archiveCommitment(c.id)">
+                  <Archive :size="12" />
+                </button>
+              </div>
+            </div>
+            <div v-else class="text-xs text-muted-foreground">{{ t("instances.watchAutoNone") }}</div>
+          </div>
           <div>
             <div class="mb-1 text-xs font-medium text-muted-foreground">{{ t("instances.watchCommitments") }}</div>
             <div v-if="watchData && watchData.commitments.length" class="flex flex-col gap-0.5">
-              <div v-for="c in watchData.commitments" :key="(c as any).id" class="flex items-center gap-1">
-                <span class="truncate flex-1">• {{ (c as any).title }} <span class="text-xs text-muted-foreground">[{{ (c as any).status }}]</span></span>
-                <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.archive')" @click="archiveCommitment((c as any).id)">
+              <div v-for="c in watchData.commitments" :key="c.id" class="flex items-center gap-1">
+                <span class="truncate flex-1">• {{ c.title }} <span class="text-xs text-muted-foreground">[{{ c.status }}]</span></span>
+                <button class="shrink-0 text-muted-foreground hover:text-destructive" :title="t('instances.archive')" @click="archiveCommitment(c.id)">
                   <Archive :size="12" />
                 </button>
               </div>
@@ -647,9 +668,9 @@ const archivedEmployees = computed(() => store.employees.filter((e) => e.archive
                 <span
                   class="ml-1 font-medium"
                   :class="{
-                    'text-emerald-500': ev.kind === 'satisfied' || ev.kind === 'wake' || ev.kind === 'artifact',
-                    'text-amber-500': ev.kind === 'stalled',
-                    'text-destructive': ev.kind === 'errored',
+                    'text-emerald-500': ev.kind === 'satisfied' || ev.kind === 'wake' || ev.kind === 'artifact' || ev.kind === 'auto_activated',
+                    'text-amber-500': ev.kind === 'stalled' || ev.kind === 'category_lapsed',
+                    'text-destructive': ev.kind === 'errored' || ev.kind === 'category_frozen',
                   }"
                 >{{ ev.kind }}</span>
                 <span class="ml-1 text-muted-foreground">{{ ev.detail }}</span>

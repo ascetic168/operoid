@@ -7,7 +7,10 @@ import {
   formatError,
   runOp,
   tL10n,
+  type ActionRegistry,
   type AppConfig,
+  agentRegistryLoad,
+  agentRegistrySave,
   obridgeConfigLoad,
   obridgeConfigSave,
   serverInfoExt,
@@ -306,6 +309,61 @@ async function saveObridge() {
 }
 
 onMounted(loadObridge);
+
+// ---- 動作類別登記表（Ch.20 §5——畫線權的畫布：哪些承諾類別可免個案核可自動啟用）----
+const registryText = ref("");
+const registryVersion = ref<number | null>(null);
+const registryLapsed = ref<string[]>([]);
+const registryLoadError = ref<string | null>(null);
+const registryError = ref<string | null>(null);
+const registrySaved = ref(false);
+
+function lapsedCategories(reg: ActionRegistry | null): string[] {
+  if (!reg) return [];
+  const now = Date.now();
+  return reg.categories
+    .filter((c) => c.tier !== "human" && c.expiry && new Date(c.expiry).getTime() <= now)
+    .map((c) => c.id);
+}
+
+async function loadRegistry() {
+  registryLoadError.value = null;
+  registryError.value = null;
+  registrySaved.value = false;
+  try {
+    const snap = await agentRegistryLoad();
+    registryVersion.value = snap.registry?.version ?? null;
+    registryLapsed.value = lapsedCategories(snap.registry);
+    registryText.value = snap.registry
+      ? JSON.stringify(snap.registry, null, 2)
+      : JSON.stringify({ version: 0, categories: [] }, null, 2);
+  } catch (e) {
+    registryLoadError.value = formatError(e);
+  }
+}
+
+async function saveRegistry() {
+  registryError.value = null;
+  registrySaved.value = false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(registryText.value);
+  } catch (e) {
+    registryError.value = t("configView.jsonParseFail", { e: String(e) });
+    return;
+  }
+  try {
+    const r = await agentRegistrySave(JSON.stringify(parsed));
+    registryVersion.value = r.registry.version;
+    registryLapsed.value = lapsedCategories(r.registry);
+    registryText.value = JSON.stringify(r.registry, null, 2);
+    registrySaved.value = true;
+  } catch (e) {
+    registryError.value = formatError(e);
+  }
+}
+
+onMounted(loadRegistry);
 
 async function onLocaleChange(v: string) {
   try {
@@ -700,6 +758,43 @@ async function onLocaleChange(v: string) {
         </div>
       </template>
       <p v-else-if="obridgeError" class="text-xs text-destructive">{{ obridgeError }}</p>
+    </section>
+
+    <!-- 動作類別登記表（Ch.20 §5——畫線權的畫布：哪些承諾類別可免個案核可自動啟用） -->
+    <section class="mt-6 rounded-xl border border-border bg-card/40 p-5">
+      <h2 class="mb-2 text-sm font-semibold">{{ $t("configView.registrySection") }}</h2>
+      <p class="mb-3 text-xs text-muted-foreground">{{ $t("configView.registryDesc") }}</p>
+      <p v-if="registryLapsed.length" class="mb-3 flex items-center gap-1 text-xs text-amber-500">
+        <AlertTriangle :size="13" />
+        {{ $t("configView.registryLapsedWarn", { n: registryLapsed.length }) }}
+      </p>
+      <p v-if="registryLoadError" class="text-xs text-destructive">{{ registryLoadError }}</p>
+      <template v-else>
+        <textarea
+          v-model="registryText"
+          class="h-72 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
+          spellcheck="false"
+        />
+        <div class="mt-3 flex items-center gap-3">
+          <button
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            @click="saveRegistry"
+          >
+            <Save :size="14" /> {{ $t("common.save") }}
+          </button>
+          <button
+            class="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:opacity-80"
+            @click="loadRegistry"
+          >
+            <RefreshCw :size="13" /> {{ $t("configView.registryReload") }}
+          </button>
+          <span v-if="registryVersion !== null" class="text-xs text-muted-foreground">v{{ registryVersion }}</span>
+          <span v-if="registryError" class="text-xs text-destructive">{{ registryError }}</span>
+          <span v-else-if="registrySaved" class="flex items-center gap-1 text-xs text-green-500">
+            <CheckCircle2 :size="13" /> {{ $t("configView.registrySaved") }}
+          </span>
+        </div>
+      </template>
     </section>
   </div>
 </template>

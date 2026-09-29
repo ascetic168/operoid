@@ -77,6 +77,9 @@
     "stopHint": "合作式停止：員工會在下一個步驟邊界優雅停止；傳訊息或交辦即可恢復。",
     "openOutputDir": "開啟產出目錄",
     "watchProposals": "待核可提案",
+    "watchAuto": "自動啟用（登記類別）",
+    "watchAutoNone": "無——尚未有經登記類別自動啟用的承諾",
+    "watchReview": "抽審",
     "watchCommitments": "進行中的承諾",
     "watchTasks": "目前工作",
     "watchArtifacts": "近期產出",
@@ -313,7 +316,14 @@
     "approve": "核可",
     "reject": "拒絕",
     "approved": "已核可",
-    "rejected": "已拒絕"
+    "rejected": "已拒絕",
+    "whyPending": "為何待核可",
+    "why": {
+      "unclassified": "未匹配任何已授權類別（保守解析）",
+      "fuse": "觸發保險絲關鍵詞「{kw}」",
+      "expired": "類別「{cat}」已屆期未重簽",
+      "humanTier": "類別「{cat}」屬人裁決層"
+    }
   },
   "operations": {
     "title": "操作 — GBrain CLI",
@@ -375,6 +385,11 @@
     "writeBack": "寫回 config.json",
     "saved": "已儲存",
     "jsonParseFail": "JSON 解析失敗：{e}",
+    "registrySection": "動作類別登記表（委任界線）",
+    "registryDesc": "畫線權的畫布：登記哪些承諾類別可免個案核可自動啟用（Ch.20 §5）。放寬（fenced/owned）須具名課責、未來屆期與放寬證據，缺一存檔被拒；收緊永遠允許。未登記的類別一律送人類核可。",
+    "registryLapsedWarn": "有 {n} 個類別已屆期——重簽（更新 expiry 與證據）前不會再自動啟用。",
+    "registryReload": "重新載入",
+    "registrySaved": "已存檔",
     "tierSection": "模型路由（v0.42 tier）",
     "tierDesc": "gbrain v0.42 依 tier 路由任務。設定經 gbrain config set 寫入 DB plane（權威層）。",
     "unifyModel": "全部 tier 用同一個模型",
@@ -554,7 +569,9 @@
     "employeeNotFound": "找不到員工：{id}",
     "employeeNotRunning": "{id} 目前不在執行中。",
     "employeeArchived": "{id} 已封存。",
-    "taskNotFound": "找不到任務：{id}"
+    "taskNotFound": "找不到任務：{id}",
+    "registryInvalid": "登記表驗證失敗（{rule}）[{id}]：{detail}",
+    "registryWriteFailed": "登記表寫入失敗：{detail}"
   },
   "error": {
     "unexpected": "發生未預期錯誤：{detail}"

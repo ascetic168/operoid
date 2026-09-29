@@ -25,11 +25,11 @@ function formatTime(iso: string): string {
     second: "2-digit",
   });
 }
-/** 事件 kind 色彩（沿用 watch 面板 events 配色）。 */
+/** 事件 kind 色彩（沿用 watch 面板 events 配色）。R5：登記表治理事件配色。 */
 function kindColor(kind: string): string {
-  if (kind === "satisfied" || kind === "wake" || kind === "artifact") return "text-emerald-500";
-  if (kind === "stalled") return "text-amber-500";
-  if (kind === "errored") return "text-destructive";
+  if (kind === "satisfied" || kind === "wake" || kind === "artifact" || kind === "auto_activated") return "text-emerald-500";
+  if (kind === "stalled" || kind === "category_lapsed" || kind === "budget_exceeded" || kind === "gate_bypass_warning") return "text-amber-500";
+  if (kind === "errored" || kind === "category_frozen") return "text-destructive";
   return "text-foreground";
 }
 onMounted(() => {

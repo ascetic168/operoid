@@ -5841,6 +5841,48 @@ pub fn recent_events_payload(
     Ok(out)
 }
 
+/// R5（Ch.20 §5.2 判準 R 的器具）：讀取面——登記表現況。`registry: null`＝尚未建立；
+/// `error`＝載入失敗（fails closed 中）。`GET /api/registry`。
+pub fn registry_load_payload(data_dir: &std::path::Path) -> serde_json::Value {
+    let path = data_dir.join(crate::registry::REGISTRY_FILE);
+    match crate::registry::load_registry(data_dir) {
+        Ok(Some(reg)) => serde_json::json!({ "registry": reg, "path": path }),
+        Ok(None) => serde_json::json!({ "registry": serde_json::Value::Null, "path": path }),
+        Err(e) => serde_json::json!({
+            "registry": serde_json::Value::Null,
+            "path": path,
+            "error": e.to_string(),
+        }),
+    }
+}
+
+/// R5：寫入面——parse → V1–V5 驗證（不對稱修正的強制點）→ 原子存檔（version+1）
+/// → `registry_changed` 事件（每次存檔一筆稽核紀錄）。`POST /api/registry`。
+pub fn registry_save_core(
+    data_dir: &std::path::Path,
+    store: &dyn Store,
+    raw_json: &str,
+) -> Result<crate::registry::ActionRegistry, AppError> {
+    let reg: crate::registry::ActionRegistry = serde_json::from_str(raw_json).map_err(|e| {
+        AppError::new("agent_os.registryInvalid")
+            .p("rule", "json")
+            .p("detail", e.to_string())
+    })?;
+    let saved = crate::registry::save_registry(data_dir, reg)?;
+    record_event(
+        store,
+        AGENT_WS,
+        "registry",
+        "registry_changed",
+        format!(
+            "登記表存檔 version {}（{} 個類別）",
+            saved.version,
+            saved.categories.len()
+        ),
+    );
+    Ok(saved)
+}
+
 /// Workspace 全景摘要（`agent_list_state`／`GET /api/state?workspace=`）。
 pub fn list_state_payload(
     store: &SqliteStore,
