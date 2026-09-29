@@ -1164,15 +1164,38 @@ const MAX_BARREN: u32 = 3;
 const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。只回 JSON 物件，不附加其他文字。";
 
 /// W3：PLAN 系統 prompt——具 write-note 權限時追加 write 選項說明。
-fn plan_system_prompt(ctx: &ToolCtx) -> String {
+/// R4：`send_allowed=false`（承諾類別圍欄 no_outbound）時不提示 send 選項——
+/// 員工看不到的選項就不會選（選項抑制是第一層；執行層硬閘見 send 分支）。
+fn plan_system_prompt(ctx: &ToolCtx, send_allowed: bool) -> String {
+    let send_note = if send_allowed {
+        "可選行動除 query（檢索）與 tool=send（外發通知）外"
+    } else {
+        "可選行動除 query（檢索）外（本承諾的登記類別圍欄禁止外發——不要回 send 動作）"
+    };
     if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
         format!(
             "{PLAN_SYSTEM}
-可選行動除 query（檢索）與 tool=send（外發通知）外，另可 {{\"tool\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"}}——把階段性產出寫成筆記檔（專屬產出目錄，供人類審閱）。"
+{send_note}，另可 {{\"tool\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"}}——把階段性產出寫成筆記檔（專屬產出目錄，供人類審閱）。"
         )
-    } else {
+    } else if send_allowed {
         PLAN_SYSTEM.to_string()
+    } else {
+        format!("{PLAN_SYSTEM}\n{send_note}。")
     }
+}
+
+/// R4（Ch.20 §5.1 圍欄執行）：此承諾的**自主循環**是否允許外發（send）。
+/// 承諾帶登記類別且該類別 `fences.no_outbound`（預設 true——從嚴預設）→ 禁止；
+/// 無登記表／承諾無類別／類別已自登記表移除 → 允許（授權於啟用當下完成；
+/// 線的重畫由分類查表與屆期把關的是**新**啟用）。對話回合的回覆外發不受此限。
+fn autonomous_send_allowed(ctx: &ToolCtx, category_id: Option<&str>) -> bool {
+    let Some(reg) = &ctx.registry else {
+        return true;
+    };
+    let Some(cat_id) = category_id else {
+        return true;
+    };
+    reg.category(cat_id).map_or(true, |cat| !cat.fences.no_outbound)
 }
 
 const EVAL_SYSTEM: &str = "你是一名完成條件評估者。只根據完成條件與已產出的成果，判斷承諾是否已滿足。只回 JSON 物件，不附加其他文字。";
@@ -1329,22 +1352,31 @@ async fn run_autonomous_inner(
         // 「成果是否已足夠」而非盲目繼續查。
         let recent: Vec<String> = memory.notes.iter().rev().take(5).cloned().collect();
         let summaries = recent_artifact_summaries(store, &artifact_ids, 3, 400)?;
+        // R4：圍欄執行——每輪即時判定（類別可能被連坐凍結／重畫）。
+        let send_allowed = autonomous_send_allowed(ctx, commitment.category_id.as_deref());
+        let plan_tail: &str = if send_allowed {
+            "請決定下一步：若上述成果已足以滿足完成條件，回 {\"done\": true}；\
+             若應主動通知人類（如重大進展／需要決策），回 send 動作；\
+             否則給下一個該調查的具體問題（避免與已查過的重複）。只回 JSON，三選一：\
+             {\"done\": true} 或 {\"next_query\": \"...\", \"rationale\": \"...\"} 或\
+             {\"tool\": \"send\", \"to\": \"送達目標\", \"text\": \"訊息全文\", \"source\": \"通道標籤如 email\", \"rationale\": \"...\"}。"
+        } else {
+            "請決定下一步：若上述成果已足以滿足完成條件，回 {\"done\": true}；\
+             否則給下一個該調查的具體問題（避免與已查過的重複）。只回 JSON，二選一：\
+             {\"done\": true} 或 {\"next_query\": \"...\", \"rationale\": \"...\"}。\
+             （本承諾的登記類別圍欄禁止外發——不要回 send。）"
+        };
         let plan_user = format!(
             "現在時間：{now}。\n承諾：{title}\n完成條件：{cond}\n\
              已查得的成果（近期）：\n{arts}\n\
-             近期已做：\n{recent}\n\
-             請決定下一步：若上述成果已足以滿足完成條件，回 {{\"done\": true}}；\
-             若應主動通知人類（如重大進展／需要決策），回 send 動作；\
-             否則給下一個該調查的具體問題（避免與已查過的重複）。只回 JSON，三選一：\
-             {{\"done\": true}} 或 {{\"next_query\": \"...\", \"rationale\": \"...\"}} 或\
-             {{\"tool\": \"send\", \"to\": \"送達目標\", \"text\": \"訊息全文\", \"source\": \"通道標籤如 email\", \"rationale\": \"...\"}}。",
+             近期已做：\n{recent}\n{plan_tail}",
             title = commitment.title,
             cond = commitment.completion_condition,
             arts = if summaries.is_empty() { "(尚無)".into() } else { summaries.join("\n") },
             recent = if recent.is_empty() { "(尚無)".into() } else { recent.join("\n") },
             now = now_line(),
         );
-        let plan = match reasoner.reason(&plan_system_prompt(ctx), &plan_user).await {
+        let plan = match reasoner.reason(&plan_system_prompt(ctx, send_allowed), &plan_user).await {
             Ok(v) => v,
             Err(e) => {
                 outcome = AutonomousOutcome::Errored {
@@ -1426,6 +1458,28 @@ async fn run_autonomous_inner(
         // SendTool（無進站錨點，故 to/source 由 PLAN 明示）。結果記 note 進上下文（下一輪
         // PLAN 可見），不計入 artifact、不影響 EVAL。send 後不結束循環——繼續推進承諾。
         if plan.get("tool").and_then(|v| v.as_str()) == Some("send") {
+            if !send_allowed {
+                // R4 圍欄硬閘（第二層防護）：登記類別 no_outbound → 外發不落地。
+                // 語意比照 write allowlist：回報進上下文（下一輪 PLAN 可見）＋記事件＋循環繼續。
+                record_event(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    "send_blocked",
+                    format!(
+                        "承諾「{}」的 PLAN 欲外發，遭登記類別圍欄攔下（no_outbound）",
+                        commitment.title
+                    ),
+                );
+                memory.notes.push(
+                    "（外發被承諾圍欄禁止——類別 no_outbound。請繼續以查詢／write 推進，或回 done。）"
+                        .into(),
+                );
+                cap_notes(&mut memory);
+                memory.updated_at = now_rfc3339();
+                store.put_memory(&memory)?;
+                continue;
+            }
             let text = plan
                 .get("text")
                 .and_then(|v| v.as_str())
@@ -3338,6 +3392,102 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(dir.join("action-registry.json")).unwrap())
                 .unwrap();
         assert_eq!(reg2.version, version_after_freeze, "無類別的承諾不動登記表");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R4：send_allowed 判定矩陣——登記類別的 `no_outbound` 圍欄（預設 true，從嚴）
+    /// 禁止自主循環外發；明示 false、無登記表、無類別、類別已移除 → 允許。
+    #[test]
+    fn autonomous_send_allowed_matrix() {
+        let reg: crate::registry::ActionRegistry = serde_json::from_value(serde_json::json!({
+            "categories": [
+                { "id": "internal-report", "tier": "fenced",
+                  "questions": { "reversible": true, "blast_radius": "internal", "accountable": "c" },
+                  "expiry": "2099-12-31T00:00:00Z", "evidence": "e" },
+                { "id": "outbound-reply", "tier": "fenced", "fences": { "no_outbound": false },
+                  "questions": { "reversible": true, "blast_radius": "customer", "accountable": "c" },
+                  "expiry": "2099-12-31T00:00:00Z", "evidence": "e" }
+            ]
+        }))
+        .unwrap();
+        let mut c = ctx();
+        c.registry = Some(std::sync::Arc::new(reg));
+        assert!(
+            !autonomous_send_allowed(&c, Some("internal-report")),
+            "圍欄預設 no_outbound=true → 禁（從嚴預設）"
+        );
+        assert!(
+            autonomous_send_allowed(&c, Some("outbound-reply")),
+            "明示 no_outbound:false → 允（外發回覆類）"
+        );
+        assert!(autonomous_send_allowed(&c, None), "無類別 → 允（成立時已過人類通道）");
+        assert!(autonomous_send_allowed(&c, Some("gone-cat")), "類別已移除 → 允");
+        let bare = ctx();
+        assert!(
+            autonomous_send_allowed(&bare, Some("internal-report")),
+            "無登記表 → 允（無圍欄可言）"
+        );
+    }
+
+    /// R4（圍欄執行）：fenced 類別（no_outbound 預設 true）的承諾——PLAN 回 send
+    /// 被硬閘攔下（send_blocked 事件＋note 回報、不走 SendTool），循環繼續推進至 Satisfied。
+    #[tokio::test]
+    async fn autonomous_fenced_send_blocked_and_loop_continues() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_commitment(&Commitment {
+                id: "c1".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                title: "每日產線摘要".into(),
+                completion_condition: "每天彙整".into(),
+                status: CommitmentStatus::Active,
+                category_id: Some("internal-report".into()),
+                gate_reason: None,
+                review_pending: false,
+                retry_count: 0,
+                next_retry_at: None,
+                created_at: "t".into(),
+                updated_at: "t".into(),
+            })
+            .unwrap();
+        let mut c = ctx();
+        c.registry = Some(registry_fenced_internal_report());
+        let tool = StubTool::new("答案：42");
+        // PLAN(send) → PLAN(done) → EVAL(done)：send 被攔後循環繼續。
+        let reasoner = StubReasoner::new(vec![
+            r#"{"tool":"send","to":"boss@corp.com","text":"找到答案了","source":"email"}"#,
+            r#"{"done": true}"#,
+            r#"{"done": true}"#,
+        ]);
+        let out = run_autonomous(
+            &emp_id,
+            "c1",
+            &CycleBudget::default_session(),
+            &tool,
+            &reasoner,
+            &c,
+            &store,
+            &outbound_disabled(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(out, AutonomousOutcome::Satisfied { .. }), "{out:?}");
+        let mem = store.get_memory(&emp_id).unwrap().unwrap();
+        assert!(
+            mem.notes.iter().any(|n| n.contains("外發被承諾圍欄禁止")),
+            "攔截回報應留 note（下一輪 PLAN 可見）：{:?}",
+            mem.notes
+        );
+        assert!(
+            !mem.notes.iter().any(|n| n.contains("已主動外發")),
+            "不應走 SendTool（連 skipped 回報都不該出現）：{:?}",
+            mem.notes
+        );
+        let evs = store.list_events_by_employee(&emp_id, 30).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "send_blocked"), "{evs:?}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
