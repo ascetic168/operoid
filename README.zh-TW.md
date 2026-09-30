@@ -86,7 +86,7 @@ Runtime 管理**執行**，從不管理**思考** —— Employee 想什麼，�
 - **服務生命週期雙語意**：安裝開機服務（Employee 從開機就運行；關閉 app 毫無影響）
   或不安裝（服務隨 app 啟停）。Windows 已實作並實機驗證；Linux（systemd）與
   macOS（launchd）已實作、尚未實機驗證。
-- - 一個以 [GBrain](https://github.com/garrytan/gbrain) 為基礎的**知識圖譜層** ——
+- 一個以 [GBrain](https://github.com/garrytan/gbrain) 為基礎的**知識圖譜層** ——
   把日常檔案（聯絡人 CSV、會議 PDF、公司介紹）變成互連、可查詢的筆記；
   透過 GUI 而非命令列來同步、提問與推論。
 - 完整的 **Agent-OS 執行引擎**（Phase 1–7）：由 Trigger 驅動的 Employee 生命週期引擎；
@@ -97,6 +97,11 @@ Runtime 管理**執行**，從不管理**思考** —— Employee 想什麼，�
 - **可攔截的生命週期＋恢復力**：執行中的 Employee 可隨時**合作式停止**與**封存**
   （歷史完整保留、可追溯可解封）；出錯的承諾以指數退避**自動重試**，
   連續失敗達上限後停止並轉人工處理。
+- **人類畫得出的委任界線**（v0.3.4–v0.3.5）：**動作類別登記表**登記哪些承諾類別
+  可免個案核可自動啟用，三層委任（人裁決層／圍欄自動層／有主自動層）。
+  放寬須具名課責＋未來屆期＋放寬證據，收緊永遠允許；未登記的類別一律送人類核可。
+  附關鍵詞保險絲、屆期重簽、事故連坐凍結、抽審分歧警報——
+  在「設定 → 登記表」編輯（結構化表單；進階可切原始 JSON）。
 - **write-note——員工的第一個行動工具**：Employee 把完整產出寫成 markdown 筆記到
   專屬產出目錄（在知識庫之外）；人工審閱後將滿意的筆記移入 notes repo，
   經既有同步晉升為組織知識（產出 → 驗證 → 晉升）。可依模板逐一開啟權限。
@@ -167,8 +172,8 @@ npm run tauri build  # 建置散布用安裝包
 ```bash
 npm run tauri dev             # 完整應用，熱重載
 npm run build                 # 前端型別檢查 + 建置
-cd src-tauri && cargo test    # Rust 單元測試
-cd src-tauri && cargo check   # 後端快速型別檢查
+cargo test                    # Rust 單元測試（整個 workspace：ocore、oserver…）
+cargo check                   # 後端快速型別檢查（整個 workspace）
 ```
 
 ## 專案結構

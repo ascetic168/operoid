@@ -97,6 +97,11 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 - **可拦截的生命周期＋恢复力**：执行中的 Employee 可随时**合作式停止**与**封存**
   （历史完整保留、可追溯可解封）；出错的承诺以指数退避**自动重试**，
   连续失败达上限后停止并转人工处理。
+- **人类画得出的委任界线**（v0.3.4–v0.3.5）：**动作类别登记表**登记哪些承诺类别
+  可免个案核可自动启用，三层委任（人裁决层／围栏自动层／有主自动层）。
+  放宽须具名问责＋未来届期＋放宽证据，收紧永远允许；未登记的类别一律送人类核可。
+  附关键词保险丝、届期重签、事故连坐冻结、抽审分歧警报——
+  在「设置 → 登记表」编辑（结构化表单；进阶可切原始 JSON）。
 - **write-note——员工的第一个行动工具**：Employee 把完整产出写成 markdown 笔记到
   专属产出目录（在知识库之外）；人工审阅后将满意的笔记移入 notes repo，
   经既有同步晋升为组织知识（产出 → 验证 → 晋升）。可依模板逐一开启权限。
@@ -110,7 +115,7 @@ Runtime 管理**执行**，从不管理**思考** —— Employee 想什么，�
 ## 技术栈
 
 **前端：** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
-**核心与服务：** Rust —— `ocore`（领域核心）· `oserver`（axum 服务）· `obridge`（Email/WASM 橋接）
+**核心与服务：** Rust —— `ocore`（领域核心）· `oserver`（axum 服务）· `obridge`（Email/WASM 桥接）
 **桌面壳：** Tauri v2（窗口＋桌面专属能力；所有逻辑都在服务里）
 
 ## 前置需求
@@ -167,8 +172,8 @@ npm run tauri build  # 构建分发用安装包
 ```bash
 npm run tauri dev             # 完整应用，热重载
 npm run build                 # 前端类型检查 + 构建
-cd src-tauri && cargo test    # Rust 单元测试
-cd src-tauri && cargo check   # 后端快速类型检查
+cargo test                    # Rust 单元测试（整个 workspace：ocore、oserver…）
+cargo check                   # 后端快速类型检查（整个 workspace）
 ```
 
 ## 项目结构

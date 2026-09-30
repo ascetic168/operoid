@@ -108,6 +108,15 @@ backend.
   gracefully** or **archived** at any moment (history fully preserved, traceable,
   unarchivable); failed Commitments **retry automatically** with exponential
   backoff and hand back to the human after repeated failures.
+- **A delegation boundary humans can draw** (v0.3.4–v0.3.5): the **Action
+  Registry** registers which commitment categories may auto-activate without
+  case-by-case approval, across three delegation tiers (human-decided /
+  fenced-autonomous / owned-autonomous). Widening requires named accountability,
+  a future expiry, and evidence — tightening is always allowed — and unregistered
+  categories always go to human approval. With a keyword fuse, expiry &
+  re-signing, incident-driven tier freezing, and sampled-review divergence
+  alarms. Edited under **Settings → Registry** (structured forms; raw JSON for
+  advanced use).
 - **write-note, the first action tool**: Employees write finished output as
   markdown notes into their own output directory (kept outside the knowledge
   graph); humans review and promote approved notes into the notes repo, where
@@ -185,8 +194,8 @@ Frontend only (in a browser at http://localhost:1420): `npm run dev`,
 ```bash
 npm run tauri dev             # full app, hot reload
 npm run build                 # frontend typecheck + build
-cd src-tauri && cargo test    # Rust unit tests
-cd src-tauri && cargo check   # fast backend typecheck
+cargo test                    # Rust unit tests (whole workspace: ocore, oserver, …)
+cargo check                   # fast backend typecheck (whole workspace)
 ```
 
 ## Project structure
