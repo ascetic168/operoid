@@ -13,6 +13,29 @@
 
 ---
 
+## [v0.3.6] - 2026-10-01
+
+> 設定頁分頁化＋登記表從原始 JSON 改為**結構化列表編輯器**——使用者不必再記 JSON 鍵名、也不會打錯字。**後端與 API 不變**（`GET/POST /api/registry`），預設行為不變（未登記類別一律送人類核可）。
+
+### 設定頁分頁化
+
+- `ConfigView.vue` 拆為 `config/ConfigLayout.vue` ＋五分頁：應用程式（AppTab）、模型（ModelsTab）、服務（ServicesTab）、登記表（RegistryTab）、進階（AdvancedTab）；router 改巢狀路由（`/config/{app,models,services,registry,advanced}`），i18n 新增 `configView.tabs.*` 三語。
+
+### 登記表結構化編輯器（RegistryTab 重寫）
+
+- **三層委任解說**（`registry/TierGuide.vue`）：人裁決層／圍欄自動層／有主自動層的分工與入場條件，附從嚴預設說明（未登記類別一律視為人裁決層）。
+- **全域設定**：保險絲關鍵字 chips（可增刪；清空＝停用）、每週提案預算（留空＝不設限）、抽審分歧門檻（0–1）。
+- **類別手風琴卡**（`registry/CategoryCard.vue`）：摘要列（id／說明／層級彩色徽章／屆期警示），點開就地展開完整表單；**依層級條件顯示**——fenced/owned 才出現屆期（datetime-local ↔ RFC3339 自動轉換）、抽審比例、放寬證據、圍欄（工具白名單／禁外發／僅模板），owned 另顯緊急停止機制。新增類別預設人裁決層（從嚴）。
+- **存檔前客戶端鏡射 V1–V5 驗證**：id 非空且唯一、抽審比例 0–1、放寬層需問責人＋證據＋未來屆期、owned 需緊急停止；未通過的卡片**自動展開**並逐條行內提示，修正前不送出（伺服器仍是最終把關）。
+- **載入正規化**：缺欄位補 serde 預設值——手改壞的檔案也能載入修復；屆期與抽審分歧警示保留。
+- **進階收合區**：原始 JSON 由表單狀態生成，可手動編輯後「套用到表單」（parse→正規化），存檔一律以表單為準。
+- i18n：`configView.registry*` 三語各 +75 鍵。
+- 驗證：vue-tsc + vite build 0 error；瀏覽器煙霧測試（mock registry API）走完載入重試、展開、層級切換、驗證擋存、存檔版本 +1、新增／刪除類別、原始 JSON 套用全流程。
+
+### docs
+
+- README 三語：Current status 補「委任界線」（v0.3.4–v0.3.5）條目；Development 指令改為 workspace 根目錄 `cargo test`／`cargo check`（原 `cd src-tauri` 會漏掉 ocore/oserver 測試）；修正 zh-TW 重複破折號與 zh-CN 殘留繁體字。
+
 ## [v0.3.5] - 2026-09-29
 
 > **動作類別登記表（委任界線）**——治理理論見 `docs/界線的形狀.md`；計畫 `docs/Operoid-計畫-動作類別登記表.md`（R0–R6）。配套**憲章修正 v1**（Handbook 中英：Ch.02 增補原則 11「界線由人類畫定」、Ch.20 §5 重寫為「委任界線」、Ch.11 §5 自動啟用路徑、Ch.20 §3 人類邊界含畫線）。**預設行為不變**：未建立登記表時，一切員工提案照舊送人類核可（從嚴預設）。
