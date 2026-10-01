@@ -33,6 +33,7 @@ Today's AI systems generally lack:
 - **shared workspaces** — nowhere for multiple agents and humans to collaborate on the same things.
 - **organizational knowledge** — what the model knows isn't what the organization knows.
 - **enterprise roles** — an agent has no identity, authority, or accountability.
+- **delegation boundaries** — no principled answer to "what may the machine do without asking."
 - **continuous execution** — nothing wakes the agent when something relevant happens.
 
 Operoid treats AI as **organizational members, not chatbots.**
@@ -55,6 +56,46 @@ The Runtime manages **execution**. It never manages **reasoning** — what an
 Employee thinks is its own. That is why Operoid is an operating system, not an
 application.
 
+## A delegation boundary humans can draw
+
+"Should AI decide?" is not one question but three. **Capability** — can the
+system decide correctly? Its answer moves with every model release.
+**Accountability** — when the decision is wrong, who answers for it?
+**Legitimacy** — is this a decision a human should be making at all? Only the
+first answer changes with technology. A delegation policy is sound only if it
+passes all three — and as models grow more capable, the same specification gap
+produces a larger blast radius, so the case for keeping the boundary in human
+hands gets **stronger**, not weaker.
+
+Operoid takes this seriously enough to make it constitutional —
+**[Handbook Principle 11, "the boundary is drawn by humans"](handbook/02-Design-Philosophy.md)** —
+and then operational:
+
+- **Delegation is granted to action categories**, never to "the system." Each
+  category is assessed by three questions — reversibility, blast radius, named
+  accountability — and assigned to one of three tiers: **human adjudication**,
+  **fenced autonomy**, or **owned autonomy**.
+- **Strict by default.** A category humans have not registered always goes to
+  human adjudication. Widening requires evidence and a signature; tightening is
+  always cheap. No Employee may take part in deciding its own scope of
+  authority, and metrics that reward boundary expansion — an "automation rate"
+  — are barred as performance indicators.
+- **The boundary is kept alive and auditable.** Authorizations expire and must
+  be re-signed; an incident automatically freezes the affected category back to
+  human adjudication; the machine's classifications are blind-sampled, and a
+  diverging sample narrows the boundary. The test of ownership is **document
+  reconstructability**: if the boundary's current position can be rebuilt from
+  human documents alone, it belongs to humans — if the system's own traces must
+  be inspected to know where it lies, it has changed hands.
+
+None of this was invented from theory. It is distilled from a real
+(de-identified) manufacturing case: an autonomous agent that judged for itself
+which actions were "routine" and recorded each drift as an achievement. The
+full analysis is the essay **[The Shape of the
+Boundary](journal/The_Shape_of_the_Boundary_Charlie_Chu.pdf)**; its machinery
+ships in the product
+as the **Action Registry** — see [Current status](#current-status).
+
 ## Core concepts
 
 | Concept | One-line role |
@@ -68,6 +109,7 @@ application.
 | **Project** | A bounded collaboration toward a goal. |
 | **Task** | A unit of work. Short-lived, executable. |
 | **Commitment** | A persistent responsibility that outlives tasks. |
+| **Action Registry** | The delegation boundary. Which action categories may act without asking — and which may not. |
 | **Trigger** | What decides an Employee should wake. |
 | **Runtime** | The engine that manages lifecycle, never reasoning. |
 | **Event** | The immutable record of what happened. |
@@ -83,7 +125,7 @@ The Architecture Handbook is at **v0.2 (Draft)**, and the roadmap's milestones
 have been **built end-to-end through Phase 7** — the vision in the handbook is
 now a running system, not just a draft.
 
-**v0.3.0 — a resident service, many frontends.** The backend now runs as
+**v0.3.6 — a resident service, many frontends.** The backend now runs as
 **`oserver`**, a local service (HTTP API on 127.0.0.1) that owns the Runtime:
 Employees keep working whether or not any window is open. The desktop app is
 now *one frontend among many* — anything that speaks HTTP can drive the same
@@ -109,14 +151,11 @@ backend.
   unarchivable); failed Commitments **retry automatically** with exponential
   backoff and hand back to the human after repeated failures.
 - **A delegation boundary humans can draw** (v0.3.4–v0.3.5): the **Action
-  Registry** registers which commitment categories may auto-activate without
-  case-by-case approval, across three delegation tiers (human-decided /
-  fenced-autonomous / owned-autonomous). Widening requires named accountability,
-  a future expiry, and evidence — tightening is always allowed — and unregistered
-  categories always go to human approval. With a keyword fuse, expiry &
-  re-signing, incident-driven tier freezing, and sampled-review divergence
-  alarms. Edited under **Settings → Registry** (structured forms; raw JSON for
-  advanced use).
+  Registry** — authorization per action category across three tiers, strict by
+  default, with a keyword fuse, expiry & re-signing, incident-driven freezing,
+  and sampled-review divergence alarms; edited under **Settings → Registry**
+  (structured forms; raw JSON for advanced use). Why the boundary looks this
+  way: [A delegation boundary humans can draw](#a-delegation-boundary-humans-can-draw).
 - **write-note, the first action tool**: Employees write finished output as
   markdown notes into their own output directory (kept outside the knowledge
   graph); humans review and promote approved notes into the notes repo, where
