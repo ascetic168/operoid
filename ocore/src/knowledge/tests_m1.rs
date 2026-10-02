@@ -392,7 +392,7 @@ fn m1_t5_revocation() {
 ///
 /// 構造入口僅二：`access_context_for_employee`（Employee 推導，無自稱參數）與
 /// `operator_principal`（bootstrap 恆等）。推導是 `emp.id` 的純函式——呼叫端無法
-/// 把 mallory 說成別人；`AccountProvider` 把 authN 通過者恆映射 operator。
+/// 把 mallory 說成別人；oserver 的 `PrincipalTokenProvider` 把 authN 通過者
 #[test]
 fn m1_t8_impersonation() {
     use crate::domain::models::{BrainRef, Employee, EmployeeState};
@@ -417,7 +417,7 @@ fn m1_t8_impersonation() {
     // 冒名防護的本體：推導函式不接受「宣稱身份」參數，重複推導恆等。
     let again = access_context_for_employee(&emp, None, None);
     assert_eq!(ctx, again);
-    // operator 恆等：authN 通過者恆為 bootstrap principal（SingleOperatorProvider 語意）。
+    // operator 恆等：authN 通過者恆為 bootstrap principal（PrincipalTokenProvider 語意）。
     assert_eq!(operator_principal().id, OPERATOR_PRINCIPAL_ID);
     // ToolCtx 攜身份到工具層（檢索邊界拿得到 AccessContext）。
     assert_eq!(tool_ctx().access.principal_id, "principal-operator");
