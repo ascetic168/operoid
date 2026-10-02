@@ -303,7 +303,12 @@
     },
     "packLabel": "Schema pack：{pack}",
     "v2Hint": "当前 schema pack 为 {pack}（v1，6 工厂）。建议到设置页执行 unify-types 升级到 gbrain-base-v2（15 型）。",
-    "v2HintLink": "前往设置"
+    "v2HintLink": "前往设置",
+    "editor": {
+      "targetLevel": "保密等级",
+      "targetCircle": "圈子（部门／项目）",
+      "targetHint": "默认写入公司层；指定部门／项目或更高保密等级时，系统自动创建对应范围与来源（作者需具备该等级 clearance）。"
+    }
   },
   "chat": {
     "empty": "尚无消息。发一则开始对话。",

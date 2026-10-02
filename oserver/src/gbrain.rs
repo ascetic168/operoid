@@ -896,13 +896,20 @@ async fn api_factory_write_pages(
     headers: HeaderMap,
     body: Json<WritePagesBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    // C13c（D-C13i）：批次路徑同樣受寫入端天花板管制。
+    let owner = match require_identity(&state, &headers) {
+        Ok(id) => id.name,
+        Err(r) => return r,
+    };
     let st = state.clone();
     let b = body.0;
-    let res = tokio::task::spawn_blocking(move || {
+    let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
+        if let Some(repo) = b.target_repo.as_deref() {
+            let store = ocore::domain::SqliteStore::open(&st.db_path)?;
+            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, repo).await?;
+        }
+        let cfg = cfg;
         let notes = std::path::PathBuf::from(
             b.target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()),
         );

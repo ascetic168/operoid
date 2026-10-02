@@ -36,6 +36,7 @@ import {
   factoryOpenDir,
   factoryWritePages,
   factorySaveAuthored,
+  type SecurityLevel,
   factoryClassify,
   factoryTypes,
   brainSync,
@@ -424,8 +425,27 @@ function openEditor(f: Factory) {
   editorSlug.value = null;
   editorResult.value = null;
   editorError.value = null;
+  editorTargetKind.value = "company";
+  editorTargetCircle.value = "";
+  editorTargetLevel.value = "internal";
   editorOpen.value = true;
 }
+
+// ---- C13c：撰寫目標（圈子×等級；company+internal＝預設公司層，不送 target）----
+const editorTargetKind = ref<"company" | "department" | "project">("company");
+const editorTargetCircle = ref("");
+const editorTargetLevel = ref<SecurityLevel>("internal");
+const editorTarget = computed<{
+  kind: "company" | "department" | "project";
+  circle: string;
+  level: SecurityLevel;
+} | undefined>(() => {
+  if (editorTargetKind.value === "company" && editorTargetLevel.value === "internal") return undefined;
+  const circle = editorTargetCircle.value.trim();
+  if (editorTargetKind.value !== "company" && !circle) return undefined;
+  return { kind: editorTargetKind.value, circle: circle || "company", level: editorTargetLevel.value };
+});
+
 
 async function saveEditor() {
   editorError.value = null;
@@ -436,6 +456,7 @@ async function saveEditor() {
       editorMd.value,
       editorSlug.value,
       targetRepo.value,
+      editorTarget.value,
     );
     editorSlug.value = res.slug; // 之後存檔覆蓋同檔
     editorMd.value = res.enriched_markdown; // 反映 LLM 補的 wikilink
@@ -735,6 +756,28 @@ async function saveEditorAndSync() {
             <span v-if="editorResult.used_fallback" class="ml-2 text-warning">{{ $t("factories.editorFallback") }}</span>
           </span>
           <span v-else>{{ $t("factories.editorHint") }}</span>
+        </div>
+
+        <!-- C13c：寫入目標（圈子×等級；自動供給 scope/source） -->
+        <div class="flex flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-xs text-muted-foreground">
+          <span>{{ $t("factories.editor.targetLevel") }}</span>
+          <select v-model="editorTargetLevel" class="rounded border border-border bg-background px-2 py-0.5">
+            <option value="internal">internal</option>
+            <option value="confidential">confidential</option>
+            <option value="secret">secret</option>
+            <option value="public">public</option>
+          </select>
+          <select v-model="editorTargetKind" class="rounded border border-border bg-background px-2 py-0.5">
+            <option value="company">company</option>
+            <option value="department">department</option>
+            <option value="project">project</option>
+          </select>
+          <input
+            v-model="editorTargetCircle"
+            class="w-32 rounded border border-border bg-background px-2 py-0.5 font-mono"
+            :placeholder="$t('factories.editor.targetCircle')"
+          />
+          <span class="truncate">{{ $t("factories.editor.targetHint") }}</span>
         </div>
 
         <textarea

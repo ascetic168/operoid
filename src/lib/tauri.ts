@@ -390,14 +390,19 @@ export interface AuthoredResult {
   enriched_markdown: string;
   names_count: number;
   enriched: boolean;
+  /** C13c：指定圈子×等級寫入時，實際落點（自動供給）。 */
+  scope?: string;
+  source?: string;
 }
 
-/** 手寫編輯器存檔:首次用 title 當檔名,之後覆蓋同檔。 */
+/** 手寫編輯器存檔:首次用 title 當檔名,之後覆蓋同檔。
+ * C13c：`target` 可指定圈子×等級（自動供給 scope/source）；缺省＝公司層預設。 */
 export const factorySaveAuthored = (
   factory: Factory,
   markdown: string,
   existingSlug: string | null,
   targetRepo: string | null,
+  target?: { kind: "company" | "department" | "project"; circle: string; level: SecurityLevel },
 ): Promise<AuthoredResult> =>
   agentFetch<AuthoredResult>("/api/factories/save-authored", {
     method: "POST",
@@ -406,6 +411,7 @@ export const factorySaveAuthored = (
       markdown,
       existing_slug: existingSlug,
       target_repo: targetRepo,
+      target,
     },
   });
 

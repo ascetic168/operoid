@@ -303,7 +303,12 @@
     },
     "packLabel": "Schema pack: {pack}",
     "v2Hint": "Active schema pack is {pack} (v1, 6 factories). Consider running unify-types on the Config page to upgrade to gbrain-base-v2 (15 types).",
-    "v2HintLink": "Open settings"
+    "v2HintLink": "Open settings",
+    "editor": {
+      "targetLevel": "Level",
+      "targetCircle": "Circle (dept/project)",
+      "targetHint": "Defaults to the company layer; picking a department/project or a higher level auto-provisions the matching scope and source (author needs the matching clearance)."
+    }
   },
   "chat": {
     "empty": "No messages yet. Send one to start the conversation.",
