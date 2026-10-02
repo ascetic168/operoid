@@ -87,6 +87,13 @@ pub struct AppConfig {
     /// sync 是否加 --no-pull（無 remote 的腦建議開）。
     #[serde(default = "default_true")]
     pub sync_no_pull: bool,
+    /// C12a-2（Q7 企業面）：Operations 主控台檢索 op（ask/query/think）開關。
+    /// false＝企業模式（管理面不繞檢索；檢索一律走員工工具/KnowledgeService）。
+    #[serde(default = "default_true")]
+    pub ops_retrieval_enabled: bool,
+    /// C12a-2（Q8 企業面）：Claude Code handoff（`gbrain serve` 直交第三消費者）開關。
+    #[serde(default = "default_true")]
+    pub claude_code_handoff_enabled: bool,
     /// LLM 結構化的取樣溫度。
     #[serde(default = "default_temp")]
     pub llm_temperature: f64,
@@ -309,6 +316,8 @@ impl Default for AppConfig {
             active_source_id: None,
             auto_sync: true,
             sync_no_pull: true,
+            ops_retrieval_enabled: true,
+            claude_code_handoff_enabled: true,
             llm_temperature: default_temp(),
             llm_max_tokens: default_max_tokens(),
             locale: None,

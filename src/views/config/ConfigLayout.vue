@@ -11,6 +11,7 @@ const tabs = [
   { to: "/config/models", labelKey: "configView.tabs.models" },
   { to: "/config/services", labelKey: "configView.tabs.services" },
   { to: "/config/registry", labelKey: "configView.tabs.registry" },
+  { to: "/config/knowledge", labelKey: "configView.tabs.knowledge" },
   { to: "/config/advanced", labelKey: "configView.tabs.advanced" },
 ] as const;
 </script>

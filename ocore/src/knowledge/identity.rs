@@ -37,6 +37,22 @@ pub fn hash_token(token: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
+/// C12a-2：建立 principal 的管理入口（service 型別不經 API——Q6；Rule 8 留痕）。
+pub fn create_principal(store: &dyn Store, principal: Principal) -> Result<()> {
+    if store.get_principal(&principal.id)?.is_some() {
+        return Err(anyhow::anyhow!("principal 已存在：{}", principal.id));
+    }
+    store.put_principal(&principal)?;
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        "principal_created",
+        &principal.id,
+    );
+    Ok(())
+}
+
 /// C12a：簽發 principal 的 API token（明文**只在此回傳一次**；存 SHA-256；Rule 8 留痕）。
 /// 輪替＝對同一 principal 重簽（舊 token 立即失效——hash 被覆寫）。
 pub fn issue_principal_token(store: &dyn Store, principal_id: &str) -> Result<String> {

@@ -135,7 +135,8 @@
     "launch": "開啟",
     "cancel": "取消",
     "cwdNotFound": "工作目錄不存在：{cwd}",
-    "noCustomTemplate": "已選自訂終端機，但範本為空"
+    "noCustomTemplate": "已選自訂終端機，但範本為空",
+    "handoffDisabled": "企業模式：Claude Code handoff 已退役（claude_code_handoff_enabled=false）。"
   },
   "factories": {
     "title": "工廠 — 拖放 / 點選 / 新增",
@@ -381,6 +382,7 @@
       "models": "模型",
       "services": "服務",
       "registry": "登記表",
+      "knowledge": "知識授權",
       "advanced": "進階"
     },
     "desc": "GBrain 的 config.json 是權威來源，系統讀取並直接使用；這裡可檢視/編輯，以及管理本系統自有的設定。",
@@ -590,7 +592,8 @@
     "needArgQuestion": "問題",
     "unknown": "未知操作：{op}",
     "notesNotFound": "notes repo 不存在：{path}",
-    "syncDone": "sync 完成（commit + sync + embed --stale + extract --stale）"
+    "syncDone": "sync 完成（commit + sync + embed --stale + extract --stale）",
+    "retrievalDisabled": "企業模式：管理主控台的檢索 op 已停用（ops_retrieval_enabled=false）。檢索請走員工工具。"
   },
   "note": {
     "opened": "↗ 已於瀏覽器開啟：{title}",
@@ -667,5 +670,55 @@
     "serviceLabel": "開機自動啟動 Operoid 服務",
     "serviceOnHint": "服務已註冊：開機自啟，關閉 App 不影響運行（員工持續工作）。",
     "serviceOffHint": "未註冊：開啟 App 時啟動服務，關閉 App 時一併停止（背景不常駐）。"
+  },
+  "knowledgeView": {
+    "title": "知識授權（Enterprise C′）",
+    "desc": "管理 principal、臨時授權（TTL grants）與知識範圍。政策權威在本系統；GBrain 只見 source 分區。",
+    "refresh": "重新載入",
+    "pick": "選擇…",
+    "col": {
+      "id": "ID",
+      "visibility": "可見性",
+      "classification": "分類",
+      "belonging": "歸屬",
+      "principal": "Principal",
+      "scope": "範圍",
+      "expires": "屆期",
+      "state": "狀態",
+      "task": "任務",
+      "purpose": "目的",
+      "type": "類型",
+      "displayName": "顯示名",
+      "departments": "部門"
+    },
+    "scopes": {
+      "title": "知識範圍（scopes→sources 映射，唯讀）"
+    },
+    "grants": {
+      "title": "臨時授權（TTL grants）",
+      "revoke": "撤銷",
+      "empty": "目前沒有任何 grant。",
+      "create": "發放 grant",
+      "created": "已發放。",
+      "ttlHours": "時效（小時）"
+    },
+    "principals": {
+      "title": "Principals 與 API tokens",
+      "hasToken": "已簽發",
+      "noToken": "無",
+      "issue": "簽發 token",
+      "rotate": "輪替",
+      "revokeToken": "撤銷 token",
+      "create": "建立 principal"
+    },
+    "token": {
+      "title": "{principal} 的 API token",
+      "once": "明文只顯示這一次——立即複製保存；關閉後無法再取。",
+      "copy": "複製"
+    }
+  },
+  "knowledge": {
+    "grantFailed": "grant 操作失敗：{detail}",
+    "principalFailed": "principal 操作失敗：{detail}"
   }
 }

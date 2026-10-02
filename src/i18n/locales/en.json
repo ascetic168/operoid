@@ -135,7 +135,8 @@
     "launch": "Open",
     "cancel": "Cancel",
     "cwdNotFound": "Working directory does not exist: {cwd}",
-    "noCustomTemplate": "Custom terminal selected but template is empty"
+    "noCustomTemplate": "Custom terminal selected but template is empty",
+    "handoffDisabled": "Enterprise mode: Claude Code handoff is retired (claude_code_handoff_enabled=false)."
   },
   "factories": {
     "title": "Factories — drop / click / create",
@@ -381,6 +382,7 @@
       "models": "Models",
       "services": "Services",
       "registry": "Registry",
+      "knowledge": "Knowledge",
       "advanced": "Advanced"
     },
     "desc": "GBrain's config.json is the source of truth; the system reads and uses it directly. Here you can inspect/edit it and manage this app's own settings.",
@@ -590,7 +592,8 @@
     "needArgQuestion": "a question",
     "unknown": "Unknown operation: {op}",
     "notesNotFound": "notes repo does not exist: {path}",
-    "syncDone": "sync done (commit + sync + embed --stale + extract --stale)"
+    "syncDone": "sync done (commit + sync + embed --stale + extract --stale)",
+    "retrievalDisabled": "Enterprise mode: retrieval ops on the ops console are disabled (ops_retrieval_enabled=false). Use employee tools for retrieval."
   },
   "note": {
     "opened": "↗ Opened in browser: {title}",
@@ -667,5 +670,55 @@
     "serviceLabel": "Start Operoid service at boot",
     "serviceOnHint": "Service installed: starts at boot; closing the app does not stop it (employees keep working).",
     "serviceOffHint": "Not installed: the service starts and stops with the app (no background residence)."
+  },
+  "knowledgeView": {
+    "title": "Knowledge Authorization (Enterprise C′)",
+    "desc": "Manage principals, temporary grants (TTL) and knowledge scopes. Policy authority lives here; GBrain only sees source partitions.",
+    "refresh": "Reload",
+    "pick": "Pick…",
+    "col": {
+      "id": "ID",
+      "visibility": "Visibility",
+      "classification": "Classification",
+      "belonging": "Belongs to",
+      "principal": "Principal",
+      "scope": "Scope",
+      "expires": "Expires",
+      "state": "State",
+      "task": "Task",
+      "purpose": "Purpose",
+      "type": "Type",
+      "displayName": "Display name",
+      "departments": "Departments"
+    },
+    "scopes": {
+      "title": "Knowledge scopes (scopes→sources mapping, read-only)"
+    },
+    "grants": {
+      "title": "Temporary grants (TTL)",
+      "revoke": "Revoke",
+      "empty": "No grants yet.",
+      "create": "Issue grant",
+      "created": "Granted.",
+      "ttlHours": "TTL (hours)"
+    },
+    "principals": {
+      "title": "Principals & API tokens",
+      "hasToken": "issued",
+      "noToken": "none",
+      "issue": "Issue token",
+      "rotate": "Rotate",
+      "revokeToken": "Revoke token",
+      "create": "Create principal"
+    },
+    "token": {
+      "title": "API token for {principal}",
+      "once": "The plaintext is shown only once — copy and store it now; it cannot be retrieved later.",
+      "copy": "Copy"
+    }
+  },
+  "knowledge": {
+    "grantFailed": "Grant operation failed: {detail}",
+    "principalFailed": "Principal operation failed: {detail}"
   }
 }

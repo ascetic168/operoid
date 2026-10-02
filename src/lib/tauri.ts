@@ -733,6 +733,68 @@ export const agentRegistrySave = (rawJson: string): Promise<{ registry: ActionRe
     method: "POST",
     body: { raw_json: rawJson },
   });
+
+// ---- C12a-2：知識授權管理（grants／principals／tokens；oserver /api/knowledge/*）----
+export interface PrincipalView {
+  id: string;
+  principal_type: "human" | "ai_employee" | "service";
+  employee_id?: string | null;
+  display_name: string;
+  attrs: { roles: string[]; departments: string[]; projects: string[] };
+  token_hash?: string | null;
+}
+export interface KnowledgeGrantView {
+  id: string;
+  principal_id: string;
+  scope_id: string;
+  task_id?: string | null;
+  purpose?: string | null;
+  expires_at: string;
+  state: "active" | "revoked" | "expired";
+  created_at: string;
+}
+export interface KnowledgeScopeView {
+  id: string;
+  visibility: string;
+  classification: string;
+  source_ids: string[];
+  department?: string | null;
+  project?: string | null;
+}
+export interface KnowledgeOverview {
+  principals: PrincipalView[];
+  grants: KnowledgeGrantView[];
+  scopes: KnowledgeScopeView[];
+}
+export const knowledgeOverviewLoad = (): Promise<KnowledgeOverview> =>
+  agentFetch<KnowledgeOverview>("/api/knowledge/overview");
+export const knowledgeGrantCreate = (body: {
+  principal_id: string;
+  scope_id: string;
+  task_id?: string;
+  purpose?: string;
+  ttl_secs: number;
+}): Promise<KnowledgeGrantView> =>
+  agentFetch<KnowledgeGrantView>("/api/knowledge/grants", { method: "POST", body });
+export const knowledgeGrantRevoke = (id: string): Promise<{ ok: boolean }> =>
+  agentFetch<{ ok: boolean }>(`/api/knowledge/grants/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+  });
+export const knowledgePrincipalCreate = (body: {
+  id: string;
+  display_name?: string;
+  principal_type?: "human" | "ai_employee";
+  employee_id?: string;
+}): Promise<PrincipalView> =>
+  agentFetch<PrincipalView>("/api/knowledge/principals", { method: "POST", body });
+export const knowledgeTokenIssue = (id: string): Promise<{ token: string }> =>
+  agentFetch<{ token: string }>(`/api/knowledge/principals/${encodeURIComponent(id)}/token`, {
+    method: "POST",
+  });
+export const knowledgeTokenRevoke = (id: string): Promise<{ ok: boolean }> =>
+  agentFetch<{ ok: boolean }>(`/api/knowledge/principals/${encodeURIComponent(id)}/token`, {
+    method: "DELETE",
+  });
 export const agentCreateCommitment = (
   employeeId: string,
   title: string,

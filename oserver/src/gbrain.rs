@@ -713,9 +713,16 @@ async fn api_op_run(
     let st2 = state.clone();
     let b = body.0;
     tokio::spawn(async move {
-        // C6（Q7）：檢索 op 改道 KnowledgeService（operator AccessContext）——
-        // 單人版行為不變（bootstrap allow-all）、但檢索一律留 receipt（後門關閉）。
+        // C6（Q7）：檢索 op 改道 KnowledgeService——單人版行為不變、一律留 receipt。
+        // C12a-2（Q7 企業面）：`ops_retrieval_enabled=false` 時管理面不繞檢索（403）。
         if matches!(b.op.as_str(), "ask" | "query" | "think") {
+            if !cfg.0.ops_retrieval_enabled {
+                st2.ops.finish_err(
+                    &op_id,
+                    &ocore::i18n::AppError::new("op.retrievalDisabled"),
+                );
+                return;
+            }
             // Test 8 完整版：AccessContext 出自請求身份（token 鏈），不出自參數。
             let access = match tokio::task::spawn_blocking({
                 let db = st2.db_path.clone();

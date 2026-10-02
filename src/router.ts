@@ -19,6 +19,7 @@ const routes = [
       { path: "models", name: "config-models", component: () => import("@/views/config/ModelsTab.vue") },
       { path: "services", name: "config-services", component: () => import("@/views/config/ServicesTab.vue") },
       { path: "registry", name: "config-registry", component: () => import("@/views/config/RegistryTab.vue") },
+      { path: "knowledge", name: "config-knowledge", component: () => import("@/views/config/KnowledgeTab.vue") },
       { path: "advanced", name: "config-advanced", component: () => import("@/views/config/AdvancedTab.vue") },
     ],
   },

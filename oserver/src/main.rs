@@ -10,6 +10,7 @@
 //! （服務模式無使用者 env——由設定檔提供）。
 
 mod auth;
+mod knowledge_admin;
 mod config;
 mod gbrain;
 mod operations;
@@ -249,6 +250,7 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
 
     let app = routes::router(Arc::clone(&state))
         .merge(writes::write_routes().with_state(Arc::clone(&state)))
+        .merge(knowledge_admin::knowledge_admin_routes().with_state(Arc::clone(&state)))
         .merge(gbrain::gbrain_routes().with_state(state));
 
     let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_wait());

@@ -258,6 +258,10 @@ pub fn claude_code_launch<R: Runtime>(
     template: Option<String>,
 ) -> Result<(), AppError> {
     let cfg = config::app_config::load(&app).map_err(|e| e.to_string())?;
+    // C12a-2（Q8 企業面）：handoff 可退役（`claude_code_handoff_enabled=false`）。
+    if !cfg.claude_code_handoff_enabled {
+        return Err(AppError::new("claude.handoffDisabled").p("config", "claude_code_handoff_enabled=false"));
+    }
     let cwd_path = Path::new(&cwd);
     if !cwd_path.is_dir() {
         return Err(AppError::new("claude.cwdNotFound").p("cwd", &cwd));
