@@ -19,6 +19,7 @@ pub mod bootstrap;
 pub mod fake;
 pub mod service;
 pub mod identity;
+pub mod planner;
 pub mod policy;
 pub mod types;
 
@@ -27,6 +28,9 @@ mod tests_m1;
 
 #[cfg(test)]
 mod tests_c7;
+
+#[cfg(test)]
+mod tests_c8;
 
 #[cfg(test)]
 mod tests_real;

@@ -36,6 +36,8 @@ pub struct RetrievalPlan {
     pub policy_version: u32,
     pub denied: bool,
     pub reason: String,
+    /// C8：任務聚焦所依的專案（None＝未聚焦）。
+    pub focus_project: Option<String>,
 }
 
 /// 檢索收據（提示詞 §6；Test 9）——結構化、可重構 Who→Employee→Task→Policy→Scope 鏈。
@@ -81,6 +83,7 @@ impl KnowledgeService {
     ) -> Result<ToolOutput> {
         let store = crate::domain::SqliteStore::open(&self.db_path)?;
         let plan = self.plan(&store, access)?;
+        let plan = self.apply_focus(&store, access, plan)?;
         let kind_str = match kind {
             RetrieveKind::Think => "think",
             RetrieveKind::Search => "search",
@@ -168,7 +171,27 @@ impl KnowledgeService {
             policy_version: policy.version,
             denied,
             reason,
+            focus_project: None,
         })
+    }
+
+    /// C8：任務聚焦（只縮不擴——D-C8a）。`access.task_id` 有綁專案時，把候選集
+    /// 收窄到（專案 scope ∪ Company scope）∩ 授權集；聚焦集空/全同 → no-op。
+    pub fn apply_focus(
+        &self,
+        store: &dyn Store,
+        access: &AccessContext,
+        mut plan: RetrievalPlan,
+    ) -> Result<RetrievalPlan> {
+        if let Some(tid) = &access.task_id {
+            if let Some(focus) = super::planner::task_focus(store, tid, &plan.scope_ids)? {
+                let scopes = store.list_scopes()?;
+                plan.source_ids = super::planner::sources_of(&scopes, &focus.scope_ids);
+                plan.scope_ids = focus.scope_ids;
+                plan.focus_project = Some(focus.project_id);
+            }
+        }
+        Ok(plan)
     }
 
     /// 單一 source 的檢索（MCP 優先；CLI fallback——M0-V5 實測 `--source` 有效）。
@@ -237,6 +260,7 @@ impl KnowledgeService {
                 "authorized_scopes": plan.scope_ids,
                 "policy_version": plan.policy_version,
                 "partial_errors": partial_errors,
+                "focus_project": plan.focus_project,
                 "task_id": access.task_id,
             })
             .to_string(),

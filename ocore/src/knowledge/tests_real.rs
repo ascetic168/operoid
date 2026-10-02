@@ -239,7 +239,6 @@ async fn setup_two_source_brain(exe: &str, dir: &std::path::Path, home_s: &str) 
 /// **G5 量測 1**：plan() 開銷＝policy 載入＋scopes 讀取＋純函式評估（非 gbrain 路徑）。
 #[test]
 fn bench_g5_plan_overhead() {
-    use crate::domain::Store as _;
     use crate::knowledge::bootstrap::bootstrap_with_sources;
     use crate::knowledge::service::KnowledgeService;
     use std::time::Instant;
