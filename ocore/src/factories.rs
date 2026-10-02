@@ -605,3 +605,71 @@ pub fn extract_companies_core(
         note: Some(note),
     })
 }
+
+/// C13c（Q12 兌現，D-C13g/i）：撰寫器文章寫入**指定圈子×等級**——
+/// ①寫入端天花板：作者 clearance ≥ 目標等級（與 I9 對稱，D-C13i）；
+/// ②自動供給 scope/source（慣例命名＋冪等）；
+/// ③enriched 內容寫進供給目錄（save_authored_core 的 target_repo 重定向）＋git commit；
+/// ④`sync --source` 立即入圖（免等事件匯流排的全腦同步）。
+/// 回傳（撰寫結果, 寫入目標）。
+pub async fn authored_to_scope_core(
+    cfg: &AppConfig,
+    state: Option<&AppState>,
+    store: &crate::domain::SqliteStore,
+    factory: &str,
+    markdown: &str,
+    existing_slug: Option<&str>,
+    kind: crate::knowledge::provision::CircleKind,
+    circle: &str,
+    level: crate::knowledge::types::SecurityLevel,
+    owner_principal: &str,
+) -> Result<(AuthoredResult, crate::knowledge::provision::WriteTarget), AppError> {
+    use crate::domain::Store as _;
+    // ① 寫入端天花板（D-C13i）：未賦 clearance＝Internal。
+    let owner = store
+        .get_principal(owner_principal)
+        .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?
+        .ok_or_else(|| AppError::new("knowledge.writeFailed").p("detail", format!("principal 不存在：{owner_principal}")))?;
+    let clearance = owner.attrs.clearance.unwrap_or(crate::knowledge::types::SecurityLevel::Internal);
+    if level > clearance {
+        return Err(AppError::new("knowledge.writeAboveClearance")
+            .p("level", format!("{level:?}").to_lowercase())
+            .p("clearance", format!("{clearance:?}").to_lowercase()));
+    }
+
+    // ② 自動供給（冪等）：既有 scope 直接回、無則建 source+scope+owner 規則。
+    let target = crate::knowledge::provision::resolve_write_target(
+        store, cfg, kind, circle, level, owner_principal,
+    )
+    .await
+    .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
+
+    // ③ enriched 內容寫進供給目錄（wikilink 補全等既有流程重用）。
+    let res = save_authored_core(
+        cfg,
+        state,
+        factory,
+        markdown,
+        existing_slug,
+        Some(target.dir.to_string_lossy().as_ref()),
+    )
+    .await?;
+
+    // ④ commit＋逐 source 立即入圖。
+    crate::knowledge::provision::commit_dir(&target.dir)
+        .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
+    let exe = cfg.gbrain_exe_path.clone();
+    let env = crate::proc::env_for_brain(cfg.active_env_home());
+    let (code, _, err) = crate::gbrain_cli::run_capture(
+        &exe,
+        &["sync", "--source", &target.source_id, "--no-pull", "--yes", "--no-hard-deadline"],
+        &env,
+    )
+    .await
+    .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
+    if code != 0 {
+        return Err(AppError::new("knowledge.writeFailed")
+            .p("detail", format!("sync {} 失敗：{}", target.source_id, err.trim())));
+    }
+    Ok((res, target))
+}

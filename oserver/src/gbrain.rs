@@ -942,11 +942,22 @@ async fn api_extract_companies(
 }
 
 #[derive(Deserialize)]
+struct AuthoredTarget {
+    /// company | department | project
+    kind: String,
+    circle: String,
+    /// public | internal | confidential | secret
+    level: String,
+}
+
+#[derive(Deserialize)]
 struct SaveAuthoredBody {
     factory: String,
     markdown: String,
     existing_slug: Option<String>,
     target_repo: Option<String>,
+    /// C13c（Q12）：可選寫入目標（圈子×等級）——缺省＝co-common 既有行為。
+    target: Option<AuthoredTarget>,
 }
 
 async fn api_factory_save_authored(
@@ -954,23 +965,71 @@ async fn api_factory_save_authored(
     headers: HeaderMap,
     body: Json<SaveAuthoredBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    // C13c：身份即作者（token 鏈裁定——D-C13i owner provenance）。
+    let owner = match require_identity(&state, &headers) {
+        Ok(id) => id.name,
+        Err(r) => return r,
+    };
     let st = state.clone();
     let b = body.0;
     let agent_state = st.agent_state.clone();
     let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
-        save_authored_core(
-            &cfg,
-            agent_state.as_ref(),
-            &b.factory,
-            &b.markdown,
-            b.existing_slug.as_deref(),
-            b.target_repo.as_deref(),
-        )
-        .await
+        // C13c（D-C13i）：寫入端天花板——所選來源（targetRepo）的等級 ≤ 作者 clearance。
+        if let Some(repo) = b.target_repo.as_deref() {
+            let store = ocore::domain::SqliteStore::open(&st.db_path)?;
+            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, repo).await?;
+        }
+        match &b.target {
+            Some(t) => {
+                let store = ocore::domain::SqliteStore::open(&st.db_path)?;
+                let kind = match t.kind.as_str() {
+                    "department" => ocore::knowledge::provision::CircleKind::Department,
+                    "project" => ocore::knowledge::provision::CircleKind::Project,
+                    _ => ocore::knowledge::provision::CircleKind::Company,
+                };
+                let level = serde_json::from_value::<ocore::knowledge::types::SecurityLevel>(
+                    serde_json::json!(t.level),
+                )
+                .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
+                let circle = if t.circle.trim().is_empty() { "company" } else { t.circle.trim() };
+                let (res, target) = ocore::factories::authored_to_scope_core(
+                    &cfg,
+                    agent_state.as_ref(),
+                    &store,
+                    &b.factory,
+                    &b.markdown,
+                    b.existing_slug.as_deref(),
+                    kind,
+                    circle,
+                    level,
+                    &owner,
+                )
+                .await?;
+                Ok(json!({
+                    "slug": res.slug,
+                    "target_dir": res.target_dir,
+                    "path": res.path,
+                    "used_fallback": res.used_fallback,
+                    "enriched_markdown": res.enriched_markdown,
+                    "names_count": res.names_count,
+                    "scope": target.scope_id,
+                    "source": target.source_id,
+                }))
+            }
+            None => {
+                let r = save_authored_core(
+                    &cfg,
+                    agent_state.as_ref(),
+                    &b.factory,
+                    &b.markdown,
+                    b.existing_slug.as_deref(),
+                    b.target_repo.as_deref(),
+                )
+                .await?;
+                Ok(serde_json::to_value(r).unwrap_or_default())
+            }
+        }
     })
     .await;
     finish(res)

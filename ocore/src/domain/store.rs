@@ -17,7 +17,8 @@ use super::models::{
 };
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
-pub trait Store {
+/// C13a：`Send + Sync` 上界——oserver 的 spawn future 需跨 await 持有 `&dyn Store`。
+pub trait Store: Send + Sync {
     fn list_workspaces(&self) -> Result<Vec<Workspace>>;
     fn get_workspace(&self, id: &str) -> Result<Option<Workspace>>;
     fn put_workspace(&self, ws: &Workspace) -> Result<()>;

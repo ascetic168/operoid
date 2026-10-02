@@ -22,6 +22,7 @@ pub mod service;
 pub mod identity;
 pub mod planner;
 pub mod policy;
+pub mod provision;
 pub mod types;
 
 #[cfg(test)]
