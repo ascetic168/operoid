@@ -21,7 +21,7 @@ use serde_json::json;
 
 use super::backend::RetrieveKind;
 use super::bootstrap::load_policy_fail_closed;
-use super::policy::{authorized_scope_ids, authorized_sources};
+use super::policy::{authorized_scope_ids_with_grants, authorized_sources};
 use super::types::AccessContext;
 use crate::domain::store::Store;
 use crate::domain::tools::{ToolCtx, ToolOutput};
@@ -162,7 +162,13 @@ impl KnowledgeService {
             );
         }
         let scopes = store.list_scopes()?;
-        let scope_ids = authorized_scope_ids(&policy, access, &scopes);
+        // C10：本 principal 的 active grants（三段式授權——explicit deny 仍優先）。
+        let grants: Vec<_> = store
+            .list_grants()?
+            .into_iter()
+            .filter(|g| g.principal_id == access.principal_id)
+            .collect();
+        let scope_ids = authorized_scope_ids_with_grants(&policy, access, &scopes, &grants);
         let source_ids = authorized_sources(&policy, access, &scopes);
         let (denied, reason) = if invalid {
             (true, "policy_missing_or_corrupt".to_string())

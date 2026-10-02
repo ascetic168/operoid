@@ -133,6 +133,13 @@ pub trait Store {
     /// C9 保留策略：刪除 `created_at < cutoff`（RFC3339 字串序）的 receipts，回傳筆數。
     fn delete_receipts_before(&self, cutoff: &str) -> Result<usize>;
 
+    // ── C10（D5）：臨時授權 grants ──
+
+    /// 寫入（upsert）一個 KnowledgeGrant。
+    fn put_grant(&self, grant: &crate::knowledge::types::KnowledgeGrant) -> Result<()>;
+    /// 列出全部 grants（id 排序；過濾在 Rust 端——家法）。
+    fn list_grants(&self) -> Result<Vec<crate::knowledge::types::KnowledgeGrant>>;
+
     // ── Phase 6d：生命週期事件（append-only）──
 
     /// 記錄一則不可變 Event（Ch.14）。
@@ -455,6 +462,15 @@ impl Store for JsonStore {
             )?;
         }
         Ok(removed)
+    }
+
+    fn put_grant(&self, grant: &crate::knowledge::types::KnowledgeGrant) -> Result<()> {
+        upsert_by_id(&self.path("knowledge_grants.json"), grant, |g| &g.id)
+    }
+    fn list_grants(&self) -> Result<Vec<crate::knowledge::types::KnowledgeGrant>> {
+        let mut out = self.read::<crate::knowledge::types::KnowledgeGrant>("knowledge_grants.json")?;
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
     }
 
     // ── Phase 7b：對話訊息（JsonStore：全集合讀後 in-memory 過濾）──

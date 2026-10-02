@@ -76,7 +76,10 @@ impl SqliteStore {
              CREATE TABLE IF NOT EXISTS knowledge_scopes (id TEXT PRIMARY KEY, visibility TEXT NOT NULL, data TEXT NOT NULL); \
              CREATE TABLE IF NOT EXISTS knowledge_policies (id TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT NOT NULL); \
              CREATE TABLE IF NOT EXISTS retrieval_receipts (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, employee_id TEXT, denied INTEGER NOT NULL, data TEXT NOT NULL); \
-             CREATE INDEX IF NOT EXISTS idx_receipts_principal ON retrieval_receipts(principal_id);",
+             CREATE INDEX IF NOT EXISTS idx_receipts_principal ON retrieval_receipts(principal_id); \
+             CREATE TABLE IF NOT EXISTS knowledge_grants (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, scope_id TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_grants_principal ON knowledge_grants(principal_id); \
+             CREATE INDEX IF NOT EXISTS idx_grants_scope ON knowledge_grants(scope_id);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -269,6 +272,26 @@ impl Store for SqliteStore {
             )
             .map_err(|e| anyhow!("delete_receipts_before: {e}"))?;
         Ok(n)
+    }
+
+    fn put_grant(&self, grant: &crate::knowledge::types::KnowledgeGrant) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_grants (id, principal_id, scope_id, state, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                grant.id,
+                grant.principal_id,
+                grant.scope_id,
+                encode(&grant.state)?,
+                encode(grant)?
+            ],
+        )
+        .map_err(|e| anyhow!("put_grant: {e}"))?;
+        Ok(())
+    }
+    fn list_grants(&self) -> Result<Vec<crate::knowledge::types::KnowledgeGrant>> {
+        let conn = self.lock()?;
+        select_all(&conn, "knowledge_grants", "ORDER BY id", params![])
     }
 
     fn list_workspaces(&self) -> Result<Vec<Workspace>> {

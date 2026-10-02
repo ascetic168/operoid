@@ -149,8 +149,37 @@ pub struct KnowledgePolicy {
 }
 
 /// 評估結論。`Deny` 帶原因（供 receipt／事件；對員工回中性文字——Rule 9）。
+/// C10：`Deny.reason` 語意升級——`denied_by_rule:*`＝explicit deny（grant 不可破）；
+/// `default_deny`＝無匹配（valid grant 可破——D-C10a 三段式）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Allow,
     Deny { reason: String },
+}
+
+/// C10（D5）：臨時授權狀態。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantState {
+    Active,
+    Revoked,
+    Expired,
+}
+
+/// C10（D5／提示詞 §5）：任務級臨時知識授權——principal×scope×TTL。
+/// 有效判定**查詢時即時**（expires_at；D9 無快取）；`task_id`/`purpose` 為稽核關聯。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeGrant {
+    pub id: String,
+    pub principal_id: String,
+    /// 授予的 scope（grant 破的是 default deny——explicit deny 仍優先，D-C10a）。
+    pub scope_id: String,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub purpose: Option<String>,
+    /// RFC3339 屆期（此時刻前有效）。
+    pub expires_at: String,
+    pub state: GrantState,
+    pub created_at: String,
 }

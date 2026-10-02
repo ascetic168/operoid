@@ -63,6 +63,8 @@ pub async fn scheduler_loop(
                 let _ = scan_commitments(&state, &load_cfg, &db_path, startup).await;
                 let _ = reset_errored(&load_cfg, &db_path).await; // 復原：Error 死巷→重試
                 scan_registry_expiry(&db_path); // R3：登記表屆期通知（冪等；效力由查表即時判斷）
+                // C10（D-C10b）：grants 屆期掃描（冪等狀態翻轉＋事件；判定的主閘是查詢時即時檢查）。
+                expire_grants_due_daily(&db_path);
                 // R6c/R6d：日界／月界觸發（事件鍵冪等——重啟不重複記）。
                 let today = chrono::Utc::now().date_naive().to_string();
                 if last_day.as_deref() != Some(today.as_str()) {
@@ -286,6 +288,18 @@ fn scan_registry_expiry(db_path: &std::path::Path) {
 /// R6c（M4 流量預算）：每日首 tick 統計近 7 天——`proposed` 超過登記表
 /// `weekly_proposal_budget` → `budget_exceeded`（白名單過窄警報）；零人類核可但
 /// `auto_activated`≥10 → `gate_bypass_warning`（檢查是否被不當繞過）。以週一日期為冪等鍵。
+/// C10（D-C10b）：grants 屆期掃描（30s tick；輕量冪等——翻轉即狀態欄變更）。
+fn expire_grants_due_daily(db_path: &std::path::Path) {
+    match SqliteStore::open(db_path) {
+        Ok(store) => {
+            if let Err(e) = crate::knowledge::grants::expire_grants_due(&store) {
+                eprintln!("[scheduler] expire_grants_due 失敗：{e}");
+            }
+        }
+        Err(e) => eprintln!("[scheduler] expire_grants_due 開庫失敗：{e}"),
+    }
+}
+
 /// C9（D-C9d）：receipts 保留策略——每日清一次超過保留期的收據（>0 筆時記事件）。
 fn prune_receipts_daily(db_path: &std::path::Path) {
     match SqliteStore::open(db_path) {

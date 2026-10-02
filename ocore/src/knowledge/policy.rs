@@ -89,9 +89,29 @@ pub fn authorized_scope_ids(
     ctx: &AccessContext,
     scopes: &[KnowledgeScope],
 ) -> Vec<String> {
+    authorized_scope_ids_with_grants(policy, ctx, scopes, &[])
+}
+
+/// C10（D-C10a 三段式）：grant 版授權判定——
+/// policy Allow → 授權；**explicit deny（denied_by_rule）→ 拒絕（grant 不可破）**；
+/// default deny → valid grant（principal/scope 匹配＋active＋未逾期）→ 授權。
+/// `grants` 由呼叫端自 store 列出（service.plan 過濾本 principal 的 grants）。
+pub fn authorized_scope_ids_with_grants(
+    policy: &KnowledgePolicy,
+    ctx: &AccessContext,
+    scopes: &[KnowledgeScope],
+    grants: &[super::types::KnowledgeGrant],
+) -> Vec<String> {
+    let now = chrono::Utc::now().to_rfc3339();
     let mut out: Vec<String> = scopes
         .iter()
-        .filter(|s| matches!(evaluate(policy, ctx, s), Decision::Allow))
+        .filter(|s| match evaluate(policy, ctx, s) {
+            Decision::Allow => true,
+            Decision::Deny { reason } if reason.starts_with("denied_by_rule") => false,
+            Decision::Deny { .. } => {
+                super::grants::grant_valid_for(grants, &ctx.principal_id, &s.id, &now)
+            }
+        })
         .map(|s| s.id.clone())
         .collect();
     out.sort();

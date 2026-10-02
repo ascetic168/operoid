@@ -14,6 +14,8 @@ use super::types::{
     Visibility,
 };
 use crate::domain::tools::{ToolCtx, ToolInput};
+use crate::domain::Store as _;
+use crate::knowledge::bootstrap::bootstrap_with_sources;
 
 // ── fixtures ──────────────────────────────────────────────────────────────
 
@@ -244,11 +246,110 @@ async fn m1_t10_confused_deputy_blocked() {
 
 // ── 待解鎖骨架（C4–C10）────────────────────────────────────────────────
 
-/// **Test 4**：臨時授權屆期（TTL grants）——WP-C10。
-#[ignore = "C10: knowledge_grants 屆期掃描落地後解鎖"]
-#[tokio::test]
-async fn m1_t4_grant_expiry() {
-    // C10：grant 屆期前可檢索、屆期後 DENY。
+/// **Test 4（C10 完整版）**：臨時授權 TTL grants——三段式語意（D-C10a）：
+/// bob 無任何 allow 規則 → grant 破 default deny；**逾期即時失效**（查詢時判定）；
+/// **explicit deny 不被 grant 架空**；revoke 即時失效（Test 5 同語意）。
+#[test]
+fn m1_t4_grant_expiry() {
+    use crate::knowledge::grants::{create_grant, grant_valid_for, revoke_grant};
+    use crate::knowledge::policy::authorized_scope_ids_with_grants;
+    use crate::knowledge::types::GrantState;
+
+    let dir = std::env::temp_dir().join(format!(
+        "m1t4-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = crate::domain::SqliteStore::open(&dir.join("test.db")).unwrap();
+    bootstrap_with_sources(&store, &["src-a".into()]).unwrap(); // co-common←src-a
+    store.put_scope(&scopes().into_iter().find(|s| s.id == "proj-x").unwrap()).unwrap();
+    let scopes = store.list_scopes().unwrap();
+
+    // bob 無任何 allow 規則（bootstrap 的 allow-all 對誰都開——先收緊為 operator-only）。
+    crate::knowledge::bootstrap::save_policy_new_version(
+        &store,
+        vec![PolicyRule {
+            id: "operator-only".into(),
+            priority: 10,
+            effect: Effect::Allow,
+            principals: Some(vec!["principal-operator".into()]),
+            principal_types: None,
+            scopes: None,
+            departments: None,
+            projects: None,
+            classifications: None,
+            department_membership: false,
+            project_membership: false,
+        }],
+    )
+    .unwrap();
+    let bob = ctx_employee("ai:bob");
+    let (empty_policy, _) = crate::knowledge::bootstrap::load_policy_fail_closed(&store);
+    assert!(authorized_scope_ids_with_grants(&empty_policy, &bob, &scopes, &[]).is_empty());
+
+    // ① grant 破 default deny：bob 獲 1 小時 proj-x。
+    let g = create_grant(&store, "ai:bob", "proj-x", Some("t9".into()), Some("調查".into()), 3600).unwrap();
+    let got = authorized_scope_ids_with_grants(&empty_policy, &bob, &scopes, &store.list_grants().unwrap());
+    assert_eq!(got, vec!["proj-x".to_string()], "grant 生效（default deny 被破）");
+    assert!(grant_valid_for(&store.list_grants().unwrap(), "ai:bob", "proj-x", &chrono::Utc::now().to_rfc3339()));
+
+    // ② 逾期即時失效：把 expires_at 撥到過去（不掃描、不翻轉——查詢時判定即擋）。
+    let mut expired = g.clone();
+    expired.expires_at = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+    store.put_grant(&expired).unwrap();
+    let grants_now = store.list_grants().unwrap();
+    assert!(!grant_valid_for(&grants_now, "ai:bob", "proj-x", &chrono::Utc::now().to_rfc3339()));
+    assert!(authorized_scope_ids_with_grants(&empty_policy, &bob, &scopes, &grants_now).is_empty(),
+        "逾期後 DENY（即時，Test 4）");
+
+    // ③ revoke 即時失效（Test 5 同語意）：重新給有效 grant 再撤銷。
+    let g2 = create_grant(&store, "ai:bob", "proj-x", None, None, 3600).unwrap();
+    revoke_grant(&store, &g2.id).unwrap();
+    let grants_now = store.list_grants().unwrap();
+    assert!(authorized_scope_ids_with_grants(&empty_policy, &bob, &scopes, &grants_now).is_empty(),
+        "撤銷即時生效");
+    assert_eq!(grants_now.iter().find(|x| x.id == g2.id).unwrap().state, GrantState::Revoked);
+
+    // ④ explicit deny 不被 grant 架空：default deny 可破、denied_by_rule 不可破。
+    let g3 = create_grant(&store, "ai:bob", "proj-x", None, None, 3600).unwrap();
+    crate::knowledge::bootstrap::save_policy_new_version(
+        &store,
+        vec![
+            PolicyRule {
+                id: "deny-proj-x".into(),
+                priority: 1,
+                effect: Effect::Deny,
+                principals: Some(vec!["ai:bob".into()]),
+                principal_types: None,
+                scopes: Some(vec!["proj-x".into()]),
+                departments: None,
+                projects: None,
+                classifications: None,
+                department_membership: false,
+                project_membership: false,
+            },
+            PolicyRule {
+                id: "allow-common".into(),
+                priority: 10,
+                effect: Effect::Allow,
+                principals: Some(vec!["ai:bob".into()]),
+                principal_types: None,
+                scopes: Some(vec!["co-common".into()]),
+                departments: None,
+                projects: None,
+                classifications: None,
+                department_membership: false,
+                project_membership: false,
+            },
+        ],
+    )
+    .unwrap();
+    let (policy_v3, _) = crate::knowledge::bootstrap::load_policy_fail_closed(&store);
+    let got = authorized_scope_ids_with_grants(&policy_v3, &bob, &scopes, &store.list_grants().unwrap());
+    assert_eq!(got, vec!["co-common".to_string()], "explicit deny 優先——grant 只救得了 default deny");
+    let _ = g3;
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// **Test 5（M1 版）**：撤銷——policy 變更即時反映（D9 無快取）：
