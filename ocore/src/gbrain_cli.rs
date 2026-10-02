@@ -498,7 +498,8 @@ pub async fn op_run_core(
 
     match op {
         "stats" => {
-            let code = run!(&["stats"]).map_err(|e| e.to_string())?;
+            // M0-V 實測（2026-10-02）：gbrain 0.60 已無 `stats` 指令，對應面為 `status`。
+            let code = run!(&["status"]).map_err(|e| e.to_string())?;
             Ok(OpResult::from_code(code))
         }
         "extract" => {
