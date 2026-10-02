@@ -6,7 +6,8 @@ use crate::knowledge::fake::{FakeBackend, FakeDoc};
 use crate::knowledge::policy::authorized_sources;
 use crate::knowledge::tests_m1::tool_ctx;
 use crate::knowledge::types::{
-    AccessContext, Effect, KnowledgePolicy, KnowledgeScope, PolicyRule, PrincipalType, Visibility,
+    AccessContext, Effect, KnowledgePolicy, KnowledgeScope, PolicyRule, PrincipalType,
+    SecurityLevel, Visibility,
 };
 
 /// **Test 2（C7 完整版）**：跨部門成員制——允許與限制並存。
@@ -22,12 +23,12 @@ async fn m1_t2_cross_department_allow_and_restrict() {
     b.add_doc("src-m", FakeDoc { title: "Mfg".into(), body: "Manufacturing yield protocol for M.".into() });
     b.add_doc("src-hr", FakeDoc { title: "HR".into(), body: "Restricted HR protocol material.".into() });
     let scopes = vec![
-        KnowledgeScope { id: "co-common".into(), visibility: Visibility::Company, classification: "internal".into(), source_ids: vec!["src-c".into()], owner: None, department: None, project: None },
-        KnowledgeScope { id: "dept-quality".into(), visibility: Visibility::Department, classification: "internal".into(), source_ids: vec!["src-q".into()], owner: None, department: Some("quality".into()), project: None },
-        KnowledgeScope { id: "dept-mfg".into(), visibility: Visibility::Department, classification: "internal".into(), source_ids: vec!["src-m".into()], owner: None, department: Some("manufacturing".into()), project: None },
-        KnowledgeScope { id: "restricted-hr".into(), visibility: Visibility::Restricted, classification: "confidential".into(), source_ids: vec!["src-hr".into()], owner: None, department: None, project: None },
+        KnowledgeScope { id: "co-common".into(), visibility: Visibility::Company, classification: SecurityLevel::Internal, source_ids: vec!["src-c".into()], owner: None, department: None, project: None },
+        KnowledgeScope { id: "dept-quality".into(), visibility: Visibility::Department, classification: SecurityLevel::Internal, source_ids: vec!["src-q".into()], owner: None, department: Some("quality".into()), project: None },
+        KnowledgeScope { id: "dept-mfg".into(), visibility: Visibility::Department, classification: SecurityLevel::Internal, source_ids: vec!["src-m".into()], owner: None, department: Some("manufacturing".into()), project: None },
+        KnowledgeScope { id: "restricted-hr".into(), visibility: Visibility::Restricted, classification: SecurityLevel::Confidential, source_ids: vec!["src-hr".into()], owner: None, department: None, project: None },
     ];
-    let member_ctx = |pid: &str, departments: &[&str]| AccessContext {
+    let member_ctx = |pid: &str, departments: &[&str], clearance: Option<SecurityLevel>| AccessContext {
         principal_id: pid.into(),
         principal_type: PrincipalType::AiEmployee,
         employee_id: Some(pid.trim_start_matches("ai:").to_string()),
@@ -37,6 +38,7 @@ async fn m1_t2_cross_department_allow_and_restrict() {
         projects: vec![],
         task_id: None,
         purpose: None,
+        clearance,
     };
     // 規則（先到先得）：p1 hr 白名單 → p20 全域 deny restricted → p10 co-common 全體 → p10 部門成員制。
     let mut allow_hr = PolicyRule {
@@ -112,9 +114,9 @@ async fn m1_t2_cross_department_allow_and_restrict() {
         .expect("fake ok")
     }
 
-    let alice = run(&b, &policy, &scopes, &member_ctx("ai:alice", &["rd"]), "protocol").await;
-    let carol = run(&b, &policy, &scopes, &member_ctx("ai:carol", &["quality"]), "protocol").await;
-    let dave = run(&b, &policy, &scopes, &member_ctx("ai:dave", &["hr"]), "protocol").await;
+    let alice = run(&b, &policy, &scopes, &member_ctx("ai:alice", &["rd"], None), "protocol").await;
+    let carol = run(&b, &policy, &scopes, &member_ctx("ai:carol", &["quality"], None), "protocol").await;
+    let dave = run(&b, &policy, &scopes, &member_ctx("ai:dave", &["hr"], Some(SecurityLevel::Confidential)), "protocol").await;
 
     // R&D 成員：co-common 可達；quality/mfg/restricted 皆被擋（限制的跨域）。
     assert!(alice.text.contains("Common"));
@@ -179,6 +181,7 @@ fn c7b_attrs_enrichment() {
                 roles: vec![],
                 departments: vec!["quality".into()],
                 projects: vec![],
+                clearance: None,
             },
             token_hash: None,
         })

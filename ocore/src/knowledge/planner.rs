@@ -74,6 +74,7 @@ pub fn sources_of(scopes: &[KnowledgeScope], scope_ids: &[String]) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knowledge::types::SecurityLevel;
     use crate::domain::models::{Project, ProjectStatus, Task, TaskStatus};
     use crate::domain::SqliteStore;
 
@@ -120,7 +121,7 @@ mod tests {
         KnowledgeScope {
             id: id.into(),
             visibility,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec![format!("src-{id}")],
             owner: None,
             department: None,

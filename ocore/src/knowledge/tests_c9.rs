@@ -8,7 +8,7 @@ use crate::knowledge::identity::{
     OPERATOR_PRINCIPAL_ID,
 };
 use crate::knowledge::service::{prune_receipts, KnowledgeService, RECEIPT_RETENTION_DAYS};
-use crate::knowledge::types::{AccessContext, KnowledgeScope, Principal, PrincipalAttrs, Visibility};
+use crate::knowledge::types::{AccessContext, KnowledgeScope, Principal, PrincipalAttrs, SecurityLevel, Visibility};
 use crate::runtime::AGENT_WS;
 
 fn store() -> SqliteStore {
@@ -32,7 +32,7 @@ fn c9_cross_domain_and_chain_reconstruction() {
     s.put_scope(&KnowledgeScope {
         id: "proj-x".into(),
         visibility: Visibility::Project,
-        classification: "internal".into(),
+        classification: SecurityLevel::Internal,
         source_ids: vec!["src-x".into()],
         owner: None,
         department: None,
@@ -64,7 +64,7 @@ fn c9_cross_domain_and_chain_reconstruction() {
     };
     let plan = svc.plan(&s, &access).unwrap();
     assert_eq!(plan.scope_ids.len(), 2);
-    let rid = svc.record(&s, &access, "search", &plan, false, 2).unwrap();
+    let rid = svc.record(&s, &access, "search", &plan, false, 2, access.clearance).unwrap();
     let receipts = s.list_recent_receipts(10).unwrap();
     let r = receipts.iter().find(|r| r.id == rid).expect("receipt 落表");
     // 鏈重構：Who→Employee→Task→Policy→Scope。
@@ -98,7 +98,7 @@ fn c9_cross_domain_and_chain_reconstruction() {
     )
     .unwrap();
     let plan2 = svc.plan(&s, &access).unwrap();
-    let rid2 = svc.record(&s, &access, "search", &plan2, false, 1).unwrap();
+    let rid2 = svc.record(&s, &access, "search", &plan2, false, 1, access.clearance).unwrap();
     let r2 = s.list_recent_receipts(10).unwrap().into_iter().find(|r| r.id == rid2).unwrap();
     assert!(!r2.cross_domain, "單一 scope＝非跨域");
     assert_eq!(r2.policy_version, 2, "policy 版本隨變更遞增（鏈可重構）");
@@ -118,6 +118,7 @@ fn c9_prune_retention() {
         authorized_scopes: vec![],
         cross_domain: false,
         returned_sources: 0,
+        clearance: None,
         policy_version: 1,
         workspace_id: AGENT_WS.into(),
         task_id: None,
@@ -153,7 +154,7 @@ fn c9_identity_audit() {
     set_principal_attrs(
         &s,
         OPERATOR_PRINCIPAL_ID,
-        PrincipalAttrs { roles: vec![], departments: vec!["quality".into()], projects: vec![] },
+        PrincipalAttrs { roles: vec![], departments: vec!["quality".into()], projects: vec![], clearance: None },
     )
     .unwrap();
     let p = s.get_principal(OPERATOR_PRINCIPAL_ID).unwrap().unwrap();

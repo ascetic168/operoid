@@ -43,6 +43,9 @@ pub struct PrincipalAttrs {
     pub departments: Vec<String>,
     #[serde(default)]
     pub projects: Vec<String>,
+    /// C13a：保密等級clearance（None＝未賦，評估時視為 Internal——I9 天花板）。
+    #[serde(default)]
+    pub clearance: Option<SecurityLevel>,
 }
 
 /// 一次檢索（或任何知識存取）的授權脈絡——**只由伺服器端構造**（I4：呼叫端不得自稱）。
@@ -68,6 +71,9 @@ pub struct AccessContext {
     /// 檢索目的（receipt 記錄用）。
     #[serde(default)]
     pub purpose: Option<String>,
+    /// C13a（I9）：保密天花板——None＝Internal（bootstrap 基準線）。
+    #[serde(default)]
+    pub clearance: Option<SecurityLevel>,
 }
 
 /// Scope 可見性（D1 source 分區模型）。`Personal` 刻意缺席——個人腦是獨立
@@ -88,9 +94,9 @@ pub enum Visibility {
 pub struct KnowledgeScope {
     pub id: String,
     pub visibility: Visibility,
-    /// 分類標籤（M1 單值；一 source 一分類——D4）。
-    #[serde(default)]
-    pub classification: String,
+    /// 保密等級（C13a：全序 SecurityLevel；一 source 一等級——D4；default＝Internal）。
+    #[serde(default = "default_security_level")]
+    pub classification: SecurityLevel,
     /// 對應的 GBrain source id（`sources.id`，`[a-z0-9-]{1,32}`）。
     pub source_ids: Vec<String>,
     #[serde(default)]
@@ -133,9 +139,9 @@ pub struct PolicyRule {
     /// principal 側：`ctx.projects ∩ 自身 ≠ ∅` 才命中。
     #[serde(default)]
     pub projects: Option<Vec<String>>,
-    /// 資源側：`scope.classification ∈ 自身` 才命中。
+    /// 資源側：`scope.classification ∈ 自身` 才命中（C13a：等級枚舉）。
     #[serde(default)]
-    pub classifications: Option<Vec<String>>,
+    pub classifications: Option<Vec<SecurityLevel>>,
     /// 成員制：要求 `scope.department ∈ ctx.departments`（scope 無 department 時不命中）。
     #[serde(default)]
     pub department_membership: bool,
@@ -149,6 +155,22 @@ pub struct PolicyRule {
 pub struct KnowledgePolicy {
     pub version: u32,
     pub rules: Vec<PolicyRule>,
+}
+
+/// C13a（D-C13a）：保密等級——全序，宣告序即強度序（派生 Ord）。
+/// I9：`scope.classification > ctx.clearance` → 硬拒（grant 不可破）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecurityLevel {
+    Public,
+    Internal,
+    Confidential,
+    Secret,
+}
+
+/// serde default：等級未標注＝Internal（bootstrap 基準線）。
+pub fn default_security_level() -> SecurityLevel {
+    SecurityLevel::Internal
 }
 
 /// 評估結論。`Deny` 帶原因（供 receipt／事件；對員工回中性文字——Rule 9）。

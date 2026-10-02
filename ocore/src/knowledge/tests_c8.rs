@@ -5,7 +5,7 @@ use crate::domain::{SqliteStore, Store as _};
 use crate::knowledge::bootstrap::bootstrap_with_sources;
 use crate::knowledge::identity::operator_access_context;
 use crate::knowledge::service::KnowledgeService;
-use crate::knowledge::types::{AccessContext, KnowledgeScope, Visibility};
+use crate::knowledge::types::{AccessContext, KnowledgeScope, SecurityLevel, Visibility};
 use crate::runtime::AGENT_WS;
 
 fn store_with_task(project_id: Option<&str>) -> SqliteStore {
@@ -24,7 +24,7 @@ fn store_with_task(project_id: Option<&str>) -> SqliteStore {
         s.put_scope(&KnowledgeScope {
             id: "proj-x".into(),
             visibility: Visibility::Project,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["src-x".into()],
             owner: None,
             department: None,
@@ -34,7 +34,7 @@ fn store_with_task(project_id: Option<&str>) -> SqliteStore {
         s.put_scope(&KnowledgeScope {
             id: "dept-quality".into(),
             visibility: Visibility::Department,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["src-q".into()],
             owner: None,
             department: Some("quality".into()),
@@ -138,6 +138,7 @@ fn c8_focus_never_widens() {
         projects: vec![],
         task_id: Some("t1".into()), // 綁 proj-x 任務
         purpose: None,
+        clearance: None,
     };
     let plan = svc.plan(&s, &carol).unwrap();
     assert_eq!(plan.scope_ids, vec!["dept-quality".to_string()]);

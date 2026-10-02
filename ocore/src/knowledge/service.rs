@@ -58,6 +58,8 @@ pub struct RetrievalReceipt {
     pub cross_domain: bool,
     /// C9：有命中內容的 source 數（Knowledge Objects 粒度）。
     pub returned_sources: usize,
+    /// C13a：判定當下的有效 clearance（I9 鏈重構）。
+    pub clearance: Option<super::types::SecurityLevel>,
     pub policy_version: u32,
     pub workspace_id: String,
     #[serde(default)]
@@ -96,7 +98,7 @@ impl KnowledgeService {
         };
 
         if plan.denied || plan.source_ids.is_empty() {
-            self.record(&store, access, kind_str, &plan, false, 0)?;
+            self.record(&store, access, kind_str, &plan, false, 0, access.clearance)?;
             return Ok(ToolOutput {
                 text: "目前沒有可檢索的授權範圍。".to_string(),
                 meta: json!({
@@ -136,7 +138,15 @@ impl KnowledgeService {
             sections.join("\n\n")
         };
 
-        self.record(&store, access, kind_str, &plan, !errors.is_empty(), sections.len())?;
+        self.record(
+            &store,
+            access,
+            kind_str,
+            &plan,
+            !errors.is_empty(),
+            sections.len(),
+            access.clearance,
+        )?;
         Ok(ToolOutput {
             text,
             meta: json!({
@@ -242,6 +252,7 @@ impl KnowledgeService {
         plan: &RetrievalPlan,
         partial_errors: bool,
         returned_sources: usize,
+        ctx_clearance: Option<super::types::SecurityLevel>,
     ) -> Result<String> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let id = format!("rcpt-{}-{}", nanos, access.principal_id);
@@ -255,6 +266,7 @@ impl KnowledgeService {
             authorized_scopes: plan.scope_ids.clone(),
             cross_domain: plan.scope_ids.len() > 1,
             returned_sources,
+            clearance: ctx_clearance,
             policy_version: plan.policy_version,
             workspace_id: access.workspace_id.clone(),
             task_id: access.task_id.clone(),
@@ -276,6 +288,7 @@ impl KnowledgeService {
                 "authorized_scopes": plan.scope_ids,
                 "cross_domain": plan.scope_ids.len() > 1,
                 "returned_sources": returned_sources,
+                "clearance": ctx_clearance,
                 "policy_version": plan.policy_version,
                 "partial_errors": partial_errors,
                 "focus_project": plan.focus_project,
@@ -345,7 +358,7 @@ mod tests {
         assert_eq!(plan.source_ids, vec!["src-a".to_string()]);
         assert_eq!(plan.policy_version, 1);
 
-        let rid = svc.record(&s, &operator(), "search", &plan, false, 1).unwrap();
+        let rid = svc.record(&s, &operator(), "search", &plan, false, 1, None).unwrap();
         assert!(rid.starts_with("rcpt-"));
         let receipts = s.list_recent_receipts(10).unwrap();
         assert_eq!(receipts.len(), 1);
@@ -385,7 +398,7 @@ mod tests {
         let plan = svc.plan(&s, &crate::knowledge::identity::access_context_for_employee(&test_emp(), None, None)).unwrap();
         assert!(plan.denied);
         assert_eq!(plan.reason, "no_authorized_scope");
-        svc.record(&s, &plan_principal(), "think", &plan, false, 0).unwrap();
+        svc.record(&s, &plan_principal(), "think", &plan, false, 0, None).unwrap();
         let receipts = s.list_recent_receipts(10).unwrap();
         assert!(receipts.iter().any(|r| r.denied));
     }

@@ -11,7 +11,7 @@ use super::fake::{FakeBackend, FakeDoc};
 use super::policy::{authorized_sources, evaluate};
 use super::types::{
     AccessContext, Effect, KnowledgePolicy, KnowledgeScope, PolicyRule, PrincipalType,
-    Visibility,
+    SecurityLevel, Visibility,
 };
 use crate::domain::tools::{ToolCtx, ToolInput};
 use crate::domain::Store as _;
@@ -25,7 +25,7 @@ fn scopes() -> Vec<KnowledgeScope> {
         KnowledgeScope {
             id: "co-common".into(),
             visibility: Visibility::Company,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["src-a".into()],
             owner: None,
             department: None,
@@ -34,7 +34,7 @@ fn scopes() -> Vec<KnowledgeScope> {
         KnowledgeScope {
             id: "proj-x".into(),
             visibility: Visibility::Project,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["src-b".into()],
             owner: None,
             department: None,
@@ -43,7 +43,7 @@ fn scopes() -> Vec<KnowledgeScope> {
         KnowledgeScope {
             id: "restricted".into(),
             visibility: Visibility::Restricted,
-            classification: "confidential".into(),
+            classification: SecurityLevel::Confidential,
             source_ids: vec!["src-r".into()],
             owner: None,
             department: None,
@@ -80,6 +80,8 @@ fn ctx_operator() -> AccessContext {
         projects: vec![],
         task_id: None,
         purpose: None,
+        // C13a：operator＝最高管理者（Secret）——與 identity::operator_access_context 同語意。
+        clearance: Some(SecurityLevel::Secret),
     }
 }
 
@@ -94,6 +96,7 @@ fn ctx_employee(pid: &str) -> AccessContext {
         projects: vec![],
         task_id: None,
         purpose: None,
+        clearance: None, // 未賦＝Internal（I9 天花板基準）
     }
 }
 
@@ -440,4 +443,126 @@ fn m1_contract_serialization_shape() {
     // ToolInput 是檢索唯一輸入面（無身份欄位可走私——I4 的反面證據）。
     let input = ToolInput { query: "q".into(), anchor: None, params: None };
     assert!(input.params.is_none());
+}
+
+// ── C13a：保密等級與 I9 天花板 ──────────────────────────────────────────
+
+/// **I9 天花板**：`scope.classification > ctx.clearance` → 硬拒——
+/// ①allow-all 規則救不了；②**grant 也不可破**（三段式中 ceiling 與 explicit deny 同級）；
+/// ③operator（Secret 基準線）可讀全級距；④未賦 clearance＝Internal。
+#[test]
+fn c13_clearance_ceiling_and_grants() {
+    use crate::domain::{SqliteStore, Store as _};
+    use crate::knowledge::grants::{create_grant, grant_valid_for};
+    use crate::knowledge::policy::{authorized_scope_ids_with_grants, clearance_of};
+    use crate::knowledge::types::SecurityLevel;
+
+    let dir = std::env::temp_dir().join(format!(
+        "c13a-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = SqliteStore::open(&dir.join("test.db")).unwrap();
+    // 三個等級各一個 scope（bootstrap 之後手動加機密件）。
+    bootstrap_with_sources(&store, &["src-a".into()]).unwrap(); // co-common＝Internal
+    store
+        .put_scope(&KnowledgeScope {
+            id: "secret-ops".into(),
+            visibility: Visibility::Restricted,
+            classification: SecurityLevel::Secret,
+            source_ids: vec!["src-s".into()],
+            owner: None,
+            department: None,
+            project: None,
+        })
+        .unwrap();
+    let scopes = store.list_scopes().unwrap();
+    // allow-all 規則（對誰都開）＋bob 的 Secret scope grant——天花板仍贏。
+    let allow_all = KnowledgePolicy {
+        version: 2,
+        rules: vec![PolicyRule {
+            id: "allow-all".into(),
+            priority: 1,
+            effect: Effect::Allow,
+            principals: None,
+            principal_types: None,
+            scopes: None,
+            departments: None,
+            projects: None,
+            classifications: None,
+            department_membership: false,
+            project_membership: false,
+        }],
+    };
+
+    // ① bob（未賦 clearance＝Internal）：Internal scope 可、Secret scope 被天花板擋。
+    let bob = ctx_employee("ai:bob");
+    assert_eq!(clearance_of(&bob), SecurityLevel::Internal);
+    let got = authorized_scope_ids_with_grants(&allow_all, &bob, &scopes, &[]);
+    assert_eq!(got, vec!["co-common".to_string()], "Internal 可見");
+
+    // ② grant 不可破天花板：給 bob Secret scope 的有效 grant，依舊被擋。
+    create_grant(&store, "ai:bob", "secret-ops", None, Some("調查".into()), 3600).unwrap();
+    let grants = store.list_grants().unwrap();
+    assert!(grant_valid_for(&grants, "ai:bob", "secret-ops", &chrono::Utc::now().to_rfc3339()));
+    assert!(
+        !authorized_scope_ids_with_grants(&allow_all, &bob, &scopes, &grants)
+            .contains(&"secret-ops".to_string()),
+        "天花板高於一切授權（I9）"
+    );
+
+    // ③ operator（Secret 基準線）：全級距可達。
+    let op = ctx_operator();
+    let got = authorized_scope_ids_with_grants(&allow_all, &op, &scopes, &[]);
+    assert_eq!(got.len(), 2, "operator Secret 可見 Internal＋Secret");
+
+    // ④ 管理員賦 bob clearance＝Secret（set_principal_attrs）→ 天花板打開。
+    // （先補 bob 的 principal 列——屬性管理需要列；grant 本身不需要。）
+    store
+        .put_principal(&crate::knowledge::types::Principal {
+            id: "ai:bob".into(),
+            principal_type: PrincipalType::AiEmployee,
+            employee_id: Some("bob".into()),
+            display_name: "Bob".into(),
+            attrs: Default::default(),
+            token_hash: None,
+        })
+        .unwrap();
+    crate::knowledge::identity::set_principal_attrs(
+        &store,
+        "ai:bob",
+        crate::knowledge::types::PrincipalAttrs {
+            roles: vec![],
+            departments: vec![],
+            projects: vec![],
+            clearance: Some(SecurityLevel::Secret),
+        },
+    )
+    .unwrap();
+    let bob = crate::knowledge::identity::access_context_for_employee_enriched(
+        &store,
+        &crate::domain::models::Employee {
+            id: "bob".into(),
+            workspace_id: "ws-default".into(),
+            name: "Bob".into(),
+            brain: crate::domain::models::BrainRef { brain_id: "__default__".into() },
+            role: None,
+            template_id: None,
+            state: crate::domain::models::EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
+            created_at: "2026-10-02T00:00:00Z".into(),
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    let got = authorized_scope_ids_with_grants(&allow_all, &bob, &scopes, &store.list_grants().unwrap());
+    assert_eq!(
+        got,
+        vec!["co-common".to_string(), "secret-ops".to_string()],
+        "賦 clearance 後天花打開（grant 亦在）"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

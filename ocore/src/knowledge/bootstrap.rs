@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 
-use super::types::{Effect, KnowledgePolicy, KnowledgeScope, PolicyRule, Visibility};
+use super::types::{Effect, KnowledgePolicy, KnowledgeScope, PolicyRule, SecurityLevel, Visibility};
 use crate::domain::store::Store;
 
 /// bootstrap 建立的唯一 scope id（Q2 命名慣例）。
@@ -35,7 +35,7 @@ pub fn bootstrap_with_sources(store: &dyn Store, source_ids: &[String]) -> Resul
     store.put_scope(&KnowledgeScope {
         id: CO_COMMON_SCOPE_ID.to_string(),
         visibility: Visibility::Company,
-        classification: "internal".to_string(),
+        classification: SecurityLevel::Internal,
         source_ids: source_ids.to_vec(),
         owner: None,
         department: None,
@@ -163,7 +163,7 @@ mod tests {
         s.put_scope(&KnowledgeScope {
             id: "co-common".into(),
             visibility: Visibility::Company,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["src-a".into()],
             owner: None,
             department: None,
@@ -207,7 +207,7 @@ mod tests {
         let s = super::super::types::KnowledgeScope {
             id: scope.into(),
             visibility: super::super::types::Visibility::Company,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec![],
             owner: None,
             department: None,

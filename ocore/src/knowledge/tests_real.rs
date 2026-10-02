@@ -17,7 +17,7 @@ use crate::knowledge::types::AccessContext;
 async fn real_m1_milestone_two_contexts() {
     use crate::domain::Store as _;
     use crate::knowledge::bootstrap::{bootstrap_with_sources, save_policy_new_version};
-    use crate::knowledge::types::{Effect, KnowledgeScope, PolicyRule, Visibility};
+    use crate::knowledge::types::{Effect, KnowledgeScope, PolicyRule, SecurityLevel, Visibility};
 
     // exe：~/.bun/bin/gbrain.exe（Windows 預設）或 PATH 上的 gbrain。
     let exe = dirs::home_dir()
@@ -48,7 +48,7 @@ async fn real_m1_milestone_two_contexts() {
         .put_scope(&KnowledgeScope {
             id: "proj-x".into(),
             visibility: Visibility::Project,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["s2".into()],
             owner: None,
             department: None,
@@ -113,6 +113,7 @@ async fn real_m1_milestone_two_contexts() {
         projects: vec![],
         task_id: None,
         purpose: None,
+        clearance: None,
     });
 
     let q = "protocol";
@@ -271,7 +272,7 @@ async fn real_g5_fanout_scaling() {
     use crate::knowledge::backend::RetrieveKind;
     use crate::knowledge::bootstrap::bootstrap_with_sources;
     use crate::knowledge::service::KnowledgeService;
-    use crate::knowledge::types::KnowledgeScope;
+    use crate::knowledge::types::{KnowledgeScope, SecurityLevel};
     use std::time::Instant;
     let exe = dirs::home_dir()
         .map(|h| h.join(".bun").join("bin").join("gbrain.exe"))
@@ -318,7 +319,7 @@ async fn real_g5_fanout_scaling() {
         .put_scope(&KnowledgeScope {
             id: "co-common".into(),
             visibility: crate::knowledge::types::Visibility::Company,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec!["s1".into(), "s2".into()],
             owner: None,
             department: None,

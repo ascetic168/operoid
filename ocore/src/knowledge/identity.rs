@@ -10,7 +10,7 @@
 
 use anyhow::Result;
 
-use super::types::{AccessContext, Principal, PrincipalType};
+use super::types::{AccessContext, Principal, PrincipalAttrs, PrincipalType, SecurityLevel};
 use crate::domain::models::Employee;
 use crate::domain::store::Store;
 
@@ -24,7 +24,13 @@ pub fn operator_principal() -> Principal {
         principal_type: PrincipalType::Human,
         employee_id: None,
         display_name: "operator".to_string(),
-        attrs: Default::default(),
+        // C13a（D-C13c）：operator＝bootstrap 最高管理者，clearance 結構性＝Secret。
+        attrs: PrincipalAttrs {
+            roles: vec![],
+            departments: vec![],
+            projects: vec![],
+            clearance: Some(SecurityLevel::Secret),
+        },
         token_hash: None,
     }
 }
@@ -122,7 +128,14 @@ fn uuid_like() -> String {
 /// 於 store 冪等確保 operator principal 存在（oserver 啟動與殼層初始化呼叫）。
 pub fn ensure_operator_principal(store: &dyn Store) -> Result<()> {
     match store.get_principal(OPERATOR_PRINCIPAL_ID)? {
-        Some(_) => Ok(()),
+        Some(mut p) => {
+            // C13a（D-C13c）：既有列冪等升級 clearance 至 Secret（管理員明示降級過則尊重）。
+            if p.attrs.clearance.is_none() {
+                p.attrs.clearance = Some(SecurityLevel::Secret);
+                store.put_principal(&p)?;
+            }
+            Ok(())
+        }
         None => {
             store.put_principal(&operator_principal())?;
             // C9（Rule 8）：身份建立留稽核（冪等——僅首次建立時記）。
@@ -196,6 +209,7 @@ pub fn access_context_for_employee(
         projects: vec![],
         task_id,
         purpose,
+        clearance: None, // C13a：AI 員工預設無 clearance＝Internal
     }
 }
 
@@ -212,6 +226,10 @@ pub fn access_context_for_employee_enriched(
         ctx.roles = p.attrs.roles;
         ctx.departments = p.attrs.departments;
         ctx.projects = p.attrs.projects;
+        // C13a：store 列有 clearance（管理員明示設定/降級過）以列為準。
+        if p.attrs.clearance.is_some() {
+            ctx.clearance = p.attrs.clearance;
+        }
     }
     Ok(ctx)
 }
@@ -228,6 +246,8 @@ pub fn operator_access_context(workspace_id: &str) -> AccessContext {
         projects: vec![],
         task_id: None,
         purpose: None,
+        // C13a（D-C13c）：operator＝bootstrap 最高管理者。
+        clearance: Some(SecurityLevel::Secret),
     }
 }
 
@@ -241,6 +261,10 @@ pub fn operator_access_context_enriched(
         ctx.roles = p.attrs.roles;
         ctx.departments = p.attrs.departments;
         ctx.projects = p.attrs.projects;
+        // C13a：store 列有 clearance（管理員明示設定/降級過）以列為準。
+        if p.attrs.clearance.is_some() {
+            ctx.clearance = p.attrs.clearance;
+        }
     }
     Ok(ctx)
 }
@@ -265,6 +289,7 @@ pub fn access_context_for_principal(
         projects: p.attrs.projects,
         task_id: None,
         purpose: None,
+        clearance: p.attrs.clearance, // C13a：攜 attrs.clearance
     })
 }
 

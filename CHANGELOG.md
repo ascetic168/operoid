@@ -13,6 +13,17 @@
 
 ---
 
+## [Unreleased] — C13a 分級保密（SecurityLevel clearance）
+
+### 新增
+
+- **保密等級全序**：`Public < Internal < Confidential < Secret`（`SecurityLevel` 枚舉）；scope 的 classification 與規則的 classifications 條件升級為等級型別（既有 `internal` 資料零遷移）。
+- **I9 保密天花板**：`scope.classification > principal.clearance` → 硬拒——先於一切規則，**grant 與 explicit deny 同級不可破**。未賦 clearance＝Internal（bootstrap 基準線）；operator＝Secret 基準線（既有列冪等升級）。
+- **clearance 管理**：`PrincipalAttrs.clearance`（`set_principal_attrs` 既有入口賦權）；屬性富集讓 AccessContext 攜 clearance 到檢索邊界；receipt/事件記下判定當下的 clearance。
+- 測試：天花板（超等級即拒／grant 不可破／operator 全級距／賦權後打開）＋既有 225 測試全綠。
+
+---
+
 ## [v0.3.7] - 2026-10-02
 
 ### Enterprise C′（Permission-aware Knowledge Fabric）

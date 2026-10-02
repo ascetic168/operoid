@@ -16,7 +16,12 @@
 //! - [`authorized_sources`]／[`authorized_scope_ids`]：授權鏈（scope 鏈→source 集合），
 //!   C6 KnowledgeService 的候選搜尋空間構造。
 
-use super::types::{AccessContext, Decision, KnowledgePolicy, KnowledgeScope, PrincipalType, PolicyRule};
+use super::types::{AccessContext, Decision, KnowledgePolicy, KnowledgeScope, PrincipalType, PolicyRule, SecurityLevel};
+
+/// C13a：ctx 的有效 clearance（None＝Internal，bootstrap 基準線——D-C13b）。
+pub fn clearance_of(ctx: &AccessContext) -> SecurityLevel {
+    ctx.clearance.unwrap_or(SecurityLevel::Internal)
+}
 
 /// 單條件白名單比對：`None`＝不限；`Some(list)`＝須命中其中之一。
 fn matches<T: PartialEq>(cond: &Option<Vec<T>>, value: Option<&T>) -> bool {
@@ -65,7 +70,12 @@ fn rule_matches(rule: &PolicyRule, ctx: &AccessContext, scope: &KnowledgeScope) 
 }
 
 /// 評估單一 scope 的存取決策（I2：無匹配＝DENY）。
+/// C13a（I9 先決）：`scope.classification > ctx 有效 clearance` → 硬拒
+/// （`clearance_ceiling`）——先於一切規則，grant 亦不可破（with_grants 同語意）。
 pub fn evaluate(policy: &KnowledgePolicy, ctx: &AccessContext, scope: &KnowledgeScope) -> Decision {
+    if scope.classification > clearance_of(ctx) {
+        return Decision::Deny { reason: "clearance_ceiling".to_string() };
+    }
     let mut rules: Vec<&PolicyRule> = policy.rules.iter().collect();
     rules.sort_by_key(|r| r.priority);
     for rule in rules {
@@ -107,7 +117,9 @@ pub fn authorized_scope_ids_with_grants(
         .iter()
         .filter(|s| match evaluate(policy, ctx, s) {
             Decision::Allow => true,
-            Decision::Deny { reason } if reason.starts_with("denied_by_rule") => false,
+            // explicit deny 與 clearance 天花板皆不可被 grant 破（I9）。
+            Decision::Deny { reason }
+                if reason.starts_with("denied_by_rule") || reason == "clearance_ceiling" => false,
             Decision::Deny { .. } => {
                 super::grants::grant_valid_for(grants, &ctx.principal_id, &s.id, &now)
             }
@@ -164,6 +176,7 @@ mod tests {
             projects: vec![],
             task_id: None,
             purpose: None,
+            clearance: None,
         }
     }
 
@@ -182,7 +195,7 @@ mod tests {
         KnowledgeScope {
             id: id.into(),
             visibility: super::super::types::Visibility::Company,
-            classification: "internal".into(),
+            classification: SecurityLevel::Internal,
             source_ids: vec![format!("src-{id}")],
             owner: None,
             department: None,
@@ -291,11 +304,16 @@ mod tests {
     #[test]
     fn c7_classification_resource_condition() {
         let mut confidential = scope("restricted-hr");
-        confidential.classification = "confidential".into();
+        confidential.classification = SecurityLevel::Confidential;
         let mut r = rule("conf", 1, Effect::Allow);
-        r.classifications = Some(vec!["confidential".into()]);
+        r.classifications = Some(vec![SecurityLevel::Confidential]);
         let p = policy(vec![r]);
-        assert_eq!(evaluate(&p, &ctx("u", PrincipalType::Human), &confidential), Decision::Allow);
+        // C13a（I9）：clearance ≥ Confidential 的 principal 才過天花板。
+        let cleared = AccessContext {
+            clearance: Some(SecurityLevel::Confidential),
+            ..ctx("u", PrincipalType::Human)
+        };
+        assert_eq!(evaluate(&p, &cleared, &confidential), Decision::Allow);
         assert!(matches!(evaluate(&p, &ctx("u", PrincipalType::Human), &scope("s")),
             Decision::Deny { .. }));
     }
@@ -304,10 +322,10 @@ mod tests {
     fn authorized_sources_dedup_sorted_and_fail_closed() {
         let scopes = vec![
             KnowledgeScope { id: "scope-a".into(), visibility: super::super::types::Visibility::Company,
-                classification: "internal".into(), source_ids: vec!["src-b".into(), "src-a".into()],
+                classification: SecurityLevel::Internal, source_ids: vec!["src-b".into(), "src-a".into()],
                 owner: None, department: None, project: None },
             KnowledgeScope { id: "scope-b".into(), visibility: super::super::types::Visibility::Project,
-                classification: "internal".into(), source_ids: vec!["src-c".into()],
+                classification: SecurityLevel::Internal, source_ids: vec!["src-c".into()],
                 owner: None, department: None, project: None },
         ];
         let mut r = rule("r", 1, Effect::Allow);
@@ -330,7 +348,7 @@ mod tests {
         let p: super::super::types::Principal = serde_json::from_str(old).unwrap();
         assert!(p.attrs.departments.is_empty());
         let with_attrs = super::super::types::Principal {
-            attrs: PrincipalAttrs { roles: vec![], departments: vec!["quality".into()], projects: vec![] },
+            attrs: PrincipalAttrs { roles: vec![], departments: vec!["quality".into()], projects: vec![], clearance: None },
             ..p
         };
         assert!(serde_json::to_string(&with_attrs).unwrap().contains("quality"));
