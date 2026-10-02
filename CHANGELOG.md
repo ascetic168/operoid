@@ -13,10 +13,11 @@
 
 ---
 
-## [Unreleased] — Enterprise C′（Permission-aware Knowledge Fabric）
+## [v0.3.7] - 2026-10-02
 
-> 計畫與證據：`docs/Operoid-計畫-EnterpriseC總綱.md`＋`docs/enterprise-c-*.md` 系列（C0 調查→C10 實作）。
-> 提示詞 §26 第一程式里程碑（M1）已兌現並以 real e2e 實機證明：**同一 GBrain＋同一查詢＋不同 AccessContext＝不同授權檢索結果**。
+### Enterprise C′（Permission-aware Knowledge Fabric）
+
+> 第一程式里程碑（M1）已兌現並以 real e2e 實機證明：**同一 GBrain＋同一查詢＋不同 AccessContext＝不同授權檢索結果**。
 
 ### 新增（ocore/src/knowledge/ 模組）
 
