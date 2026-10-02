@@ -87,6 +87,27 @@ pub async fn ensure_knowledge_bootstrap(
     bootstrap_with_sources(store, &sources)
 }
 
+/// C13b：scope 建立／更新（管理面唯一入口；Rule 8 留痕）。
+pub fn save_scope_with_event(store: &dyn Store, scope: &KnowledgeScope) -> Result<()> {
+    let existed = store.list_scopes()?.iter().any(|s| s.id == scope.id);
+    store.put_scope(scope)?;
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        "knowledge_scope_changed",
+        format!(
+            "{} {}等級 sources={:?} dept={:?} proj={:?}",
+            if existed { "更新" } else { "建立" },
+            format!("{:?}", scope.classification).to_lowercase(),
+            scope.source_ids,
+            scope.department,
+            scope.project,
+        ),
+    );
+    Ok(())
+}
+
 /// 寫入新版 policy（version+1＋事件——D9：無快取，下一次檢索即時生效）。
 pub fn save_policy_new_version(
     store: &dyn Store,

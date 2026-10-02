@@ -689,10 +689,14 @@
       "purpose": "目的",
       "type": "类型",
       "displayName": "显示名",
-      "departments": "部门"
+      "departments": "部门",
+      "level": "保密等级"
     },
     "scopes": {
-      "title": "知识范围（scopes→sources 映射，只读）"
+      "title": "知识范围（scopes→sources 映射，只读）",
+      "save": "创建／更新范围",
+      "department": "部门",
+      "project": "项目"
     },
     "grants": {
       "title": "临时授权（TTL grants）",
@@ -709,16 +713,33 @@
       "issue": "签发 token",
       "rotate": "轮替",
       "revokeToken": "撤销 token",
-      "create": "创建 principal"
+      "create": "创建 principal",
+      "noClearance": "未赋（＝internal）"
     },
     "token": {
       "title": "{principal} 的 API token",
       "once": "明文只显示这一次——立即复制保存；关闭后无法再取。",
       "copy": "复制"
+    },
+    "saved": "已保存。",
+    "policy": {
+      "title": "知识政策（规则）",
+      "saved": "已保存，即时生效。",
+      "hint": "规则按优先序先到先得：DENY 命中即拒、ALLOW 命中即准、无匹配＝拒（fail closed）。保密等级为硬天花板——超过 clearance 的范围，任何规则与 grant 都打不开。CSV 字段以逗号分隔多值。",
+      "principals": "principals (CSV)",
+      "scopes": "scopes (CSV)",
+      "levels": "等级 (CSV)",
+      "departments": "部门 (CSV)",
+      "deptMember": "部门成员制",
+      "delete": "删除规则",
+      "addRule": "新增规则",
+      "save": "保存政策"
     }
   },
   "knowledge": {
     "grantFailed": "grant 操作失败：{detail}",
-    "principalFailed": "principal 操作失败：{detail}"
+    "principalFailed": "principal 操作失败：{detail}",
+    "policySaveFailed": "政策保存失败：{detail}",
+    "scopeFailed": "范围操作失败：{detail}"
   }
 }

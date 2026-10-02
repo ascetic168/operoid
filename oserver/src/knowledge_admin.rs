@@ -20,6 +20,9 @@ use ocore::domain::Store as _;
 pub fn knowledge_admin_routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/knowledge/overview", get(api_overview))
+        .route("/api/knowledge/policy", post(api_policy_save))
+        .route("/api/knowledge/scopes", post(api_scope_upsert))
+        .route("/api/knowledge/principals/{id}/attrs", post(api_attrs_set))
         .route("/api/knowledge/grants", post(api_grant_create))
         .route("/api/knowledge/grants/{id}/revoke", post(api_grant_revoke))
         .route("/api/knowledge/principals", post(api_principal_create))
@@ -45,6 +48,7 @@ async fn api_overview(
             "principals": store.list_principals()?,
             "grants": store.list_grants()?,
             "scopes": store.list_scopes()?,
+            "policy": store.get_policy()?,
         }))
     })
     .await;
@@ -54,6 +58,101 @@ async fn api_overview(
         Err(e) => err_response(&ocore::i18n::AppError::new("server.internal").p("detail", e.to_string())),
     }
 }
+
+    /// C13b：儲存整份政策（version+1；D9 無快取即時生效）。
+    async fn api_policy_save(
+        State(state): State<Arc<ServerState>>,
+        headers: HeaderMap,
+        body: Json<Vec<ocore::knowledge::types::PolicyRule>>,
+    ) -> Response {
+        if let Err(r) = require_auth(&state, &headers) {
+            return r;
+        }
+        let st = state;
+        let rules = body.0;
+        let res = tokio::task::spawn_blocking(move || {
+            let store = open_store(&st)?;
+            ocore::knowledge::bootstrap::save_policy_new_version(&store, rules)
+        })
+        .await;
+        match res {
+            Ok(Ok(p)) => (StatusCode::OK, Json(p)).into_response(),
+            Ok(Err(e)) => err_response(&ocore::i18n::AppError::new("knowledge.policySaveFailed").p("detail", e.to_string())),
+            Err(e) => err_response(&ocore::i18n::AppError::new("server.internal").p("detail", e.to_string())),
+        }
+    }
+
+    /// C13b：scope 建立／更新（upsert；一 source 一等級——D4）。
+    async fn api_scope_upsert(
+        State(state): State<Arc<ServerState>>,
+        headers: HeaderMap,
+        body: Json<ocore::knowledge::types::KnowledgeScope>,
+    ) -> Response {
+        if let Err(r) = require_auth(&state, &headers) {
+            return r;
+        }
+        let st = state;
+        let scope = body.0;
+        if scope.id.is_empty() || scope.source_ids.is_empty() {
+            return err_response(&ocore::i18n::AppError::new("knowledge.scopeFailed").p("detail", "id 與 source_ids 不可空"));
+        }
+        let echo = scope.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            let store = open_store(&st)?;
+            ocore::knowledge::bootstrap::save_scope_with_event(&store, &scope)
+        })
+        .await;
+        match res {
+            Ok(Ok(())) => (StatusCode::OK, Json(echo)).into_response(),
+            Ok(Err(e)) => err_response(&ocore::i18n::AppError::new("knowledge.scopeFailed").p("detail", e.to_string())),
+            Err(e) => err_response(&ocore::i18n::AppError::new("server.internal").p("detail", e.to_string())),
+        }
+    }
+
+    #[derive(Deserialize)]
+    struct AttrsBody {
+        /// null＝降回 Internal 基準線。
+        clearance: Option<ocore::knowledge::types::SecurityLevel>,
+        #[serde(default)]
+        departments: Vec<String>,
+        #[serde(default)]
+        projects: Vec<String>,
+        #[serde(default)]
+        roles: Vec<String>,
+    }
+
+    /// C13b：賦/改 principal 屬性（clearance 等；identity::set_principal_attrs 留痕）。
+    async fn api_attrs_set(
+        State(state): State<Arc<ServerState>>,
+        headers: HeaderMap,
+        AxPath(id): AxPath<String>,
+        body: Json<AttrsBody>,
+    ) -> Response {
+        if let Err(r) = require_auth(&state, &headers) {
+            return r;
+        }
+        let st = state;
+        let b = body.0;
+        let res = tokio::task::spawn_blocking(move || {
+            let store = open_store(&st)?;
+            ocore::knowledge::identity::set_principal_attrs(
+                &store,
+                &id,
+                ocore::knowledge::types::PrincipalAttrs {
+                    roles: b.roles,
+                    departments: b.departments,
+                    projects: b.projects,
+                    clearance: b.clearance,
+                },
+            )
+        })
+        .await;
+        match res {
+            Ok(Ok(())) => (StatusCode::OK, Json(json!({"ok": true}))).into_response(),
+            Ok(Err(e)) => err_response(&ocore::i18n::AppError::new("knowledge.principalFailed").p("detail", e.to_string())),
+            Err(e) => err_response(&ocore::i18n::AppError::new("server.internal").p("detail", e.to_string())),
+        }
+    }
 
 #[derive(Deserialize)]
 struct GrantCreateBody {

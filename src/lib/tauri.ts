@@ -740,7 +740,12 @@ export interface PrincipalView {
   principal_type: "human" | "ai_employee" | "service";
   employee_id?: string | null;
   display_name: string;
-  attrs: { roles: string[]; departments: string[]; projects: string[] };
+  attrs: {
+    roles: string[];
+    departments: string[];
+    projects: string[];
+    clearance?: SecurityLevel | null;
+  };
   token_hash?: string | null;
 }
 export interface KnowledgeGrantView {
@@ -756,15 +761,35 @@ export interface KnowledgeGrantView {
 export interface KnowledgeScopeView {
   id: string;
   visibility: string;
-  classification: string;
+  classification: SecurityLevel;
   source_ids: string[];
   department?: string | null;
   project?: string | null;
+  owner?: string | null;
+}
+export type SecurityLevel = "public" | "internal" | "confidential" | "secret";
+export interface PolicyRuleView {
+  id: string;
+  priority: number;
+  effect: "allow" | "deny";
+  principals?: string[] | null;
+  principal_types?: string[] | null;
+  scopes?: string[] | null;
+  departments?: string[] | null;
+  projects?: string[] | null;
+  classifications?: SecurityLevel[] | null;
+  department_membership?: boolean;
+  project_membership?: boolean;
+}
+export interface KnowledgePolicyView {
+  version: number;
+  rules: PolicyRuleView[];
 }
 export interface KnowledgeOverview {
   principals: PrincipalView[];
   grants: KnowledgeGrantView[];
   scopes: KnowledgeScopeView[];
+  policy?: KnowledgePolicyView | null;
 }
 export const knowledgeOverviewLoad = (): Promise<KnowledgeOverview> =>
   agentFetch<KnowledgeOverview>("/api/knowledge/overview");
@@ -794,6 +819,31 @@ export const knowledgeTokenIssue = (id: string): Promise<{ token: string }> =>
 export const knowledgeTokenRevoke = (id: string): Promise<{ ok: boolean }> =>
   agentFetch<{ ok: boolean }>(`/api/knowledge/principals/${encodeURIComponent(id)}/token`, {
     method: "DELETE",
+  });
+export const knowledgePolicySave = (rules: PolicyRuleView[]): Promise<KnowledgePolicyView> =>
+  agentFetch<KnowledgePolicyView>("/api/knowledge/policy", { method: "POST", body: rules });
+export const knowledgeScopeSave = (body: {
+  id: string;
+  visibility: string;
+  classification: SecurityLevel;
+  source_ids: string[];
+  department?: string;
+  project?: string;
+  owner?: string;
+}): Promise<KnowledgeScopeView> =>
+  agentFetch<KnowledgeScopeView>("/api/knowledge/scopes", { method: "POST", body });
+export const knowledgeAttrsSet = (
+  id: string,
+  body: {
+    clearance: SecurityLevel | null;
+    departments: string[];
+    projects: string[];
+    roles: string[];
+  },
+): Promise<{ ok: boolean }> =>
+  agentFetch<{ ok: boolean }>(`/api/knowledge/principals/${encodeURIComponent(id)}/attrs`, {
+    method: "POST",
+    body,
   });
 export const agentCreateCommitment = (
   employeeId: string,

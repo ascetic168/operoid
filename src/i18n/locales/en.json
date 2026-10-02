@@ -689,10 +689,14 @@
       "purpose": "Purpose",
       "type": "Type",
       "displayName": "Display name",
-      "departments": "Departments"
+      "departments": "Departments",
+      "level": "Level"
     },
     "scopes": {
-      "title": "Knowledge scopes (scopes→sources mapping, read-only)"
+      "title": "Knowledge scopes (scopes→sources mapping, read-only)",
+      "save": "Create / update scope",
+      "department": "Department",
+      "project": "Project"
     },
     "grants": {
       "title": "Temporary grants (TTL)",
@@ -709,16 +713,33 @@
       "issue": "Issue token",
       "rotate": "Rotate",
       "revokeToken": "Revoke token",
-      "create": "Create principal"
+      "create": "Create principal",
+      "noClearance": "unset (= internal)"
     },
     "token": {
       "title": "API token for {principal}",
       "once": "The plaintext is shown only once — copy and store it now; it cannot be retrieved later.",
       "copy": "Copy"
+    },
+    "saved": "Saved.",
+    "policy": {
+      "title": "Knowledge policy (rules)",
+      "saved": "Saved — effective immediately.",
+      "hint": "Rules are first-match by priority: a matching DENY rejects, a matching ALLOW grants, no match = deny (fail closed). The classification level is a hard ceiling — scopes above a principal's clearance cannot be opened by any rule or grant. CSV fields accept multiple values.",
+      "principals": "principals (CSV)",
+      "scopes": "scopes (CSV)",
+      "levels": "levels (CSV)",
+      "departments": "departments (CSV)",
+      "deptMember": "dept membership",
+      "delete": "Delete rule",
+      "addRule": "Add rule",
+      "save": "Save policy"
     }
   },
   "knowledge": {
     "grantFailed": "Grant operation failed: {detail}",
-    "principalFailed": "Principal operation failed: {detail}"
+    "principalFailed": "Principal operation failed: {detail}",
+    "policySaveFailed": "Policy save failed: {detail}",
+    "scopeFailed": "Scope operation failed: {detail}"
   }
 }
