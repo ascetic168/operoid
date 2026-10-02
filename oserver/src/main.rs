@@ -210,6 +210,8 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         let store = ocore::domain::SqliteStore::open(&db_check)?;
         // 崩潰復原（P5）：上次行程中途被殺的孤兒（Working 員工/InProgress task）
         // 救回可掃描狀態——必須在 scheduler 起來之前。
+        // C4（D-C4）：冪等建立 operator bootstrap principal（企業身份的最小落點）。
+        ocore::knowledge::identity::ensure_operator_principal(&store)?;
         ocore::runtime::recover_stale_runs(&store)
     })
     .await

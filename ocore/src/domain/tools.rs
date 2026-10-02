@@ -62,6 +62,9 @@ pub struct ToolCtx {
     /// 動作類別登記表（Ch.20 §5；`build_tool_ctx` 載入，propose 分類與圍欄執行查此表）。
     /// `None`＝無登記表——從嚴預設：全部提案走人類核可。
     pub registry: Option<std::sync::Arc<crate::registry::ActionRegistry>>,
+    /// C4（D-C4）：檢索授權脈絡——**只由伺服器端構造**（`knowledge::identity` 的兩個
+    /// 推導入口；I4：呼叫端不得自稱）。知識檢索的 policy 評估與 receipt 查此欄。
+    pub access: crate::knowledge::types::AccessContext,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -74,6 +77,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("allowed_tools", &self.allowed_tools)
             .field("employee_output_root", &self.employee_output_root)
             .field("registry", &self.registry.is_some())
+            .field("access", &self.access.principal_id)
             .finish()
     }
 }

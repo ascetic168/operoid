@@ -106,6 +106,13 @@ pub trait Store {
     /// 列出某員工產出的所有 artifacts（自主循環的進度／評估上下文用）。
     fn list_artifacts_by_producer(&self, produced_by: &str) -> Result<Vec<Artifact>>;
 
+    // ── C4（D-C4）：知識授權的 Principal（僅 operator bootstrap 持久化；ai_employee 讀時推導）──
+
+    /// 寫入（upsert）一個 Principal。
+    fn put_principal(&self, principal: &crate::knowledge::types::Principal) -> Result<()>;
+    /// 依 id 讀取 Principal。
+    fn get_principal(&self, id: &str) -> Result<Option<crate::knowledge::types::Principal>>;
+
     // ── Phase 6d：生命週期事件（append-only）──
 
     /// 記錄一則不可變 Event（Ch.14）。
@@ -369,6 +376,16 @@ impl Store for JsonStore {
         events.reverse(); // Vec 末尾為最新 → 反轉成最新在前
         events.truncate(limit);
         Ok(events)
+    }
+
+    fn put_principal(&self, principal: &crate::knowledge::types::Principal) -> Result<()> {
+        upsert_by_id(&self.path("principals.json"), principal, |p| &p.id)
+    }
+    fn get_principal(&self, id: &str) -> Result<Option<crate::knowledge::types::Principal>> {
+        Ok(self
+            .read::<crate::knowledge::types::Principal>("principals.json")?
+            .into_iter()
+            .find(|p| p.id == id))
     }
 
     // ── Phase 7b：對話訊息（JsonStore：全集合讀後 in-memory 過濾）──

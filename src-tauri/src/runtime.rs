@@ -483,6 +483,7 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
+            access: ocore::knowledge::identity::access_context_for_employee(&emp, None, None),
             registry: None,
         });
     }

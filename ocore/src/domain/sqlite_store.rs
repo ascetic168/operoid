@@ -70,7 +70,9 @@ impl SqliteStore {
              CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, data TEXT NOT NULL); \
              CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id); \
              CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, data TEXT NOT NULL); \
-             CREATE INDEX IF NOT EXISTS idx_messages_employee ON messages(employee_id);",
+             CREATE INDEX IF NOT EXISTS idx_messages_employee ON messages(employee_id); \
+             CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, principal_type TEXT NOT NULL, employee_id TEXT, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_principals_employee ON principals(employee_id);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -178,6 +180,27 @@ fn select_one<T: DeserializeOwned>(
 // ───────────────── Store impl ─────────────────
 
 impl Store for SqliteStore {
+    // ── C4（D-C4）：Principal（operator bootstrap；ai_employee 讀時推導不落表）──
+
+    fn put_principal(&self, principal: &crate::knowledge::types::Principal) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO principals (id, principal_type, employee_id, data) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                principal.id,
+                encode(&principal.principal_type)?,
+                principal.employee_id,
+                encode(principal)?
+            ],
+        )
+        .map_err(|e| anyhow!("put_principal: {e}"))?;
+        Ok(())
+    }
+    fn get_principal(&self, id: &str) -> Result<Option<crate::knowledge::types::Principal>> {
+        let conn = self.lock()?;
+        select_one(&conn, "principals", "id", id)
+    }
+
     fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         let conn = self.lock()?;
         select_all(&conn, "workspaces", "", params![])

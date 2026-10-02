@@ -110,6 +110,7 @@ fn tool_ctx() -> ToolCtx {
         mcp: None,
         allowed_tools: Default::default(),
         employee_output_root: std::env::temp_dir(),
+        access: ctx_operator(),
         registry: None,
     }
 }
@@ -256,12 +257,39 @@ async fn m1_t5_revocation() {
     // C5：save_policy（version+1）後，下一次檢索立即反映新授權。
 }
 
-/// **Test 8**：agent 冒名——身份只出自伺服器端構造（I4）。C4 接線後解鎖。
-#[ignore = "C4: build_tool_ctx 推導接線後解鎖"]
+/// **Test 8（M1 最小版）**：agent 冒名——身份只出自伺服器端構造（I4／D6）。
+///
+/// 構造入口僅二：`access_context_for_employee`（Employee 推導，無自稱參數）與
+/// `operator_principal`（bootstrap 恆等）。推導是 `emp.id` 的純函式——呼叫端無法
+/// 把 mallory 說成別人；`AccountProvider` 把 authN 通過者恆映射 operator。
 #[test]
 fn m1_t8_impersonation() {
-    // C4：斷言 AccessContext 只有兩個構造入口（operator bootstrap／Employee 推導），
-    // 不存在「呼叫端字串自稱 principal」的 API 路徑。
+    use crate::domain::models::{BrainRef, Employee, EmployeeState};
+    use crate::knowledge::identity::{
+        access_context_for_employee, operator_principal, OPERATOR_PRINCIPAL_ID,
+    };
+    let emp = Employee {
+        id: "mallory".into(),
+        workspace_id: "ws-default".into(),
+        name: "Mallory".into(),
+        brain: BrainRef { brain_id: "__default__".into() },
+        role: None,
+        template_id: None,
+        state: EmployeeState::Sleeping,
+        archived: false,
+        tools: None,
+        created_at: "2026-10-02T00:00:00Z".into(),
+    };
+    let ctx = access_context_for_employee(&emp, None, None);
+    assert_eq!(ctx.principal_id, "ai:mallory");
+    assert_eq!(ctx.principal_type, PrincipalType::AiEmployee);
+    // 冒名防護的本體：推導函式不接受「宣稱身份」參數，重複推導恆等。
+    let again = access_context_for_employee(&emp, None, None);
+    assert_eq!(ctx, again);
+    // operator 恆等：authN 通過者恆為 bootstrap principal（SingleOperatorProvider 語意）。
+    assert_eq!(operator_principal().id, OPERATOR_PRINCIPAL_ID);
+    // ToolCtx 攜身份到工具層（檢索邊界拿得到 AccessContext）。
+    assert_eq!(tool_ctx().access.principal_id, "principal-operator");
 }
 
 /// **Test 9**：檢索稽核 receipt。C6 接線後解鎖。

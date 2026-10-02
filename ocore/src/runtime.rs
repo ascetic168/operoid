@@ -2167,6 +2167,8 @@ pub fn build_tool_ctx(
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
     let entry = crate::app_config::brain_entry(cfg, &emp.brain.brain_id)?;
+    // C4：AccessContext 由 Employee 伺服器端推導（I4——無呼叫端自稱路徑）。
+    let access = crate::knowledge::identity::access_context_for_employee(&emp, None, None);
     // think 顯式 --model 的來源：models.think 優先（長合成需要非推理模型，
     // 見 GBrainConfig::think_model 文檔），缺時 fallback chat_model。
     let chat_model = gbrain_config::load_for(entry.env_home())
@@ -2196,6 +2198,7 @@ pub fn build_tool_ctx(
             mcp,
             allowed_tools,
             employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
+            access,
             registry,
         },
     ))
@@ -2614,6 +2617,7 @@ mod tests {
     fn ctx() -> ToolCtx {
         ToolCtx {
             gbrain_exe: String::new(),
+            access: crate::knowledge::identity::test_default(),
             gbrain_home: None,
             chat_model: None,
             mcp: None,
@@ -4778,6 +4782,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            access: crate::knowledge::identity::test_default(),
             registry: None,
         };
         let res = run_cycle(
@@ -4894,6 +4899,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            access: crate::knowledge::identity::test_default(),
             registry: None,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
@@ -5345,6 +5351,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            access: crate::knowledge::identity::test_default(),
             registry: None,
         };
 
@@ -5676,6 +5683,7 @@ mod tests {
             mcp: None,
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
+            access: crate::knowledge::identity::test_default(),
             registry: None,
         };
 

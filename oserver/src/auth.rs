@@ -43,6 +43,23 @@ impl AuthProvider for TokenProvider {
     }
 }
 
+/// C4（D-C4）：帳號型身份提供者插座——`Identity → Principal` 的唯一映射點
+/// （`auth.rs:1-5` 檔頭預留的企業版插座；kernel 與 handler 零改動）。
+/// M1 唯一實作 [`SingleOperatorProvider`]：authN 通過者恆映射 operator bootstrap
+/// principal——呼叫端無法自稱他人（Test 8 的服務端語意；多 principal 屬 WP-C12）。
+pub trait AccountProvider: Send + Sync {
+    fn principal_for(&self, identity: &Identity) -> ocore::knowledge::types::Principal;
+}
+
+/// 單人版實作：任何通過 authN 的請求＝operator。
+pub struct SingleOperatorProvider;
+
+impl AccountProvider for SingleOperatorProvider {
+    fn principal_for(&self, _identity: &Identity) -> ocore::knowledge::types::Principal {
+        ocore::knowledge::identity::operator_principal()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +92,16 @@ mod tests {
             .collect();
         assert_eq!(results[0], Err(AuthError)); // token 版仍把關
         assert_eq!(results[1].as_ref().unwrap().name, "stub"); // stub 版放行
+    }
+
+    /// C4：AccountProvider 插座——authN 通過者恆映射 operator principal（不可自稱）。
+    #[test]
+    fn account_provider_maps_to_operator_principal() {
+        let p = SingleOperatorProvider.principal_for(&Identity { name: "operator".into() });
+        assert_eq!(p.id, ocore::knowledge::identity::OPERATOR_PRINCIPAL_ID);
+        assert_eq!(
+            p.principal_type,
+            ocore::knowledge::types::PrincipalType::Human
+        );
     }
 }

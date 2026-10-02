@@ -230,6 +230,7 @@ mod tests {
             employee_output_root: std::path::PathBuf::from(
                 std::env::temp_dir(),
             ),
+            access: crate::knowledge::identity::test_default(),
             registry: None,
         }
     }

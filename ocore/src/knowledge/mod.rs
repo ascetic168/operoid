@@ -16,6 +16,7 @@
 
 pub mod backend;
 pub mod fake;
+pub mod identity;
 pub mod policy;
 pub mod types;
 
