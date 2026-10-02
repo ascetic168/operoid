@@ -250,11 +250,40 @@ async fn m1_t4_grant_expiry() {
     // C10：grant 屆期前可檢索、屆期後 DENY。
 }
 
-/// **Test 5**：撤銷——policy/成員變更即時反映（D9 無快取）。C5 補 store 路徑後解鎖。
-#[ignore = "C5: policy 即時載入接 store 後解鎖"]
-#[tokio::test]
-async fn m1_t5_revocation() {
-    // C5：save_policy（version+1）後，下一次檢索立即反映新授權。
+/// **Test 5（M1 版）**：撤銷——policy 變更即時反映（D9 無快取）：
+/// `save_policy_new_version` 之後的第一次授權評估就用新規則，無失效窗口。
+#[test]
+fn m1_t5_revocation() {
+    use crate::knowledge::bootstrap::{bootstrap_with_sources, load_policy_fail_closed, save_policy_new_version};
+    use crate::domain::{SqliteStore, Store as _};
+    let dir = std::env::temp_dir().join(format!(
+        "m1t5-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = SqliteStore::open(&dir.join("test.db")).unwrap();
+    bootstrap_with_sources(&store, &["src-a".into()]).unwrap();
+
+    let bob = ctx_employee("ai:bob");
+    let scopes = store.list_scopes().unwrap();
+
+    // v1：bootstrap 的 allow-all——bob 授權 src-a。
+    let (v1, invalid) = load_policy_fail_closed(&store);
+    assert!(!invalid);
+    assert_eq!(authorized_sources(&v1, &bob, &scopes), vec!["src-a".to_string()]);
+
+    // 撤銷：寫入空規則的 v2——**下一次**評估立即為空（無快取、無失效窗口）。
+    let v2 = save_policy_new_version(&store, vec![]).unwrap();
+    assert_eq!(v2.version, 2);
+    let (v2_loaded, invalid2) = load_policy_fail_closed(&store);
+    assert!(!invalid2);
+    assert_eq!(v2_loaded.version, 2);
+    assert!(
+        authorized_sources(&v2_loaded, &bob, &scopes).is_empty(),
+        "撤銷後下一次檢索即被擋（Test 5）"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// **Test 8（M1 最小版）**：agent 冒名——身份只出自伺服器端構造（I4／D6）。

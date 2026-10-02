@@ -113,6 +113,17 @@ pub trait Store {
     /// 依 id 讀取 Principal。
     fn get_principal(&self, id: &str) -> Result<Option<crate::knowledge::types::Principal>>;
 
+    // ── C5（D1/D3）：知識 scope 與 policy 的持久化（權威在 Operoid）──
+
+    /// 寫入（upsert）一個 KnowledgeScope。
+    fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()>;
+    /// 列出全部 KnowledgeScope（id 排序）。
+    fn list_scopes(&self) -> Result<Vec<crate::knowledge::types::KnowledgeScope>>;
+    /// 寫入 active policy（singleton 語意；版本由呼叫端管理）。
+    fn put_policy(&self, policy: &crate::knowledge::types::KnowledgePolicy) -> Result<()>;
+    /// 讀取 active policy（缺＝None；資料損壞＝Err——呼叫端 fail closed）。
+    fn get_policy(&self) -> Result<Option<crate::knowledge::types::KnowledgePolicy>>;
+
     // ── Phase 6d：生命週期事件（append-only）──
 
     /// 記錄一則不可變 Event（Ch.14）。
@@ -386,6 +397,24 @@ impl Store for JsonStore {
             .read::<crate::knowledge::types::Principal>("principals.json")?
             .into_iter()
             .find(|p| p.id == id))
+    }
+
+    fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()> {
+        upsert_by_id(&self.path("knowledge_scopes.json"), scope, |s| &s.id)
+    }
+    fn list_scopes(&self) -> Result<Vec<crate::knowledge::types::KnowledgeScope>> {
+        let mut out = self.read::<crate::knowledge::types::KnowledgeScope>("knowledge_scopes.json")?;
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+    fn put_policy(&self, policy: &crate::knowledge::types::KnowledgePolicy) -> Result<()> {
+        upsert_by_id(&self.path("knowledge_policies.json"), policy, |_| "active")
+    }
+    fn get_policy(&self) -> Result<Option<crate::knowledge::types::KnowledgePolicy>> {
+        Ok(self
+            .read::<crate::knowledge::types::KnowledgePolicy>("knowledge_policies.json")?
+            .into_iter()
+            .next())
     }
 
     // ── Phase 7b：對話訊息（JsonStore：全集合讀後 in-memory 過濾）──

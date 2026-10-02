@@ -72,7 +72,9 @@ impl SqliteStore {
              CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, data TEXT NOT NULL); \
              CREATE INDEX IF NOT EXISTS idx_messages_employee ON messages(employee_id); \
              CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, principal_type TEXT NOT NULL, employee_id TEXT, data TEXT NOT NULL); \
-             CREATE INDEX IF NOT EXISTS idx_principals_employee ON principals(employee_id);",
+             CREATE INDEX IF NOT EXISTS idx_principals_employee ON principals(employee_id); \
+             CREATE TABLE IF NOT EXISTS knowledge_scopes (id TEXT PRIMARY KEY, visibility TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE TABLE IF NOT EXISTS knowledge_policies (id TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT NOT NULL);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -199,6 +201,33 @@ impl Store for SqliteStore {
     fn get_principal(&self, id: &str) -> Result<Option<crate::knowledge::types::Principal>> {
         let conn = self.lock()?;
         select_one(&conn, "principals", "id", id)
+    }
+
+    fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_scopes (id, visibility, data) VALUES (?1, ?2, ?3)",
+            params![scope.id, encode(&scope.visibility)?, encode(scope)?],
+        )
+        .map_err(|e| anyhow!("put_scope: {e}"))?;
+        Ok(())
+    }
+    fn list_scopes(&self) -> Result<Vec<crate::knowledge::types::KnowledgeScope>> {
+        let conn = self.lock()?;
+        select_all(&conn, "knowledge_scopes", "ORDER BY id", params![])
+    }
+    fn put_policy(&self, policy: &crate::knowledge::types::KnowledgePolicy) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_policies (id, version, data) VALUES ('active', ?1, ?2)",
+            params![policy.version, encode(policy)?],
+        )
+        .map_err(|e| anyhow!("put_policy: {e}"))?;
+        Ok(())
+    }
+    fn get_policy(&self) -> Result<Option<crate::knowledge::types::KnowledgePolicy>> {
+        let conn = self.lock()?;
+        select_one(&conn, "knowledge_policies", "id", "active")
     }
 
     fn list_workspaces(&self) -> Result<Vec<Workspace>> {

@@ -220,6 +220,21 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         Ok(Err(e)) => anyhow::bail!("DB 開啟失敗：{e}"),
         Err(e) => anyhow::bail!("DB 檢查任務失敗：{e}"),
     }
+    // C5（D1/D3）：知識授權 bootstrap（冪等；Q3——既有 sources 全數映射 co-common）。
+    // 失敗不擋啟動：gbrain 不可用時檢索本就無法進行；policy 缺→fail closed。
+    match ocore::domain::SqliteStore::open(&db_path) {
+        Ok(boot_store) => {
+            match ocore::knowledge::bootstrap::ensure_knowledge_bootstrap(&boot_store, &cfg).await {
+                Ok(ocore::knowledge::bootstrap::BootstrapOutcome::Bootstrapped { sources }) => {
+                    eprintln!("[oserver] knowledge bootstrap 完成：co-common ← {sources} 個 source");
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("[oserver] knowledge bootstrap 失敗（續行；檢索將 fail closed）：{e}"),
+            }
+        }
+        Err(e) => eprintln!("[oserver] knowledge bootstrap 開庫失敗：{e}"),
+    }
+
     if !cfg.agent_os_enabled {
         eprintln!("[oserver] 注意：agent_os_enabled=false——API 將回 503");
     }

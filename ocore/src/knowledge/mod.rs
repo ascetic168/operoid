@@ -15,6 +15,7 @@
 //! （`source_id` 逐呼叫強制）執行——本模組是構造與執行之間的唯一邊界。
 
 pub mod backend;
+pub mod bootstrap;
 pub mod fake;
 pub mod identity;
 pub mod policy;
