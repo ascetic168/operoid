@@ -231,6 +231,7 @@ mod tests {
                 std::env::temp_dir(),
             ),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             registry: None,
         }
     }

@@ -17,9 +17,13 @@
 pub mod backend;
 pub mod bootstrap;
 pub mod fake;
+pub mod service;
 pub mod identity;
 pub mod policy;
 pub mod types;
 
 #[cfg(test)]
 mod tests_m1;
+
+#[cfg(test)]
+mod tests_real;

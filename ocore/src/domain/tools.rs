@@ -65,6 +65,10 @@ pub struct ToolCtx {
     /// C4（D-C4）：檢索授權脈絡——**只由伺服器端構造**（`knowledge::identity` 的兩個
     /// 推導入口；I4：呼叫端不得自稱）。知識檢索的 policy 評估與 receipt 查此欄。
     pub access: crate::knowledge::types::AccessContext,
+    /// C6（D1/D7）：知識檢索服務——**生產路徑必為 Some**（`build_tool_ctx` 建構）；
+    /// `None` 時內層工具退回 legacy 直接路徑（僅 real_* 測試使用）。檢索一律經
+    /// policy→授權集→receipts（I1/I2）。
+    pub knowledge: Option<std::sync::Arc<crate::knowledge::service::KnowledgeService>>,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -78,6 +82,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("employee_output_root", &self.employee_output_root)
             .field("registry", &self.registry.is_some())
             .field("access", &self.access.principal_id)
+            .field("knowledge", &self.knowledge.is_some())
             .finish()
     }
 }

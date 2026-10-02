@@ -180,6 +180,7 @@ mod tests {
             mcp: None,
             employee_output_root: std::path::PathBuf::from("/tmp"),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             registry: None,
             allowed_tools: Default::default(),
         }

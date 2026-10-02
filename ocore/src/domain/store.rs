@@ -123,6 +123,13 @@ pub trait Store {
     fn put_policy(&self, policy: &crate::knowledge::types::KnowledgePolicy) -> Result<()>;
     /// 讀取 active policy（缺＝None；資料損壞＝Err——呼叫端 fail closed）。
     fn get_policy(&self) -> Result<Option<crate::knowledge::types::KnowledgePolicy>>;
+    /// 寫入一筆 Retrieval Receipt（Test 9；append 語意）。
+    fn put_receipt(&self, receipt: &crate::knowledge::service::RetrievalReceipt) -> Result<()>;
+    /// 列出近期 receipts（最新在前，最多 `limit` 筆）。
+    fn list_recent_receipts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::knowledge::service::RetrievalReceipt>>;
 
     // ── Phase 6d：生命週期事件（append-only）──
 
@@ -415,6 +422,20 @@ impl Store for JsonStore {
             .read::<crate::knowledge::types::KnowledgePolicy>("knowledge_policies.json")?
             .into_iter()
             .next())
+    }
+
+    fn put_receipt(&self, receipt: &crate::knowledge::service::RetrievalReceipt) -> Result<()> {
+        upsert_by_id(&self.path("retrieval_receipts.json"), receipt, |r| &r.id)
+    }
+    fn list_recent_receipts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::knowledge::service::RetrievalReceipt>> {
+        let mut out = self
+            .read::<crate::knowledge::service::RetrievalReceipt>("retrieval_receipts.json")?;
+        out.reverse(); // Vec 末尾為最新 → 反轉成最新在前
+        out.truncate(limit);
+        Ok(out)
     }
 
     // ── Phase 7b：對話訊息（JsonStore：全集合讀後 in-memory 過濾）──

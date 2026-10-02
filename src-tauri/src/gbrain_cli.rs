@@ -44,5 +44,42 @@ pub async fn op_run<R: Runtime>(
 ) -> Result<OpResult, AppError> {
     let (cfg, exe) = resolve_gbrain(&app)?;
     let sink = channel_sink::<R>(&on_event);
+    // C6（Q7）：檢索 op 改道 KnowledgeService（operator AccessContext；行為不變、留 receipt）。
+    if matches!(op.as_str(), "ask" | "query" | "think") {
+        let db_path = crate::runtime::agent_db_path(&app)?;
+        let access =
+            ocore::knowledge::identity::operator_access_context(ocore::runtime::AGENT_WS);
+        let kind = if op == "think" {
+            ocore::knowledge::backend::RetrieveKind::Think
+        } else {
+            ocore::knowledge::backend::RetrieveKind::Search
+        };
+        let svc = ocore::knowledge::service::KnowledgeService::new(&db_path);
+        let tctx = ocore::domain::tools::ToolCtx {
+            gbrain_exe: exe.clone(),
+            gbrain_home: cfg.active_env_home().map(str::to_string),
+            chat_model: None,
+            mcp: if cfg.gbrain_transport == "mcp" {
+                Some(std::sync::Arc::new(ocore::gbrain_mcp::GbrainMcpClient::new(
+                    exe.clone(),
+                    cfg.active_env_home().map(str::to_string),
+                )))
+            } else {
+                None
+            },
+            allowed_tools: Default::default(),
+            employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
+            registry: None,
+            knowledge: None,
+            access,
+        };
+        let q = arg.clone().unwrap_or_default();
+        let out = svc
+            .retrieve(&tctx.access, kind, &q, None, 10, &tctx)
+            .await
+            .map_err(|e| AppError::new("op.runFailed").p("detail", e.to_string()))?;
+        sink(CliLine { stream: "stdout".into(), text: out.text });
+        return Ok(OpResult::from_code(0));
+    }
     op_run_core(&cfg, &exe, &sink, &op, arg.as_deref()).await
 }

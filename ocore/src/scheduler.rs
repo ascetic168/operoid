@@ -149,7 +149,7 @@ async fn scan_inbox(
         let registry = registry.clone();
         Some(async move {
             let _guard = guard; // 釋放於此 future 完成（含錯誤路徑）
-            if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id, registry) {
+            if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id, registry, db_path) {
                 // Reasoner 為可選：有則訊息走對話回合，無則退回 gbrain 單發（守 6c 行為）。
                 let reasoner = match build_reasoner(cfg, store, &id, permits, db_path) {
                     Ok(r) => Some(r),

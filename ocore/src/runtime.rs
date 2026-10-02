@@ -1890,6 +1890,21 @@ impl Tool for GbrainThinkTool {
 
     fn invoke<'a>(&'a self, input: ToolInput, ctx: &'a ToolCtx) -> ToolFuture<'a> {
         Box::pin(async move {
+            // C6：生產路徑——KnowledgeService（policy→授權集→receipts；I1/I2）。
+            // M0-V2：think 不吃 source 參數，服務端將 Think 導向 `query`（員工工具描述不變）。
+            if let Some(svc) = &ctx.knowledge {
+                return svc
+                    .retrieve(
+                        &ctx.access,
+                        crate::knowledge::backend::RetrieveKind::Think,
+                        &input.query,
+                        input.anchor.as_deref(),
+                        10,
+                        ctx,
+                    )
+                    .await;
+            }
+            // legacy 直接路徑——僅 real_* 測試（ctx.knowledge: None）；生產建構點一律 Some。C7+ 退役。
             // MCP 優先（transport=mcp 時 ctx 已注入 client）；任何失敗 fallback CLI。
             if let Some(mcp) = &ctx.mcp {
                 let mut args = serde_json::json!({ "question": input.query });
@@ -1975,6 +1990,13 @@ impl Tool for GbrainSearchTool {
 
     fn invoke<'a>(&'a self, input: ToolInput, ctx: &'a ToolCtx) -> ToolFuture<'a> {
         Box::pin(async move {
+            // C6：生產路徑——KnowledgeService（policy→授權集→receipts；I1/I2）。
+            if let Some(svc) = &ctx.knowledge {
+                return svc
+                    .retrieve(&ctx.access, crate::knowledge::backend::RetrieveKind::Search, &input.query, None, 10, ctx)
+                    .await;
+            }
+            // legacy 直接路徑——僅 real_* 測試（ctx.knowledge: None）。C7+ 退役。
             // MCP 優先（transport=mcp 時 ctx 已注入 client）；任何失敗 fallback CLI。
             if let Some(mcp) = &ctx.mcp {
                 match mcp
@@ -2162,6 +2184,7 @@ pub fn build_tool_ctx(
     store: &SqliteStore,
     employee_id: &str,
     registry: Option<std::sync::Arc<crate::registry::ActionRegistry>>,
+    db_path: &std::path::Path,
 ) -> Result<(GbrainToolset, ToolCtx), AppError> {
     let emp = store
         .get_employee(employee_id)?
@@ -2169,6 +2192,8 @@ pub fn build_tool_ctx(
     let entry = crate::app_config::brain_entry(cfg, &emp.brain.brain_id)?;
     // C4：AccessContext 由 Employee 伺服器端推導（I4——無呼叫端自稱路徑）。
     let access = crate::knowledge::identity::access_context_for_employee(&emp, None, None);
+    // C6：唯一檢索邊界——員工的知識存取一律經 policy→授權集→receipts（I1/I2）。
+    let knowledge = Some(crate::knowledge::service::service_arc(db_path));
     // think 顯式 --model 的來源：models.think 優先（長合成需要非推理模型，
     // 見 GBrainConfig::think_model 文檔），缺時 fallback chat_model。
     let chat_model = gbrain_config::load_for(entry.env_home())
@@ -2199,6 +2224,7 @@ pub fn build_tool_ctx(
             allowed_tools,
             employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
             access,
+            knowledge,
             registry,
         },
     ))
@@ -2618,6 +2644,7 @@ mod tests {
         ToolCtx {
             gbrain_exe: String::new(),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             gbrain_home: None,
             chat_model: None,
             mcp: None,
@@ -4783,6 +4810,7 @@ mod tests {
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             registry: None,
         };
         let res = run_cycle(
@@ -4900,6 +4928,7 @@ mod tests {
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             registry: None,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
@@ -4991,7 +5020,7 @@ mod tests {
             })
             .unwrap();
 
-        let (tool, ctx) = build_tool_ctx(&cfg, &store, &emp_id, None).expect("build_tool_ctx");
+        let (tool, ctx) = build_tool_ctx(&cfg, &store, &emp_id, None, &db).expect("build_tool_ctx");
         let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.llm_concurrency));
         let reasoner = build_reasoner(&cfg, &store, &emp_id, permits, &db)
             .expect("build_reasoner（缺 LLM API key？檢查作用中腦 chat_model 對應之環境變數）");
@@ -5352,6 +5381,7 @@ mod tests {
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             registry: None,
         };
 
@@ -5684,6 +5714,7 @@ mod tests {
             allowed_tools: Default::default(),
             employee_output_root: std::env::temp_dir(),
             access: crate::knowledge::identity::test_default(),
+            knowledge: None,
             registry: None,
         };
 
@@ -5826,7 +5857,7 @@ pub async fn run_commitments_for_employee(
         }
     }
     let registry = load_registry_for_runs(db_path, &store);
-    let (knowledge, ctx) = match build_tool_ctx(cfg, &store, employee_id, registry) {
+    let (knowledge, ctx) = match build_tool_ctx(cfg, &store, employee_id, registry, db_path) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("[runtime] build_tool_ctx({employee_id}) failed: {e}");

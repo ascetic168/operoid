@@ -711,6 +711,49 @@ async fn api_op_run(
     let st2 = state.clone();
     let b = body.0;
     tokio::spawn(async move {
+        // C6（Q7）：檢索 op 改道 KnowledgeService（operator AccessContext）——
+        // 單人版行為不變（bootstrap allow-all）、但檢索一律留 receipt（後門關閉）。
+        if matches!(b.op.as_str(), "ask" | "query" | "think") {
+            let access =
+                ocore::knowledge::identity::operator_access_context(ocore::runtime::AGENT_WS);
+            let kind = if b.op == "think" {
+                ocore::knowledge::backend::RetrieveKind::Think
+            } else {
+                ocore::knowledge::backend::RetrieveKind::Search
+            };
+            let svc = ocore::knowledge::service::KnowledgeService::new(&st2.db_path);
+            let tctx = ocore::domain::tools::ToolCtx {
+                gbrain_exe: cfg.1.clone(),
+                gbrain_home: cfg.0.active_env_home().map(str::to_string),
+                chat_model: None,
+                mcp: if cfg.0.gbrain_transport == "mcp" {
+                    Some(std::sync::Arc::new(ocore::gbrain_mcp::GbrainMcpClient::new(
+                        cfg.1.clone(),
+                        cfg.0.active_env_home().map(str::to_string),
+                    )))
+                } else {
+                    None
+                },
+                allowed_tools: Default::default(),
+                employee_output_root: std::path::PathBuf::from(&cfg.0.employee_output_path),
+                registry: None,
+                knowledge: None,
+                access,
+            };
+            let q = b.arg.clone().unwrap_or_default();
+            let res = match svc.retrieve(&tctx.access, kind, &q, None, 10, &tctx).await {
+                Ok(o) => {
+                    sink(ocore::gbrain_cli::CliLine { stream: "stdout".into(), text: o.text });
+                    Ok(ocore::gbrain_cli::OpResult::from_code(0))
+                }
+                Err(e) => Err(ocore::i18n::AppError::new("op.runFailed").p("detail", e.to_string())),
+            };
+            match res {
+                Ok(res) => st2.ops.finish(&op_id, serde_json::to_value(&res).unwrap_or_default()),
+                Err(e) => st2.ops.finish_err(&op_id, &e),
+            }
+            return;
+        }
         let r = op_run_core(&cfg.0, &cfg.1, &sink, &b.op, b.arg.as_deref()).await;
         match r {
             Ok(res) => st2.ops.finish(

@@ -277,7 +277,7 @@ pub async fn agent_run<R: tauri::Runtime>(
     let store = SqliteStore::open(&db_path)?;
 
     let registry = load_registry_for_runs(&db_path, &store);
-    let (tool, ctx) = build_tool_ctx(&cfg, &store, &employee_id, registry)?;
+    let (tool, ctx) = build_tool_ctx(&cfg, &store, &employee_id, registry, &db_path)?;
     let result = run_cycle(
         &employee_id,
         query,
@@ -466,6 +466,9 @@ pub async fn agent_run_team<R: tauri::Runtime>(
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
 
+    // C6：團隊成員的知識檢索同樣走 KnowledgeService（I1/I4——與單人 run 同語意）。
+    let knowledge = std::sync::Arc::new(ocore::knowledge::service::KnowledgeService::new(agent_db_path(&app)?));
+
     // 各 assignment 解析其 employee 的腦 → ToolCtx（團隊成員可能用不同腦）。
     let mut ctxs: Vec<ToolCtx> = Vec::with_capacity(assignments.len());
     for a in &assignments {
@@ -484,6 +487,7 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             allowed_tools: Default::default(),
             employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
             access: ocore::knowledge::identity::access_context_for_employee(&emp, None, None),
+            knowledge: Some(std::sync::Arc::clone(&knowledge)),
             registry: None,
         });
     }
@@ -570,7 +574,7 @@ pub async fn agent_run_task<R: tauri::Runtime>(
         .try_acquire(&task.owner_employee_id)
         .ok_or_else(|| AppError::new("agent_os.employeeBusy").p("id", &task.owner_employee_id))?;
     let registry = load_registry_for_runs(&db_path, &store);
-    let (tool, ctx) = build_tool_ctx(&cfg, &store, &task.owner_employee_id, registry)?;
+    let (tool, ctx) = build_tool_ctx(&cfg, &store, &task.owner_employee_id, registry, &db_path)?;
     let result = run_cycle(
         &task.owner_employee_id,
         task.input.clone(),

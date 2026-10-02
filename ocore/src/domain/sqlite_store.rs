@@ -74,7 +74,9 @@ impl SqliteStore {
              CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, principal_type TEXT NOT NULL, employee_id TEXT, data TEXT NOT NULL); \
              CREATE INDEX IF NOT EXISTS idx_principals_employee ON principals(employee_id); \
              CREATE TABLE IF NOT EXISTS knowledge_scopes (id TEXT PRIMARY KEY, visibility TEXT NOT NULL, data TEXT NOT NULL); \
-             CREATE TABLE IF NOT EXISTS knowledge_policies (id TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS knowledge_policies (id TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT NOT NULL); \
+             CREATE TABLE IF NOT EXISTS retrieval_receipts (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, employee_id TEXT, denied INTEGER NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_receipts_principal ON retrieval_receipts(principal_id);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -228,6 +230,34 @@ impl Store for SqliteStore {
     fn get_policy(&self) -> Result<Option<crate::knowledge::types::KnowledgePolicy>> {
         let conn = self.lock()?;
         select_one(&conn, "knowledge_policies", "id", "active")
+    }
+
+    fn put_receipt(&self, receipt: &crate::knowledge::service::RetrievalReceipt) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO retrieval_receipts (id, principal_id, employee_id, denied, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                receipt.id,
+                receipt.principal_id,
+                receipt.employee_id,
+                receipt.denied as i64,
+                encode(receipt)?
+            ],
+        )
+        .map_err(|e| anyhow!("put_receipt: {e}"))?;
+        Ok(())
+    }
+    fn list_recent_receipts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<crate::knowledge::service::RetrievalReceipt>> {
+        let conn = self.lock()?;
+        select_all(
+            &conn,
+            "retrieval_receipts",
+            &format!("ORDER BY rowid DESC LIMIT {limit}"),
+            params![],
+        )
     }
 
     fn list_workspaces(&self) -> Result<Vec<Workspace>> {

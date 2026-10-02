@@ -111,6 +111,7 @@ fn tool_ctx() -> ToolCtx {
         allowed_tools: Default::default(),
         employee_output_root: std::env::temp_dir(),
         access: ctx_operator(),
+        knowledge: None,
         registry: None,
     }
 }
@@ -321,12 +322,7 @@ fn m1_t8_impersonation() {
     assert_eq!(tool_ctx().access.principal_id, "principal-operator");
 }
 
-/// **Test 9**：檢索稽核 receipt。C6 接線後解鎖。
-#[ignore = "C6: receipts 表＋record_event 接線後解鎖"]
-#[tokio::test]
-async fn m1_t9_receipt() {
-    // C6：每次 retrieve 產生 receipt（principal/kind/authorized_sources/policy_version）。
-}
+
 
 // ── 靜態斷言（編譯期契約）──────────────────────────────────────────────
 
