@@ -21,6 +21,7 @@
 - **I9 保密天花板**：`scope.classification > principal.clearance` → 硬拒——先於一切規則，**grant 與 explicit deny 同級不可破**。未賦 clearance＝Internal（bootstrap 基準線）；operator＝Secret 基準線（既有列冪等升級）。
 - **clearance 管理**：`PrincipalAttrs.clearance`（`set_principal_attrs` 既有入口賦權）；屬性富集讓 AccessContext 攜 clearance 到檢索邊界；receipt/事件記下判定當下的 clearance。
 - 測試：天花板（超等級即拒／grant 不可破／operator 全級距／賦權後打開）＋既有 225 測試全綠。
+- **政策管理面**：`POST /api/knowledge/policy`／`/scopes`／`principals/{id}/attrs`；設定頁「知識授權」分頁升級——政策規則編輯器（優先序/effect/白名單 CSV/成員制）、scope 建立表單（含保密等級）、principal clearance 賦權選單。
 
 ---
 
