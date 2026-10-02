@@ -29,7 +29,10 @@ function formatTime(iso: string): string {
 function kindColor(kind: string): string {
   if (kind === "satisfied" || kind === "wake" || kind === "artifact" || kind === "auto_activated") return "text-emerald-500";
   if (kind === "stalled" || kind === "category_lapsed" || kind === "budget_exceeded" || kind === "gate_bypass_warning") return "text-amber-500";
-  if (kind === "errored" || kind === "category_frozen") return "text-destructive";
+  if (kind === "errored" || kind === "category_frozen" || kind === "knowledge_policy_invalid") return "text-destructive";
+  // C9：知識授權稽核事件——檢索=青、policy 變更=琥珀、其餘預設。
+  if (kind === "retrieval") return "text-sky-500";
+  if (kind === "knowledge_policy_changed") return "text-amber-500";
   return "text-foreground";
 }
 onMounted(() => {

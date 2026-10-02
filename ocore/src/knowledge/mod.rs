@@ -33,4 +33,7 @@ mod tests_c7;
 mod tests_c8;
 
 #[cfg(test)]
+mod tests_c9;
+
+#[cfg(test)]
 mod tests_real;

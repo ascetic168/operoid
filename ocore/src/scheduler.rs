@@ -67,6 +67,8 @@ pub async fn scheduler_loop(
                 let today = chrono::Utc::now().date_naive().to_string();
                 if last_day.as_deref() != Some(today.as_str()) {
                     scan_registry_budget(&db_path);
+                    // C9（D-C9d）：receipts 保留策略——每日清一次（90 天前）。
+                    prune_receipts_daily(&db_path);
                     last_day = Some(today);
                 }
                 let this_month = chrono::Utc::now().format("%Y-%m").to_string();
@@ -284,6 +286,22 @@ fn scan_registry_expiry(db_path: &std::path::Path) {
 /// R6c（M4 流量預算）：每日首 tick 統計近 7 天——`proposed` 超過登記表
 /// `weekly_proposal_budget` → `budget_exceeded`（白名單過窄警報）；零人類核可但
 /// `auto_activated`≥10 → `gate_bypass_warning`（檢查是否被不當繞過）。以週一日期為冪等鍵。
+/// C9（D-C9d）：receipts 保留策略——每日清一次超過保留期的收據（>0 筆時記事件）。
+fn prune_receipts_daily(db_path: &std::path::Path) {
+    match SqliteStore::open(db_path) {
+        Ok(store) => {
+            match crate::knowledge::service::prune_receipts(
+                &store,
+                crate::knowledge::service::RECEIPT_RETENTION_DAYS,
+            ) {
+                Ok(n) if n > 0 => eprintln!("[scheduler] receipts pruned: {n}"),
+                _ => {}
+            }
+        }
+        Err(e) => eprintln!("[scheduler] prune_receipts 開庫失敗：{e}"),
+    }
+}
+
 fn scan_registry_budget(db_path: &std::path::Path) {
     let Some(data_dir) = db_path.parent() else {
         return;

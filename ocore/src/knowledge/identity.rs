@@ -32,8 +32,46 @@ pub fn operator_principal() -> Principal {
 pub fn ensure_operator_principal(store: &dyn Store) -> Result<()> {
     match store.get_principal(OPERATOR_PRINCIPAL_ID)? {
         Some(_) => Ok(()),
-        None => store.put_principal(&operator_principal()),
+        None => {
+            store.put_principal(&operator_principal())?;
+            // C9（Rule 8）：身份建立留稽核（冪等——僅首次建立時記）。
+            crate::runtime::record_event(
+                store,
+                crate::runtime::AGENT_WS,
+                "knowledge",
+                "principal_created",
+                OPERATOR_PRINCIPAL_ID,
+            );
+            Ok(())
+        }
     }
+}
+
+/// C9（Rule 8）：管理員賦/改 principal 屬性——唯一入口，一律留稽核。
+/// 身份 id/型別不經此函式變更（防冒名；I4）。
+pub fn set_principal_attrs(
+    store: &dyn Store,
+    principal_id: &str,
+    attrs: super::types::PrincipalAttrs,
+) -> Result<()> {
+    let mut p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    p.attrs = attrs;
+    store.put_principal(&p)?;
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        "principal_attrs_changed",
+        format!(
+            "{principal_id} departments={:?} projects={:?} roles={:?}",
+            p.attrs.departments,
+            p.attrs.projects,
+            p.attrs.roles,
+        ),
+    );
+    Ok(())
 }
 
 /// ai_employee principal——由 Employee **讀時推導**（Q6：不儲存）。

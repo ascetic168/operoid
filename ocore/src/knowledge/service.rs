@@ -54,10 +54,16 @@ pub struct RetrievalReceipt {
     pub authorized_sources: Vec<String>,
     /// 授權 scope 鏈（C7）。
     pub authorized_scopes: Vec<String>,
+    /// C9：跨域檢索（授權 scope >1）——Rule 8 稽核面。
+    pub cross_domain: bool,
+    /// C9：有命中內容的 source 數（Knowledge Objects 粒度）。
+    pub returned_sources: usize,
     pub policy_version: u32,
     pub workspace_id: String,
     #[serde(default)]
     pub task_id: Option<String>,
+    #[serde(default)]
+    pub purpose: Option<String>,
     pub created_at: String,
 }
 
@@ -90,7 +96,7 @@ impl KnowledgeService {
         };
 
         if plan.denied || plan.source_ids.is_empty() {
-            self.record(&store, access, kind_str, &plan, false)?;
+            self.record(&store, access, kind_str, &plan, false, 0)?;
             return Ok(ToolOutput {
                 text: "目前沒有可檢索的授權範圍。".to_string(),
                 meta: json!({
@@ -130,7 +136,7 @@ impl KnowledgeService {
             sections.join("\n\n")
         };
 
-        self.record(&store, access, kind_str, &plan, !errors.is_empty())?;
+        self.record(&store, access, kind_str, &plan, !errors.is_empty(), sections.len())?;
         Ok(ToolOutput {
             text,
             meta: json!({
@@ -222,13 +228,14 @@ impl KnowledgeService {
 
     /// 寫入 receipt＋`retrieval` 事件（Test 9；Rule 8）。收據**不記查詢全文**——
     /// 記 query_id 級的授權鏈 metadata（T12；查詢文字屬稽核資產，留在事件 detail 由 C9 定案）。
-    fn record(
+    pub(crate) fn record(
         &self,
         store: &dyn Store,
         access: &AccessContext,
         kind: &str,
         plan: &RetrievalPlan,
         partial_errors: bool,
+        returned_sources: usize,
     ) -> Result<String> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let id = format!("rcpt-{}-{}", nanos, access.principal_id);
@@ -240,9 +247,12 @@ impl KnowledgeService {
             denied: plan.denied,
             authorized_sources: plan.source_ids.clone(),
             authorized_scopes: plan.scope_ids.clone(),
+            cross_domain: plan.scope_ids.len() > 1,
+            returned_sources,
             policy_version: plan.policy_version,
             workspace_id: access.workspace_id.clone(),
             task_id: access.task_id.clone(),
+            purpose: access.purpose.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
         };
         store.put_receipt(&receipt)?;
@@ -258,6 +268,8 @@ impl KnowledgeService {
                 "denied": plan.denied,
                 "authorized_sources": plan.source_ids,
                 "authorized_scopes": plan.scope_ids,
+                "cross_domain": plan.scope_ids.len() > 1,
+                "returned_sources": returned_sources,
                 "policy_version": plan.policy_version,
                 "partial_errors": partial_errors,
                 "focus_project": plan.focus_project,
@@ -267,6 +279,25 @@ impl KnowledgeService {
         );
         Ok(id)
     }
+}
+
+/// C9 保留策略：receipts 保留天數（D-C9d）。
+pub const RECEIPT_RETENTION_DAYS: i64 = 90;
+
+/// 清除超過保留期的 receipts（scheduler 日界臂呼叫）；清除 >0 筆時記事件。
+pub fn prune_receipts(store: &dyn Store, keep_days: i64) -> Result<usize> {
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(keep_days)).to_rfc3339();
+    let n = store.delete_receipts_before(&cutoff)?;
+    if n > 0 {
+        crate::runtime::record_event(
+            store,
+            crate::runtime::AGENT_WS,
+            "knowledge",
+            "receipts_pruned",
+            format!("清除 {n} 筆 {keep_days} 天前的 receipts"),
+        );
+    }
+    Ok(n)
 }
 
 /// 便利建構：放進 `ToolCtx.knowledge`。
@@ -308,7 +339,7 @@ mod tests {
         assert_eq!(plan.source_ids, vec!["src-a".to_string()]);
         assert_eq!(plan.policy_version, 1);
 
-        let rid = svc.record(&s, &operator(), "search", &plan, false).unwrap();
+        let rid = svc.record(&s, &operator(), "search", &plan, false, 1).unwrap();
         assert!(rid.starts_with("rcpt-"));
         let receipts = s.list_recent_receipts(10).unwrap();
         assert_eq!(receipts.len(), 1);
@@ -348,7 +379,7 @@ mod tests {
         let plan = svc.plan(&s, &crate::knowledge::identity::access_context_for_employee(&test_emp(), None, None)).unwrap();
         assert!(plan.denied);
         assert_eq!(plan.reason, "no_authorized_scope");
-        svc.record(&s, &plan_principal(), "think", &plan, false).unwrap();
+        svc.record(&s, &plan_principal(), "think", &plan, false, 0).unwrap();
         let receipts = s.list_recent_receipts(10).unwrap();
         assert!(receipts.iter().any(|r| r.denied));
     }

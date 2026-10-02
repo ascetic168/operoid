@@ -130,6 +130,8 @@ pub trait Store {
         &self,
         limit: usize,
     ) -> Result<Vec<crate::knowledge::service::RetrievalReceipt>>;
+    /// C9 保留策略：刪除 `created_at < cutoff`（RFC3339 字串序）的 receipts，回傳筆數。
+    fn delete_receipts_before(&self, cutoff: &str) -> Result<usize>;
 
     // ── Phase 6d：生命週期事件（append-only）──
 
@@ -436,6 +438,23 @@ impl Store for JsonStore {
         out.reverse(); // Vec 末尾為最新 → 反轉成最新在前
         out.truncate(limit);
         Ok(out)
+    }
+    fn delete_receipts_before(&self, cutoff: &str) -> Result<usize> {
+        let all = self.read::<crate::knowledge::service::RetrievalReceipt>("retrieval_receipts.json")?;
+        let kept: Vec<_> = all
+            .iter()
+            .filter(|r| r.created_at.as_str() >= cutoff)
+            .collect();
+        let removed = all.len() - kept.len();
+        if removed > 0 {
+            let path = self.path("retrieval_receipts.json");
+            let kept_owned: Vec<_> = kept.into_iter().cloned().collect();
+            std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&kept_owned).map_err(|e| anyhow::anyhow!("encode: {e}"))?,
+            )?;
+        }
+        Ok(removed)
     }
 
     // ── Phase 7b：對話訊息（JsonStore：全集合讀後 in-memory 過濾）──

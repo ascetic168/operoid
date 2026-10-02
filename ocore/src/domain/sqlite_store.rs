@@ -259,6 +259,17 @@ impl Store for SqliteStore {
             params![],
         )
     }
+    fn delete_receipts_before(&self, cutoff: &str) -> Result<usize> {
+        let conn = self.lock()?;
+        let n = conn
+            .execute(
+                // created_at 在 JSON blob 內（表無此欄）——json_extract 免遷移。
+                "DELETE FROM retrieval_receipts WHERE json_extract(data, '$.created_at') < ?1",
+                params![cutoff],
+            )
+            .map_err(|e| anyhow!("delete_receipts_before: {e}"))?;
+        Ok(n)
+    }
 
     fn list_workspaces(&self) -> Result<Vec<Workspace>> {
         let conn = self.lock()?;
