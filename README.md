@@ -123,6 +123,13 @@ enforced deterministically by the server, auditable after the fact.
   which scopes. Grants, revocations, policy changes and identity changes are
   audited events. Temporary grants expire by TTL and vanish instantly on
   revocation.
+- **Classification levels with a hard ceiling.** Scopes carry a security
+  level (`public < internal < confidential < secret`); principals carry a
+  clearance. A scope above your clearance is denied outright — no policy
+  rule, and no temporary grant, can open it. The same ceiling applies on the
+  **write side**: an author cannot publish into a source classified above
+  their clearance, and factory output is routed to the scope you choose when
+  writing.
 - **Same brain + same query + different identity = different results.** That
   one-liner is proven end-to-end against a real GBrain — the smallest proof
   that the knowledge fabric actually works.
@@ -193,8 +200,8 @@ backend.
   and sampled-review divergence alarms; edited under **Settings → Registry**
   (structured forms; raw JSON for advanced use). Why the boundary looks this
   way: [A delegation boundary humans can draw](#a-delegation-boundary-humans-can-draw).
-- **A knowledge boundary the server enforces** (landing in the next
-  release): permission-aware retrieval over the knowledge graph — scopes →
+- **A knowledge boundary the server enforces** (v0.3.7): permission-aware
+  retrieval over the knowledge graph — scopes →
   sources, pre-retrieval authorization, deterministic fail-closed policy,
   per-principal tokens, TTL grants, retrieval receipts, task-focused
   scoping, and a **Settings → Knowledge** admin page. See

@@ -13,9 +13,13 @@
 
 ---
 
-## [Unreleased] — C13a 分級保密（SecurityLevel clearance）
+## [v0.3.7] - 2026-10-02
 
-### 新增
+### Enterprise C′（Permission-aware Knowledge Fabric）
+
+> 第一程式里程碑（M1）已兌現並以 real e2e 實機證明：**同一 GBrain＋同一查詢＋不同 AccessContext＝不同授權檢索結果**。
+
+### 分級保密（C13a–c）
 
 - **保密等級全序**：`Public < Internal < Confidential < Secret`（`SecurityLevel` 枚舉）；scope 的 classification 與規則的 classifications 條件升級為等級型別（既有 `internal` 資料零遷移）。
 - **I9 保密天花板**：`scope.classification > principal.clearance` → 硬拒——先於一切規則，**grant 與 explicit deny 同級不可破**。未賦 clearance＝Internal（bootstrap 基準線）；operator＝Secret 基準線（既有列冪等升級）。
@@ -24,14 +28,7 @@
 - **政策管理面**：`POST /api/knowledge/policy`／`/scopes`／`principals/{id}/attrs`；設定頁「知識授權」分頁升級——政策規則編輯器（優先序/effect/白名單 CSV/成員制）、scope 建立表單（含保密等級）、principal clearance 賦權選單。
 - **寫入端分級（Q12 兌現）**：`provision` 自動供給（圈子×等級→scope/source 慣例命名＋冪等建立＋owner 白名單合成）；`authored_to_scope_core`（撰寫器文章寫入指定圈子×等級，`sync --source` 立即入圖）；**寫入端天花板**（所選來源等級 > 作者 clearance → 403，與 I9 對稱）。
 - **撰寫器寫入目標選擇**：對話框新增保密等級＋圈子選擇（company+internal＝預設公司層）；批次路徑（write-pages）同接寫入端天花板——工廠所有寫入路徑皆受分級管制。
-
 ---
-
-## [v0.3.7] - 2026-10-02
-
-### Enterprise C′（Permission-aware Knowledge Fabric）
-
-> 第一程式里程碑（M1）已兌現並以 real e2e 實機證明：**同一 GBrain＋同一查詢＋不同 AccessContext＝不同授權檢索結果**。
 
 ### 新增（ocore/src/knowledge/ 模組）
 
