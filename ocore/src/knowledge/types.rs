@@ -28,6 +28,9 @@ pub struct Principal {
     pub display_name: String,
     #[serde(default)]
     pub attrs: PrincipalAttrs,
+    /// C12a（D-C12a-1）：API token 的 SHA-256 hex（明文只在簽發時回傳一次）。
+    #[serde(default)]
+    pub token_hash: Option<String>,
 }
 
 /// Principal 的授權屬性（C7b）——policy 的 principal 側條件（departments/projects）

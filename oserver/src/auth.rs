@@ -43,6 +43,39 @@ impl AuthProvider for TokenProvider {
     }
 }
 
+/// C12a（D-C12a-2）：token-per-principal authn——master token（向後相容）→ operator；
+/// principal token（SHA-256 比對 store）→ 該 principal。`Identity.name` 攜 **principal id**。
+/// 務實取捨：check 內同步開本機 SQLite（請求路徑本就開；企業遠端化時重新評估——Q9）。
+pub struct PrincipalTokenProvider {
+    master_token: String,
+    db_path: std::path::PathBuf,
+}
+
+impl PrincipalTokenProvider {
+    pub fn new(master_token: impl Into<String>, db_path: impl Into<std::path::PathBuf>) -> Self {
+        Self { master_token: master_token.into(), db_path: db_path.into() }
+    }
+}
+
+impl AuthProvider for PrincipalTokenProvider {
+    fn check(&self, auth_header: Option<&str>) -> Result<Identity, AuthError> {
+        let h = auth_header.ok_or(AuthError)?;
+        let token = h.strip_prefix("Bearer ").map(str::trim).ok_or(AuthError)?;
+        if token.is_empty() {
+            return Err(AuthError);
+        }
+        if token == self.master_token {
+            return Ok(Identity {
+                name: ocore::knowledge::identity::OPERATOR_PRINCIPAL_ID.to_string(),
+            });
+        }
+        let store = ocore::domain::SqliteStore::open(&self.db_path).map_err(|_| AuthError)?;
+        let p = ocore::knowledge::identity::find_principal_by_token(&store, token)
+            .map_err(|_| AuthError)?;
+        p.map(|p| Identity { name: p.id }).ok_or(AuthError)
+    }
+}
+
 /// C4（D-C4）：帳號型身份提供者插座——`Identity → Principal` 的唯一映射點
 /// （`auth.rs:1-5` 檔頭預留的企業版插座；kernel 與 handler 零改動）。
 /// M1 唯一實作 [`SingleOperatorProvider`]：authN 通過者恆映射 operator bootstrap
@@ -103,5 +136,52 @@ mod tests {
             p.principal_type,
             ocore::knowledge::types::PrincipalType::Human
         );
+    }
+
+    /// **Test 8（C12a 完整版）**：token-per-principal——master→operator、
+    /// principal token→該身份、錯誤/撤銷→401；身份出自 token 鏈，冒名不可能。
+    #[test]
+    fn principal_token_provider_resolves_identities() {
+        use ocore::domain::{SqliteStore, Store as _};
+        use ocore::knowledge::identity::{
+            ensure_operator_principal, issue_principal_token, revoke_principal_token,
+        };
+        use ocore::knowledge::types::{Principal, PrincipalType};
+        let dir = std::env::temp_dir().join(format!(
+            "c12a-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("test.db");
+        let store = SqliteStore::open(&db).unwrap();
+        ensure_operator_principal(&store).unwrap();
+        store
+            .put_principal(&Principal {
+                id: "ai:bob".into(),
+                principal_type: PrincipalType::AiEmployee,
+                employee_id: Some("bob".into()),
+                display_name: "Bob".into(),
+                attrs: Default::default(),
+                token_hash: None,
+            })
+            .unwrap();
+        let bob_token = issue_principal_token(&store, "ai:bob").unwrap();
+        let master = "master-secret".to_string();
+        let provider = PrincipalTokenProvider::new(master.clone(), &db);
+        let bearer = |t: &str| Some(format!("Bearer {t}"));
+
+        // master → operator；bob token → ai:bob。
+        assert_eq!(provider.check(Some(format!("Bearer {master}").as_str())).unwrap().name, "principal-operator");
+        assert_eq!(provider.check(Some(format!("Bearer {bob_token}").as_str())).unwrap().name, "ai:bob");
+        // 錯誤 token → 401 語意。
+        assert_eq!(provider.check(Some("Bearer wrong".to_string()).as_deref()), Err(AuthError));
+        assert_eq!(provider.check(None), Err(AuthError));
+        // 撤銷即時失效；輪替＝重簽（舊失效）。
+        revoke_principal_token(&store, "ai:bob").unwrap();
+        assert_eq!(provider.check(Some(format!("Bearer {bob_token}").as_str())), Err(AuthError));
+        let bob2 = issue_principal_token(&store, "ai:bob").unwrap();
+        assert_eq!(provider.check(Some(format!("Bearer {bob2}").as_str())).unwrap().name, "ai:bob");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

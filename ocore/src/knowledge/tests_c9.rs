@@ -168,5 +168,5 @@ fn c9_identity_audit() {
         PrincipalAttrs::default(),
     )
     .is_err());
-    let _ = Principal { id: String::new(), principal_type: crate::knowledge::types::PrincipalType::Human, employee_id: None, display_name: String::new(), attrs: PrincipalAttrs::default() };
+    let _ = Principal { id: String::new(), principal_type: crate::knowledge::types::PrincipalType::Human, employee_id: None, display_name: String::new(), attrs: PrincipalAttrs::default(), token_hash: None };
 }

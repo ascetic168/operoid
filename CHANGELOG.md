@@ -13,7 +13,32 @@
 
 ---
 
-## [v0.3.6] - 2026-10-01
+## [Unreleased] — Enterprise C′（Permission-aware Knowledge Fabric）
+
+> 計畫與證據：`docs/Operoid-計畫-EnterpriseC總綱.md`＋`docs/enterprise-c-*.md` 系列（C0 調查→C10 實作）。
+> 提示詞 §26 第一程式里程碑（M1）已兌現並以 real e2e 實機證明：**同一 GBrain＋同一查詢＋不同 AccessContext＝不同授權檢索結果**。
+
+### 新增（ocore/src/knowledge/ 模組）
+
+- **身份基礎建設**：`principals` 表＋operator bootstrap（冪等）；AI 員工 principal 由 Employee 讀時推導；`ToolCtx.access: AccessContext`——身份到達檢索邊界（此前檢索完全無身份）；`oserver` `AccountProvider`/`SingleOperatorProvider` 插座。
+- **知識授權**：`KnowledgeScope`（scope→GBrain source 映射，department/project/classification）＋`KnowledgePolicy`（優先序規則：principal/types/scopes/departments/projects/classifications/**成員制旗標**）——純函式評估、DENY 優先、**fail closed**（缺/壞 policy＝全 DENY＋事件）。
+- **KnowledgeService（唯一檢索邊界）**：員工 think/search 與 Operations 主控台 ask/query/think 一律經 policy→授權 source 集→**逐 source 呼叫**（GBrain `pageReadFilter` SQL 級強制，零 GBrain 修改）；任務聚焦（QueryPlanner：綁專案任務自動收窄候選集，只縮不擴）。
+- **Retrieval Receipt**：每筆檢索結構化落表＋`retrieval` 事件（Who→Employee→Task→Policy→Scope 鏈可重構；跨域標記；90 天保留＋每日 prune）。
+- **臨時授權 TTL grants**：principal×scope×TTL；**三段式**——explicit deny 不可被 grant 架空、default deny 可由 valid grant 破；屆期查詢時即時判定＋scheduler 冪等掃描；create/revoke/expire 全稽核。
+- **身份/政策稽核**：`principal_created`（冪等）／`principal_attrs_changed`／`knowledge_policy_changed`（version+1）／`receipts_pruned` 事件。
+- **Bootstrap**：啟動時冪等把既有 sources 全數映射 `co-common` scope＋明示 allow-all policy——**單人版行為不變**（舊資料不搬頁，Q3）。
+
+### 變更
+
+- `ToolCtx` 擴欄 `access`＋`knowledge`（全部建構點同步；`agent_run_team` 繞道變體一併消除）。
+- `build_tool_ctx` 簽名增 `db_path`；scheduler 增 grants 屆期/receipts prune 日界臂。
+- EventsView 事件配色：`retrieval`＝sky、`knowledge_policy_changed`＝amber、`knowledge_policy_invalid`＝destructive。
+- `gbrain_cli` op `stats` 對應 gbrain 0.60 的 `status` 指令（上游漂移修正，M0 實測）。
+
+### 安全測試（提示詞 §16 十情境）
+
+- T1 同查詢不同身分／T2 跨部門成員制／T3 受限文件永不入 context／T4 臨時授權屆期／T5 撤銷即時／T6 chunk 繼承鏈／T7 prompt injection（policy 為權威）／T8 冒名防護／T9 檢索稽核／T10 confused deputy——**全數解鎖並通過**（`cargo test -p ocore`＝224 過；real_* e2e `#[ignore]` 手動跑）。
+
 
 > 設定頁分頁化＋登記表從原始 JSON 改為**結構化列表編輯器**——使用者不必再記 JSON 鍵名、也不會打錯字。**後端與 API 不變**（`GET/POST /api/registry`），預設行為不變（未登記類別一律送人類核可）。
 

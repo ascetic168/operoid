@@ -180,6 +180,7 @@ fn c7b_attrs_enrichment() {
                 departments: vec!["quality".into()],
                 projects: vec![],
             },
+            token_hash: None,
         })
         .unwrap();
     let bob = access_context_for_employee_enriched(&store, &mk_emp("bob"), None, None).unwrap();

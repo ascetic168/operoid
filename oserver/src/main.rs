@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use auth::TokenProvider;
+use auth::PrincipalTokenProvider;
 use ocore::agent_state::AppState;
 use ocore::runtime::agent_db_path_in;
 use ocore::scheduler;
@@ -195,7 +195,8 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
 
     let ready = Arc::new(AtomicBool::new(false));
     let state = Arc::new(ServerState {
-        auth: Arc::new(TokenProvider::new(token)),
+        // C12a：token-per-principal authn（master token→operator；principal token→該身份）。
+        auth: Arc::new(PrincipalTokenProvider::new(token, db_path.clone())),
         cfg: cfg.clone(),
         db_path: db_path.clone(),
         ready: Arc::clone(&ready),

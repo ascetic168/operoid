@@ -207,6 +207,10 @@ impl Store for SqliteStore {
         let conn = self.lock()?;
         select_one(&conn, "principals", "id", id)
     }
+    fn list_principals(&self) -> Result<Vec<crate::knowledge::types::Principal>> {
+        let conn = self.lock()?;
+        select_all(&conn, "principals", "ORDER BY id", params![])
+    }
 
     fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()> {
         let conn = self.lock()?;

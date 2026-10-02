@@ -112,6 +112,8 @@ pub trait Store {
     fn put_principal(&self, principal: &crate::knowledge::types::Principal) -> Result<()>;
     /// 依 id 讀取 Principal。
     fn get_principal(&self, id: &str) -> Result<Option<crate::knowledge::types::Principal>>;
+    /// 列出全部 Principal（id 排序；C12a token 查找用）。
+    fn list_principals(&self) -> Result<Vec<crate::knowledge::types::Principal>>;
 
     // ── C5（D1/D3）：知識 scope 與 policy 的持久化（權威在 Operoid）──
 
@@ -413,6 +415,11 @@ impl Store for JsonStore {
             .read::<crate::knowledge::types::Principal>("principals.json")?
             .into_iter()
             .find(|p| p.id == id))
+    }
+    fn list_principals(&self) -> Result<Vec<crate::knowledge::types::Principal>> {
+        let mut out = self.read::<crate::knowledge::types::Principal>("principals.json")?;
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
     }
 
     fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()> {

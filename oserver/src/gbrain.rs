@@ -29,7 +29,7 @@ use ocore::i18n::AppError;
 use ocore::prereq::check_all;
 
 use crate::config::{load_config, save_config};
-use crate::routes::{err_response, require_auth, ServerState};
+use crate::routes::{err_response, require_auth, require_identity, ServerState};
 
 pub fn gbrain_routes() -> Router<Arc<ServerState>> {
     Router::new()
@@ -686,9 +686,11 @@ async fn api_op_run(
     headers: HeaderMap,
     body: Json<OpRunBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    // C12a（D-C12a-3）：身份出自 token 鏈（Test 8 完整版）——檢索改道用它構造 AccessContext。
+    let requestor = match require_identity(&state, &headers) {
+        Ok(id) => id.name,
+        Err(r) => return r,
+    };
     let st = state.clone();
     let cfg = match tokio::task::spawn_blocking(move || {
         let cfg = load_cfg(&st)?;
@@ -714,8 +716,37 @@ async fn api_op_run(
         // C6（Q7）：檢索 op 改道 KnowledgeService（operator AccessContext）——
         // 單人版行為不變（bootstrap allow-all）、但檢索一律留 receipt（後門關閉）。
         if matches!(b.op.as_str(), "ask" | "query" | "think") {
-            let access =
-                ocore::knowledge::identity::operator_access_context(ocore::runtime::AGENT_WS);
+            // Test 8 完整版：AccessContext 出自請求身份（token 鏈），不出自參數。
+            let access = match tokio::task::spawn_blocking({
+                let db = st2.db_path.clone();
+                let requestor = requestor.clone();
+                move || {
+                    let store = ocore::domain::SqliteStore::open(&db)?;
+                    ocore::knowledge::identity::access_context_for_principal(
+                        &store,
+                        &requestor,
+                        ocore::runtime::AGENT_WS,
+                    )
+                }
+            })
+            .await
+            {
+                Ok(Ok(a)) => a,
+                Ok(Err(e)) => {
+                    st2.ops.finish_err(
+                        &op_id,
+                        &ocore::i18n::AppError::new("auth.unauthorized").p("detail", e.to_string()),
+                    );
+                    return;
+                }
+                Err(e) => {
+                    st2.ops.finish_err(
+                        &op_id,
+                        &ocore::i18n::AppError::new("server.internal").p("detail", e.to_string()),
+                    );
+                    return;
+                }
+            };
             let kind = if b.op == "think" {
                 ocore::knowledge::backend::RetrieveKind::Think
             } else {

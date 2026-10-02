@@ -25,7 +25,82 @@ pub fn operator_principal() -> Principal {
         employee_id: None,
         display_name: "operator".to_string(),
         attrs: Default::default(),
+        token_hash: None,
     }
+}
+
+/// C12a（D-C12a-1）：token 明文 → SHA-256 hex。
+pub fn hash_token(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(token.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// C12a：簽發 principal 的 API token（明文**只在此回傳一次**；存 SHA-256；Rule 8 留痕）。
+/// 輪替＝對同一 principal 重簽（舊 token 立即失效——hash 被覆寫）。
+pub fn issue_principal_token(store: &dyn Store, principal_id: &str) -> Result<String> {
+    let mut p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    let token = format!(
+        "okt-{}-{}",
+        principal_id.trim_start_matches("ai:").trim_start_matches("principal-"),
+        uuid_like(),
+    );
+    p.token_hash = Some(hash_token(&token));
+    store.put_principal(&p)?;
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        "principal_token_issued",
+        principal_id,
+    );
+    Ok(token)
+}
+
+/// C12a：撤銷 principal 的 API token（即時失效；Rule 8 留痕）。冪等。
+pub fn revoke_principal_token(store: &dyn Store, principal_id: &str) -> Result<()> {
+    let mut p = match store.get_principal(principal_id)? {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    if p.token_hash.is_none() {
+        return Ok(());
+    }
+    p.token_hash = None;
+    store.put_principal(&p)?;
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        "principal_token_revoked",
+        principal_id,
+    );
+    Ok(())
+}
+
+/// C12a：以 token 雜湊查找 principal（authn 用；明文比對永不出現在 store）。
+pub fn find_principal_by_token(store: &dyn Store, token: &str) -> Result<Option<Principal>> {
+    let hash = hash_token(token);
+    Ok(store
+        .list_principals()?
+        .into_iter()
+        .find(|p| p.token_hash.as_deref() == Some(hash.as_str())))
+}
+
+/// 32 hex（token 尾段）：時間＋pid＋進程內計數器經 SHA-256——本機服務的務實取捨；
+/// C12b（IdP）改 CSPRNG。
+fn uuid_like() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos().to_le_bytes());
+    h.update(std::process::id().to_le_bytes());
+    h.update(SEQ.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+    format!("{:x}", h.finalize())
 }
 
 /// 於 store 冪等確保 operator principal 存在（oserver 啟動與殼層初始化呼叫）。
@@ -82,6 +157,7 @@ pub fn principal_for_employee(emp: &Employee) -> Principal {
         employee_id: Some(emp.id.clone()),
         display_name: emp.name.clone(),
         attrs: Default::default(),
+        token_hash: None,
     }
 }
 
@@ -151,6 +227,29 @@ pub fn operator_access_context_enriched(
         ctx.projects = p.attrs.projects;
     }
     Ok(ctx)
+}
+
+/// C12a（D-C12a-3）：**HTTP 面的身份→AccessContext**——Identity.name 即 principal id，
+/// 由 token 鏈伺服器端裁定（Test 8 完整版）。查無 → Err（401 語意）。
+pub fn access_context_for_principal(
+    store: &dyn Store,
+    principal_id: &str,
+    workspace_id: &str,
+) -> Result<AccessContext> {
+    let p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    Ok(AccessContext {
+        principal_id: p.id,
+        principal_type: p.principal_type,
+        employee_id: p.employee_id,
+        workspace_id: workspace_id.to_string(),
+        roles: p.attrs.roles,
+        departments: p.attrs.departments,
+        projects: p.attrs.projects,
+        task_id: None,
+        purpose: None,
+    })
 }
 
 /// 測試用預設脈絡（既有工具測試 helpers 的身份填充；C4 前的 ToolCtx 無身份欄位）。

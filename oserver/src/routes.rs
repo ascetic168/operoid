@@ -57,9 +57,18 @@ pub(crate) fn err_response(e: &AppError) -> Response {
 
 /// 認證中介：所有 /api/* 走此處（/healthz 在 router 層免認證）。
 pub(crate) fn require_auth(state: &ServerState, headers: &HeaderMap) -> Result<(), Response> {
+    require_identity(state, headers).map(|_| ())
+}
+
+/// C12a（D-C12a-3）：認證並回傳請求身份（principal id）——Test 8 完整版的地基：
+/// 身份出自 token 鏈，不出自呼叫端參數。
+pub(crate) fn require_identity(
+    state: &ServerState,
+    headers: &HeaderMap,
+) -> Result<crate::auth::Identity, Response> {
     let h = headers.get("authorization").and_then(|v| v.to_str().ok());
     match state.auth.check(h) {
-        Ok(_) => Ok(()),
+        Ok(id) => Ok(id),
         Err(AuthError) => Err((
             StatusCode::UNAUTHORIZED,
             Json(json!({"code": "auth.unauthorized"})),
