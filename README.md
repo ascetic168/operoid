@@ -96,6 +96,42 @@ Boundary](journal/The_Shape_of_the_Boundary_Charlie_Chu.pdf)**; its machinery
 ships in the product
 as the **Action Registry** — see [Current status](#current-status).
 
+## A knowledge boundary the server enforces
+
+The Action Registry draws the boundary for **actions** — what an Employee may
+*do*. The knowledge fabric draws it for **knowledge** — what an Employee may
+*know*. Both boundaries share the same constitutional shape: set by humans,
+enforced deterministically by the server, auditable after the fact.
+
+- **Authorization happens before retrieval.** Policy is evaluated in pure,
+  deterministic Rust — never by an LLM, which may assist understanding but
+  never grants access. Unauthorized knowledge never enters the candidate set
+  or an LLM's context; nothing is fetched-then-hidden.
+- **One fabric, partitioned into scopes.** Company-common, per-department,
+  per-project and restricted knowledge map onto GBrain *sources*; a query
+  runs against only the **authorized source set**, enforced at the SQL level
+  inside GBrain — zero modification to GBrain itself. Personal Brains stay
+  physically separate.
+- **Fail closed.** A missing or corrupt policy means *deny*, with an event on
+  record — and an explicit deny rule outranks everything, including temporary
+  grants.
+- **Identity is server-side.** Every principal (human operator or AI
+  Employee) authenticates with its own API token; identity is resolved from
+  the token chain, never from what a caller claims.
+- **Everything privileged leaves a receipt.** Every retrieval writes a
+  structured record — who, on which task, under which policy version, seeing
+  which scopes. Grants, revocations, policy changes and identity changes are
+  audited events. Temporary grants expire by TTL and vanish instantly on
+  revocation.
+- **Same brain + same query + different identity = different results.** That
+  one-liner is proven end-to-end against a real GBrain — the smallest proof
+  that the knowledge fabric actually works.
+
+Everything is managed under **Settings → Knowledge**: principals & API
+tokens, temporary grants, and the scope→source map. Two enterprise switches
+ship alongside (`ops_retrieval_enabled` retires retrieval ops from the
+console; `claude_code_handoff_enabled` retires the Claude Code handoff).
+
 ## Core concepts
 
 | Concept | One-line role |
@@ -110,6 +146,7 @@ as the **Action Registry** — see [Current status](#current-status).
 | **Task** | A unit of work. Short-lived, executable. |
 | **Commitment** | A persistent responsibility that outlives tasks. |
 | **Action Registry** | The delegation boundary. Which action categories may act without asking — and which may not. |
+| **Knowledge Policy** | The knowledge boundary. Who may retrieve which scope — evaluated before retrieval, fail-closed. |
 | **Trigger** | What decides an Employee should wake. |
 | **Runtime** | The engine that manages lifecycle, never reasoning. |
 | **Event** | The immutable record of what happened. |
@@ -156,6 +193,12 @@ backend.
   and sampled-review divergence alarms; edited under **Settings → Registry**
   (structured forms; raw JSON for advanced use). Why the boundary looks this
   way: [A delegation boundary humans can draw](#a-delegation-boundary-humans-can-draw).
+- **A knowledge boundary the server enforces** (landing in the next
+  release): permission-aware retrieval over the knowledge graph — scopes →
+  sources, pre-retrieval authorization, deterministic fail-closed policy,
+  per-principal tokens, TTL grants, retrieval receipts, task-focused
+  scoping, and a **Settings → Knowledge** admin page. See
+  [A knowledge boundary the server enforces](#a-knowledge-boundary-the-server-enforces).
 - **write-note, the first action tool**: Employees write finished output as
   markdown notes into their own output directory (kept outside the knowledge
   graph); humans review and promote approved notes into the notes repo, where
@@ -245,9 +288,11 @@ src/              Vue 3 frontend (views, Pinia stores, i18n, HTTP wrappers)
                     Employee chat, Operations (live console), Inbox
 ocore/            Rust domain core (zero Tauri deps)
                     domain · runtime · scheduler · event_bus · agents state
+                    knowledge (policy/service/planner/grants/receipts/identity)
                     gbrain capabilities (cli/brains/factories/converters) · llm
 oserver/          The resident service — axum HTTP API (token auth)
                     agent-os read/write · GBrain domain · operations console
+                    knowledge admin (principals/tokens/grants)
                     event ingress /event · service install (Win/Linux/macOS)
 src-tauri/        Desktop shell (Tauri v2) — window, desktop-only features
                     (Claude Code, note preview), command thin-layer, service

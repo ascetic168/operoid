@@ -75,6 +75,32 @@ Operoid 把這件事當成憲法層級的原則——
 完整分析見論文**[界線的形狀](journal/界線的形狀_朱國棟.pdf)**；其機制以**動作類別登記表**的形式
 隨產品交付——見[目前狀態](#目前狀態)。
 
+## 伺服器執行的知識界線
+
+動作類別登記表畫的是**動作**的界線——Employee 可以*做*什麼；知識布料（Enterprise C′）
+畫的是**知識**的界線——Employee 可以*知道*什麼。兩條界線有同一種憲法形狀：
+由人類畫定、由伺服器確定性執行、事後可稽核。
+
+- **授權發生在檢索之前。** 政策以純 Rust 確定性評估——LLM 可以協助理解查詢，
+  但永不參與授權。未授權的知識不會進入候選集，更不會進 LLM 的上下文；
+  沒有任何「先取回再遮蔽」。
+- **一塊布料，按範圍分區。** 全公司／部門／專案／受限知識映射到 GBrain 的
+  *source*；每次查詢只對**授權 source 集合**發出，由 GBrain 在 SQL 層強制——
+  零修改 GBrain 本體。個人腦維持物理隔離。
+- **Fail closed。** 政策缺失或損壞＝拒絕並記錄事件；明示 DENY 規則高於一切，
+  連臨時授權都無法架空。
+- **身份由伺服器端裁定。** 每個 principal（人類操作者或 AI 員工）以自己的
+  API token 認證；身份出自 token 鏈，永不出自呼叫端的自稱。
+- **特權行為皆留收據。** 每次檢索寫下結構化紀錄——誰、在哪個任務、依哪版政策、
+  看到哪些範圍。grant 的發放／撤銷／屆期、政策變更、身份變更都是稽核事件。
+  臨時授權依 TTL 到期，撤銷即時失效。
+- **同一腦＋同一查詢＋不同身份＝不同結果。** 這句話已對真實 GBrain 做了
+  端到端實證——它是知識布料真的在運作的最小證明。
+
+一切在「**設定 → 知識授權**」管理：principals 與 API tokens、臨時授權、
+範圍→source 映射。隨附兩個企業面開關（`ops_retrieval_enabled` 自主控台退役檢索 op；
+`claude_code_handoff_enabled` 退役 Claude Code handoff）。
+
 ## 核心概念
 
 | 概念 | 一句話角色 |
@@ -89,6 +115,7 @@ Operoid 把這件事當成憲法層級的原則——
 | **Task 任務** | 工作單位。短期、可執行。 |
 | **Commitment 長期職責** | 比任務活得更久的持久職責。 |
 | **Action Registry 動作類別登記表** | 委任界線。哪些動作類別可免請示而行——由人類畫定、可稽核。 |
+| **Knowledge Policy 知識政策** | 知識界線。誰可檢索哪個範圍——檢索前評估、fail closed。 |
 | **Trigger 觸發器** | 決定何時該喚醒 Employee。 |
 | **Runtime 執行引擎** | 管理生命週期的引擎，從不管理思考。 |
 | **Event 事件** | 已發生事實的不可變紀錄。 |
@@ -128,6 +155,10 @@ Operoid 把這件事當成憲法層級的原則——
   三層委任、從嚴預設，附關鍵詞保險絲、屆期重簽、事故連坐凍結、抽審分歧警報；
   在「設定 → 登記表」編輯（結構化表單；進階可切原始 JSON）。
   界線的「為什麼」與「形狀」：[人類畫得出的委任界線](#人類畫得出的委任界線)。
+- **伺服器執行的知識界線**（隨下一版發布）：知識圖譜上的**授權檢索**——範圍分區、
+  檢索前授權、確定性 fail-closed 政策、per-principal token、臨時授權（TTL）、
+  檢索收據、任務聚焦，以及「設定 → 知識授權」管理頁。
+  見[伺服器執行的知識界線](#伺服器執行的知識界線)。
 - **write-note——員工的第一個行動工具**：Employee 把完整產出寫成 markdown 筆記到
   專屬產出目錄（在知識庫之外）；人工審閱後將滿意的筆記移入 notes repo，
   經既有同步晉升為組織知識（產出 → 驗證 → 晉升）。可依模板逐一開啟權限。
@@ -210,9 +241,11 @@ src/              Vue 3 前端（views、Pinia stores、i18n、HTTP 包裝）
                     員工對話、Operations（即時主控台）、收件匣
 ocore/            Rust 領域核心（零 Tauri 依賴）
                     domain · runtime · scheduler · event_bus · agent 狀態
+                    知識授權（policy/service/planner/grants/receipts/identity）
                     GBrain 能力域（cli/brains/factories/converters）· llm
 oserver/          常駐服務 —— axum HTTP API（token 認證）
                     agent-os 讀寫面 · GBrain 全域 · 操作主控台（ring buffer 輪詢）
+                    知識授權管理（principals/tokens/grants）
                     事件進氣口 /event · 服務註冊（Windows/Linux/macOS）
 src-tauri/        桌面殼（Tauri v2）—— 視窗＋桌面專屬功能
                     （Claude Code、筆記預覽）、指令薄層、服務代管
