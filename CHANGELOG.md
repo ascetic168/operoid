@@ -22,6 +22,7 @@
 - **clearance 管理**：`PrincipalAttrs.clearance`（`set_principal_attrs` 既有入口賦權）；屬性富集讓 AccessContext 攜 clearance 到檢索邊界；receipt/事件記下判定當下的 clearance。
 - 測試：天花板（超等級即拒／grant 不可破／operator 全級距／賦權後打開）＋既有 225 測試全綠。
 - **政策管理面**：`POST /api/knowledge/policy`／`/scopes`／`principals/{id}/attrs`；設定頁「知識授權」分頁升級——政策規則編輯器（優先序/effect/白名單 CSV/成員制）、scope 建立表單（含保密等級）、principal clearance 賦權選單。
+- **寫入端分級（Q12 兌現）**：`provision` 自動供給（圈子×等級→scope/source 慣例命名＋冪等建立＋owner 白名單合成）；`authored_to_scope_core`（撰寫器文章寫入指定圈子×等級，`sync --source` 立即入圖）；**寫入端天花板**（所選來源等級 > 作者 clearance → 403，與 I9 對稱）。
 
 ---
 
