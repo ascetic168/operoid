@@ -1,0 +1,117 @@
+//! 知識授權的型別契約（M1-WP-C3）。
+//!
+//! 提示詞 §4 草案的 M1 最小集：`Principal`／`AccessContext`／`KnowledgeScope`／
+//! `KnowledgePolicy`。慣例比照登記表（serde snake_case、`#[serde(default)]` 友善）。
+//! 刻意**不**包含 delegation／expires_at（提示詞 §4.1 的臨時授權面）——屬 WP-C10。
+
+use serde::{Deserialize, Serialize};
+
+/// Principal 類型（D6）。`Service` 保留型別、M1 不發實體（Q6 裁決）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrincipalType {
+    Human,
+    AiEmployee,
+    Service,
+}
+
+/// Principal——「這是誰」。M1 的兩個實體來源：`principal-operator`（bootstrap human）
+/// 與 `ai:{employee_id}`（由 Employee 推導，讀時構造、不儲存——Q6）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Principal {
+    pub id: String,
+    pub principal_type: PrincipalType,
+    #[serde(default)]
+    pub employee_id: Option<String>,
+    #[serde(default)]
+    pub display_name: String,
+}
+
+/// 一次檢索（或任何知識存取）的授權脈絡——**只由伺服器端構造**（I4：呼叫端不得自稱）。
+///
+/// `roles`/`departments`/`projects` M1 恆空：屬性條件與正規化屬 WP-C7+（D2）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccessContext {
+    pub principal_id: String,
+    pub principal_type: PrincipalType,
+    #[serde(default)]
+    pub employee_id: Option<String>,
+    #[serde(default)]
+    pub workspace_id: String,
+    #[serde(default)]
+    pub roles: Vec<String>,
+    #[serde(default)]
+    pub departments: Vec<String>,
+    #[serde(default)]
+    pub projects: Vec<String>,
+    /// 發起檢索的任務（提示詞 §6 receipt 的 Who→Task 鏈；M1 僅記錄、不參與評估）。
+    #[serde(default)]
+    pub task_id: Option<String>,
+    /// 檢索目的（receipt 記錄用）。
+    #[serde(default)]
+    pub purpose: Option<String>,
+}
+
+/// Scope 可見性（D1 source 分區模型）。`Personal` 刻意缺席——個人腦是獨立
+/// `GBRAIN_HOME` 物理分區，不進企業授權語意（I6／提示詞 §19）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    Company,
+    Department,
+    Project,
+    Restricted,
+}
+
+/// 知識範圍——**Operoid 端的 scope→source 映射**（D3：權威在 Operoid）。
+/// GBrain 只見 `source_ids`；scope 語意（部門/專案/受限）是 Operoid 的資產。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeScope {
+    pub id: String,
+    pub visibility: Visibility,
+    /// 分類標籤（M1 單值；一 source 一分類——D4）。
+    #[serde(default)]
+    pub classification: String,
+    /// 對應的 GBrain source id（`sources.id`，`[a-z0-9-]{1,32}`）。
+    pub source_ids: Vec<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
+}
+
+/// 規則效果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effect {
+    Allow,
+    Deny,
+}
+
+/// 一條授權規則。三個條件欄位皆 `None`＝不限；`Some(list)`＝白名單。
+/// M1 條件面刻意最小（principals／principal_types／scopes）——部門/專案/分類條件屬 C7+。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyRule {
+    pub id: String,
+    /// 越小越先評估（先到先得：DENY 命中即拒、ALLOW 命中即准）。
+    pub priority: i64,
+    pub effect: Effect,
+    #[serde(default)]
+    pub principals: Option<Vec<String>>,
+    #[serde(default)]
+    pub principal_types: Option<Vec<PrincipalType>>,
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+}
+
+/// 知識政策——**權威在 Operoid**（D3），singleton 版本化儲存（C5）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgePolicy {
+    pub version: u32,
+    pub rules: Vec<PolicyRule>,
+}
+
+/// 評估結論。`Deny` 帶原因（供 receipt／事件；對員工回中性文字——Rule 9）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decision {
+    Allow,
+    Deny { reason: String },
+}

@@ -25,6 +25,7 @@ pub mod factory_types;
 pub mod gbrain_cfg;
 pub mod gbrain_cli;
 pub mod gbrain_mcp;
+pub mod knowledge;
 pub mod llm;
 pub mod outbound;
 pub mod prereq;
