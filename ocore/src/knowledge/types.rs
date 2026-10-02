@@ -17,6 +17,7 @@ pub enum PrincipalType {
 
 /// Principal——「這是誰」。M1 的兩個實體來源：`principal-operator`（bootstrap human）
 /// 與 `ai:{employee_id}`（由 Employee 推導，讀時構造、不儲存——Q6）。
+/// C7：`attrs` 為管理員可賦的授權屬性（疊加進 AccessContext；JSON blob 零遷移）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Principal {
     pub id: String,
@@ -25,6 +26,20 @@ pub struct Principal {
     pub employee_id: Option<String>,
     #[serde(default)]
     pub display_name: String,
+    #[serde(default)]
+    pub attrs: PrincipalAttrs,
+}
+
+/// Principal 的授權屬性（C7b）——policy 的 principal 側條件（departments/projects）
+/// 的資料來源。roles 條件隨 C12 的角色實體啟用（欄位先備）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrincipalAttrs {
+    #[serde(default)]
+    pub roles: Vec<String>,
+    #[serde(default)]
+    pub departments: Vec<String>,
+    #[serde(default)]
+    pub projects: Vec<String>,
 }
 
 /// 一次檢索（或任何知識存取）的授權脈絡——**只由伺服器端構造**（I4：呼叫端不得自稱）。
@@ -65,6 +80,7 @@ pub enum Visibility {
 
 /// 知識範圍——**Operoid 端的 scope→source 映射**（D3：權威在 Operoid）。
 /// GBrain 只見 `source_ids`；scope 語意（部門/專案/受限）是 Operoid 的資產。
+/// C7：`department`/`project` 支撐成員制條件（`department_membership` 旗標）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeScope {
     pub id: String,
@@ -76,6 +92,12 @@ pub struct KnowledgeScope {
     pub source_ids: Vec<String>,
     #[serde(default)]
     pub owner: Option<String>,
+    /// 部門歸屬（`department_membership` 成員制條件的資源側）。
+    #[serde(default)]
+    pub department: Option<String>,
+    /// 專案歸屬（`project_membership` 成員制條件的資源側）。
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 /// 規則效果。
@@ -86,8 +108,10 @@ pub enum Effect {
     Deny,
 }
 
-/// 一條授權規則。三個條件欄位皆 `None`＝不限；`Some(list)`＝白名單。
-/// M1 條件面刻意最小（principals／principal_types／scopes）——部門/專案/分類條件屬 C7+。
+/// 一條授權規則。條件皆 `None`／`false`＝不限；`Some(list)`＝白名單。
+/// C7 條件面（D-C7a）：principals/principal_types/scopes（既有）＋
+/// departments/projects（**principal 側**交集）、classifications（**資源側**）、
+/// department_membership/project_membership（成員制旗標）。roles 條件隨 C12。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyRule {
     pub id: String,
@@ -100,6 +124,21 @@ pub struct PolicyRule {
     pub principal_types: Option<Vec<PrincipalType>>,
     #[serde(default)]
     pub scopes: Option<Vec<String>>,
+    /// principal 側：`ctx.departments ∩ 自身 ≠ ∅` 才命中。
+    #[serde(default)]
+    pub departments: Option<Vec<String>>,
+    /// principal 側：`ctx.projects ∩ 自身 ≠ ∅` 才命中。
+    #[serde(default)]
+    pub projects: Option<Vec<String>>,
+    /// 資源側：`scope.classification ∈ 自身` 才命中。
+    #[serde(default)]
+    pub classifications: Option<Vec<String>>,
+    /// 成員制：要求 `scope.department ∈ ctx.departments`（scope 無 department 時不命中）。
+    #[serde(default)]
+    pub department_membership: bool,
+    /// 成員制：要求 `scope.project ∈ ctx.projects`（scope 無 project 時不命中）。
+    #[serde(default)]
+    pub project_membership: bool,
 }
 
 /// 知識政策——**權威在 Operoid**（D3），singleton 版本化儲存（C5）。

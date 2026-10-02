@@ -26,4 +26,7 @@ pub mod types;
 mod tests_m1;
 
 #[cfg(test)]
+mod tests_c7;
+
+#[cfg(test)]
 mod tests_real;

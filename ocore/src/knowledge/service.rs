@@ -21,7 +21,7 @@ use serde_json::json;
 
 use super::backend::RetrieveKind;
 use super::bootstrap::load_policy_fail_closed;
-use super::policy::authorized_sources;
+use super::policy::{authorized_scope_ids, authorized_sources};
 use super::types::AccessContext;
 use crate::domain::store::Store;
 use crate::domain::tools::{ToolCtx, ToolOutput};
@@ -31,6 +31,8 @@ use crate::domain::tools::{ToolCtx, ToolOutput};
 pub struct RetrievalPlan {
     /// 授權 source 集合（排序去重）。空集合＋`denied`＝拒絕。
     pub source_ids: Vec<String>,
+    /// 授權 scope 鏈（C7：receipt 的 Scope 面）。
+    pub scope_ids: Vec<String>,
     pub policy_version: u32,
     pub denied: bool,
     pub reason: String,
@@ -48,6 +50,8 @@ pub struct RetrievalReceipt {
     pub kind: String,
     pub denied: bool,
     pub authorized_sources: Vec<String>,
+    /// 授權 scope 鏈（C7）。
+    pub authorized_scopes: Vec<String>,
     pub policy_version: u32,
     pub workspace_id: String,
     #[serde(default)]
@@ -137,7 +141,7 @@ impl KnowledgeService {
     }
 
     /// 候選搜尋空間構造（I1）＋fail closed（I2）。
-    fn plan(&self, store: &dyn Store, access: &AccessContext) -> Result<RetrievalPlan> {
+    pub fn plan(&self, store: &dyn Store, access: &AccessContext) -> Result<RetrievalPlan> {
         let (policy, invalid) = load_policy_fail_closed(store);
         if invalid {
             crate::runtime::record_event(
@@ -149,6 +153,7 @@ impl KnowledgeService {
             );
         }
         let scopes = store.list_scopes()?;
+        let scope_ids = authorized_scope_ids(&policy, access, &scopes);
         let source_ids = authorized_sources(&policy, access, &scopes);
         let (denied, reason) = if invalid {
             (true, "policy_missing_or_corrupt".to_string())
@@ -159,6 +164,7 @@ impl KnowledgeService {
         };
         Ok(RetrievalPlan {
             source_ids,
+            scope_ids,
             policy_version: policy.version,
             denied,
             reason,
@@ -210,6 +216,7 @@ impl KnowledgeService {
             kind: kind.to_string(),
             denied: plan.denied,
             authorized_sources: plan.source_ids.clone(),
+            authorized_scopes: plan.scope_ids.clone(),
             policy_version: plan.policy_version,
             workspace_id: access.workspace_id.clone(),
             task_id: access.task_id.clone(),
@@ -227,6 +234,7 @@ impl KnowledgeService {
                 "kind": kind,
                 "denied": plan.denied,
                 "authorized_sources": plan.source_ids,
+                "authorized_scopes": plan.scope_ids,
                 "policy_version": plan.policy_version,
                 "partial_errors": partial_errors,
                 "task_id": access.task_id,
@@ -304,6 +312,11 @@ mod tests {
                 principals: Some(vec!["principal-operator".into()]),
                 principal_types: None,
                 scopes: None,
+                departments: None,
+                projects: None,
+                classifications: None,
+                department_membership: false,
+                project_membership: false,
             }],
         )
         .unwrap();

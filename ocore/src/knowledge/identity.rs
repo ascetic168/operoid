@@ -24,6 +24,7 @@ pub fn operator_principal() -> Principal {
         principal_type: PrincipalType::Human,
         employee_id: None,
         display_name: "operator".to_string(),
+        attrs: Default::default(),
     }
 }
 
@@ -42,6 +43,7 @@ pub fn principal_for_employee(emp: &Employee) -> Principal {
         principal_type: PrincipalType::AiEmployee,
         employee_id: Some(emp.id.clone()),
         display_name: emp.name.clone(),
+        attrs: Default::default(),
     }
 }
 
@@ -67,6 +69,23 @@ pub fn access_context_for_employee(
     }
 }
 
+/// C7b：富集版——推導基底＋store 內 `ai:{id}` principal 列的 attrs 疊加（D-C7b）。
+/// 列不存在＝行為同 M1（attrs 空）；列存在時**僅取 attrs**（身份仍是推導的，防冒名）。
+pub fn access_context_for_employee_enriched(
+    store: &dyn Store,
+    emp: &Employee,
+    task_id: Option<String>,
+    purpose: Option<String>,
+) -> Result<AccessContext> {
+    let mut ctx = access_context_for_employee(emp, task_id, purpose);
+    if let Some(p) = store.get_principal(&format!("ai:{}", emp.id))? {
+        ctx.roles = p.attrs.roles;
+        ctx.departments = p.attrs.departments;
+        ctx.projects = p.attrs.projects;
+    }
+    Ok(ctx)
+}
+
 /// operator 的檢索授權脈絡（管理面／op_run 改道用；M1 單人版＝全權 bootstrap policy）。
 pub fn operator_access_context(workspace_id: &str) -> AccessContext {
     AccessContext {
@@ -80,6 +99,20 @@ pub fn operator_access_context(workspace_id: &str) -> AccessContext {
         task_id: None,
         purpose: None,
     }
+}
+
+/// C7b：operator 富集版（operator principal 列的 attrs 疊加；冪等建立由 bootstrap 保證）。
+pub fn operator_access_context_enriched(
+    store: &dyn Store,
+    workspace_id: &str,
+) -> Result<AccessContext> {
+    let mut ctx = operator_access_context(workspace_id);
+    if let Some(p) = store.get_principal(OPERATOR_PRINCIPAL_ID)? {
+        ctx.roles = p.attrs.roles;
+        ctx.departments = p.attrs.departments;
+        ctx.projects = p.attrs.projects;
+    }
+    Ok(ctx)
 }
 
 /// 測試用預設脈絡（既有工具測試 helpers 的身份填充；C4 前的 ToolCtx 無身份欄位）。

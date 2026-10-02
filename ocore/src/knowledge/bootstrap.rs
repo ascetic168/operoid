@@ -38,6 +38,8 @@ pub fn bootstrap_with_sources(store: &dyn Store, source_ids: &[String]) -> Resul
         classification: "internal".to_string(),
         source_ids: source_ids.to_vec(),
         owner: None,
+        department: None,
+        project: None,
     })?;
     save_policy_new_version(
         store,
@@ -48,6 +50,11 @@ pub fn bootstrap_with_sources(store: &dyn Store, source_ids: &[String]) -> Resul
             principals: None,
             principal_types: None,
             scopes: None,
+            departments: None,
+            projects: None,
+            classifications: None,
+            department_membership: false,
+            project_membership: false,
         }],
     )?;
     crate::runtime::record_event(
@@ -159,6 +166,8 @@ mod tests {
             classification: "internal".into(),
             source_ids: vec!["src-a".into()],
             owner: None,
+            department: None,
+            project: None,
         })
         .unwrap();
         let (policy, invalid) = load_policy_fail_closed(&s);
@@ -195,6 +204,15 @@ mod tests {
     }
 
     fn evaluate_allow(p: &KnowledgePolicy, ctx: &AccessContext, scope: &str) -> bool {
-        matches!(super::super::policy::evaluate(p, ctx, scope), super::super::types::Decision::Allow)
+        let s = super::super::types::KnowledgeScope {
+            id: scope.into(),
+            visibility: super::super::types::Visibility::Company,
+            classification: "internal".into(),
+            source_ids: vec![],
+            owner: None,
+            department: None,
+            project: None,
+        };
+        matches!(super::super::policy::evaluate(p, ctx, &s), super::super::types::Decision::Allow)
     }
 }

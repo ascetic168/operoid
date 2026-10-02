@@ -26,6 +26,8 @@ fn scopes() -> Vec<KnowledgeScope> {
             classification: "internal".into(),
             source_ids: vec!["src-a".into()],
             owner: None,
+            department: None,
+            project: None,
         },
         KnowledgeScope {
             id: "proj-x".into(),
@@ -33,6 +35,8 @@ fn scopes() -> Vec<KnowledgeScope> {
             classification: "internal".into(),
             source_ids: vec!["src-b".into()],
             owner: None,
+            department: None,
+            project: None,
         },
         KnowledgeScope {
             id: "restricted".into(),
@@ -40,6 +44,8 @@ fn scopes() -> Vec<KnowledgeScope> {
             classification: "confidential".into(),
             source_ids: vec!["src-r".into()],
             owner: None,
+            department: None,
+            project: None,
         },
     ]
 }
@@ -98,10 +104,15 @@ fn allow(pid: &str, scopes: &[&str]) -> PolicyRule {
         principals: Some(vec![pid.to_string()]),
         principal_types: None,
         scopes: Some(scopes.iter().map(|s| s.to_string()).collect()),
+        departments: None,
+        projects: None,
+        classifications: None,
+        department_membership: false,
+        project_membership: false,
     }
 }
 
-fn tool_ctx() -> ToolCtx {
+pub(crate) fn tool_ctx() -> ToolCtx {
     // C4 會改為由推導函式供應 AccessContext；C3 的 fake 工具路徑只需形狀正確。
     ToolCtx {
         gbrain_exe: "gbrain".into(),
@@ -162,19 +173,7 @@ async fn m1_t1_same_query_two_contexts() {
     assert!(!bob.text.contains("secret"), "bob 未授權 restricted，secret 不得出現");
 }
 
-/// **Test 2（M1 骨架版）**：跨 scope——允許與限制並存（部門條件式 policy 屬 C7）。
-#[tokio::test]
-async fn m1_t2_cross_department_allow_and_restrict() {
-    let b = backend();
-    let policy = KnowledgePolicy {
-        version: 1,
-        rules: vec![allow("ai:carol", &["co-common", "proj-x"])],
-    };
-    let out = retrieve(&b, &policy, &ctx_employee("ai:carol"), "protocol").await;
-    assert!(out.text.contains("alpha"), "允許的 co-common 可達");
-    assert!(out.text.contains("beta"), "允許的 proj-x 可達（跨 scope 檢索）");
-    assert!(!out.text.contains("secret"));
-}
+// Test 2 完整版移至 tests_c7.rs（C7 成員制條件）。
 
 /// **Test 3**：受限內容永不進 LLM context（連候選集都不進——I1）。
 #[tokio::test]
@@ -212,8 +211,9 @@ async fn m1_t7_prompt_injection_policy_remains_authoritative() {
         rules: vec![allow("ai:frank", &["co-common"])],
     };
     let ctx = ctx_employee("ai:frank");
-    let benign = evaluate(&policy, &ctx, "restricted");
-    let malicious = evaluate(&policy, &ctx, "restricted");
+    let restricted = scopes().into_iter().find(|s| s.id == "restricted").unwrap();
+    let benign = evaluate(&policy, &ctx, &restricted);
+    let malicious = evaluate(&policy, &ctx, &restricted);
     assert_eq!(benign, malicious, "evaluate 是純函式，與查詢文字無關");
 
     let b = backend();

@@ -2190,8 +2190,13 @@ pub fn build_tool_ctx(
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
     let entry = crate::app_config::brain_entry(cfg, &emp.brain.brain_id)?;
-    // C4：AccessContext 由 Employee 伺服器端推導（I4——無呼叫端自稱路徑）。
-    let access = crate::knowledge::identity::access_context_for_employee(&emp, None, None);
+    // C4：AccessContext 由 Employee 伺服器端推導（I4——無呼叫端自稱路徑）；C7b：attrs 富集。
+    let access = crate::knowledge::identity::access_context_for_employee_enriched(
+        store,
+        &emp,
+        None,
+        None,
+    )?;
     // C6：唯一檢索邊界——員工的知識存取一律經 policy→授權集→receipts（I1/I2）。
     let knowledge = Some(crate::knowledge::service::service_arc(db_path));
     // think 顯式 --model 的來源：models.think 優先（長合成需要非推理模型，
