@@ -1,0 +1,30 @@
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans TC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.card h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+.grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+input {
+  width: 100%; padding: 0.55rem 0.7rem; border: 1px solid var(--border);
+  border-radius: 0.5rem; font-size: 0.95rem; background: var(--surface); color: var(--text);
+}
+input:focus { outline: 2px solid var(--accent-hover); border-color: var(--accent); }
+button.primary {
+  width: 100%; padding: 0.6rem; border: none; border-radius: 0.5rem;
+  background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+}
+button.primary:hover { background: var(--accent-hover); }
+button.primary:disabled { opacity: 0.55; cursor: wait; }
+label { display: block; font-size: 0.82rem; color: var(--muted); margin: 0.7rem 0 0.25rem; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+.stat { font-size: 1.9rem; font-weight: 700; color: var(--accent); }

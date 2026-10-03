@@ -37,3 +37,7 @@ obridge/email-state.json
 patch_readmes.py
 bun.lock
 .gbrain/
+
+# R4: 企業前端 monorepo
+frontends/**/node_modules/
+frontends/**/dist/

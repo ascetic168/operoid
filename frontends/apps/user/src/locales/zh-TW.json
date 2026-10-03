@@ -1,0 +1,49 @@
+{
+  "app": {
+    "title": {
+      "admin": "Operoid 系統管理介面",
+      "manager": "Operoid 經理人儀表板",
+      "user": "Operoid 使用者介面"
+    }
+  },
+  "login": {
+    "heading": "登入 Operoid",
+    "server": "伺服器位址（可省略＝同源）",
+    "account": "帳號",
+    "password": "密碼",
+    "submit": "登入",
+    "submitting": "登入中…",
+    "offline": "無法連上伺服器——請確認服務已啟動",
+    "invalid": "帳號或密碼錯誤",
+    "locked": "嘗試次數過多，請稍後再試",
+    "forbidden": "此帳號無權使用本介面",
+    "mustChange": "首次登入請設定新密碼",
+    "newPassword": "新密碼（至少 12 碼）",
+    "changeSubmit": "設定新密碼並繼續",
+    "changed": "密碼已更新"
+  },
+  "home": {
+    "welcome": "連線正常",
+    "employees": "員工總數",
+    "templates": "模板總數",
+    "proposals": "待核可提案",
+    "flagged": "異常員工",
+    "service": "服務註冊",
+    "installed": "已註冊",
+    "notInstalled": "未註冊",
+    "stream": "事件流",
+    "streamOn": "即時連線中",
+    "streamDown": "未連線",
+    "latest": "最新事件",
+    "scope": "本介面範圍"
+  },
+  "header": {
+    "logout": "登出",
+    "loggedAs": "登入身分"
+  },
+  "forbidden": {
+    "title": "無權限",
+    "message": "此帳號的角色無法使用本介面。",
+    "home": "回到登入"
+  }
+}
