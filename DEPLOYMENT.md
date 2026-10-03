@@ -29,19 +29,29 @@
 
 ## 2. 前置需求（伺服器機）
 
+**首選：從 GitHub Release 下載企業部署包。** 推送 `v*` 標籤後，CI 會在同一個 Release 附上：
+
+- 桌面安裝包（`.msi`／`.exe`／…）——**個人版**：裝在使用者電腦，開箱即用、零設定。
+- `operoid-enterprise-windows-x64.zip`／`operoid-enterprise-linux-x64.tar.gz`——**企業版部署包**：內含
+  `oserver` 執行檔、三個前端靜態檔（`frontends/{admin,manager,user}`）、`DEPLOYMENT.md`、`operoid.example.toml`。
+  下載解壓到伺服器機即可照本文件部署，**伺服器機不需要 Node/pnpm**。
+
 | 項目 | 說明 |
 |---|---|
-| oserver 執行檔 | `cargo build --release -p oserver`，或 CI release 產物 |
-| 前端靜態檔 | `cd frontends && pnpm install && pnpm build` → `frontends/apps/{admin,manager,user}/dist` |
+| 企業部署包 | GitHub Release 下載（上表）；或自行建置：`cargo build --release -p oserver`＋`cd frontends && pnpm install && pnpm build` |
 | GBrain | 安裝於**伺服器機**（`gbrain` CLI 於 PATH 或 operoid.toml 指定）；腦（GBRAIN_HOME）與 notes repo 同機 |
 | TLS 憑證 | 內網 CA 簽發（首選）或自簽（見 §4） |
 | LLM API keys | 服務端自填（operoid.toml `[llm] env`） |
+
+> ⚠️ **伺服器機上不要開桌面 GUI（operoid 桌面程式）。** 它會嘗試沿用企業服務，但手上是個人版 token，
+> 會整片離線造成混淆；桌面 GUI 屬個人版形態，裝在使用者電腦。
 
 ---
 
 ## 3. operoid.toml（服務組態）
 
-放於 `<資料目錄>/operoid.toml`（**存在即企業模式**；個人模式無此檔、行為零變化）：
+放於 `<資料目錄>/operoid.toml`（**存在即企業模式**；個人模式無此檔、行為零變化）。
+部署包內附 `operoid.example.toml` 範本，複製改名後改值即可：
 
 ```toml
 [server]
@@ -92,10 +102,11 @@ openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt \
 ### Windows（SCM，已實機驗證）
 
 ```powershell
-# 系統管理員
-oserver.exe install --data-dir C:\operoid    # 註冊 Windows 服務（開機自啟）
-oserver.exe status                            # {"installed": true, "running": true}
-# 移除：oserver.exe uninstall
+# 系統管理員（oserver.exe 來自企業部署包解壓目錄，如 C:\operoid）
+cd C:\operoid
+.\oserver.exe install --data-dir C:\operoid    # 註冊 Windows 服務（開機自啟）
+.\oserver.exe status                            # {"installed": true, "running": true}
+# 移除：.\oserver.exe uninstall
 ```
 
 服務以 LocalSystem 執行——**LLM keys 必須寫在 operoid.toml `[llm] env`**（服務看不到使用者環境變數）。
@@ -142,6 +153,7 @@ sudo ufw allow 7340/tcp
 
 1. 啟動服務，確認 `https://<伺服器IP>:7340/healthz` 回 `{"status":"ready","version":"..."}`。
 2. 瀏覽器開 `https://<伺服器IP>:7340/`——三前端入口頁。
+   （對照：桌面安裝包＝**個人版**——裝在使用者電腦直接用，與本文件無關；企業部署＝本文件。）
 3. 以 **master token**（operoid.toml `[server].token`）開通第一個 admin 帳號：
 
    ```bash

@@ -1,0 +1,23 @@
+# operoid.toml——企業模式服務組態範本。
+# 放到 oserver 的資料目錄（--data-dir 指定的目錄）下並改值。
+# 「存在即企業模式」——個人模式不需要此檔。詳細說明見 DEPLOYMENT.md。
+
+[server]
+host = "0.0.0.0"             # 內網 IP 或 0.0.0.0；非 loopback 必須啟用 [tls]（fail-closed）
+port = 7340
+# token = "okt-master-..."   # master token（admin 全權）；可省略改用 OSERVER_TOKEN 環境變數
+frontends_dir = "./frontends" # 三角色前端靜態檔目錄（部署包內建）
+
+[tls]
+cert = "./certs/server.crt"  # PEM；cert 與 key 齊備才啟用 TLS（半配置 → 拒絕啟動）
+key = "./certs/server.key"
+
+[llm.env]                    # 服務端自填 provider keys（服務帳戶看不到使用者環境變數）
+# ZHIPUAI_API_KEY = "..."
+
+[gbrain]                     # 可省；伺服器機的 gbrain 執行檔路徑覆寫
+# exe_path = "/home/gbrain/.bun/bin/gbrain"
+
+[ingress]                    # 可省；obridge 投遞口組態
+# port = 7341
+# secret = "..."

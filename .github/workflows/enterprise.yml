@@ -1,0 +1,104 @@
+name: enterprise-package
+
+# 企業部署包（與桌面安裝包分開的 release 資產）：
+#   推送 v* 標籤 → publish-tauri 建立草稿 Release（桌面安裝包＝個人版）→
+#   本 job 接續編譯 oserver（release）＋三個前端靜態檔，打包為
+#   operoid-enterprise-<平台>.zip / .tar.gz 附加到同一個 Release。
+#   企業部署者下載部署包即可照 DEPLOYMENT.md 部署（伺服器機不需 Node/pnpm）。
+#
+# 個人版與企業版在 release 資產層區分：桌面安裝包＝個人版；
+# operoid-enterprise-*.zip/tar.gz＝企業版。版本與 CHANGELOG 仍單一真相。
+
+on:
+  workflow_dispatch: # 手動觸發（測試打包）
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+
+jobs:
+  package:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write # 附加資產到 Release 需要 write 權限
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 伺服器平台：Windows x64 與 Linux x64（DEPLOYMENT.md 的兩條路徑）
+          - platform: 'windows-latest'
+            archive: 'operoid-enterprise-windows-x64.zip'
+          - platform: 'ubuntu-22.04'
+            archive: 'operoid-enterprise-linux-x64.tar.gz'
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # workflow_run 觸發時，取回觸發 release 的同一個 tag（workflow_dispatch 時為空＝本地 HEAD）
+      - name: checkout the triggering tag
+        if: github.event_name == 'workflow_run'
+        run: git checkout "$GITHUB_HEAD_REF" || git checkout "${{ github.event.workflow_run.head_branch }}"
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './oserver -> target'
+
+      - name: build frontends（三角色前端靜態檔）
+        working-directory: frontends
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: build oserver（release）
+        run: cargo build --release -p oserver
+
+      - name: assemble package（windows）
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $stage = "stage/operoid-enterprise"
+          New-Item -ItemType Directory -Force -Path "$stage/frontends" | Out-Null
+          Copy-Item target/release/oserver.exe "$stage/"
+          foreach ($app in @('admin', 'manager', 'user')) {
+            Copy-Item "frontends/apps/$app/dist" "$stage/frontends/$app" -Recurse
+          }
+          Copy-Item DEPLOYMENT.md "$stage/"
+          Copy-Item deploy/operoid.example.toml "$stage/"
+          Compress-Archive -Path "stage/operoid-enterprise/*" -DestinationPath "${{ matrix.archive }}"
+
+      - name: assemble package（linux）
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          stage="stage/operoid-enterprise"
+          mkdir -p "$stage/frontends"
+          cp target/release/oserver "$stage/"
+          for app in admin manager user; do
+            cp -r "frontends/apps/$app/dist" "$stage/frontends/$app"
+          done
+          cp DEPLOYMENT.md "$stage/"
+          cp deploy/operoid.example.toml "$stage/"
+          tar -czf "${{ matrix.archive }}" -C stage operoid-enterprise
+
+      - name: attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          files: ${{ matrix.archive }}
+          fail_on_unmatched_files: true

@@ -27,6 +27,7 @@
 - **R6 高階經理人前端**：營運儀表板（員工狀態總覽＋registry 分歧）、跨組織收件匣核可、**知識治理**（TTL 授權發放/撤銷＋scopes 總覽）。
 - **R7 系統管理者前端**：帳號管理（建號/停用/重設密碼/角色指派）、知識授權管理（principal/token/scopes/policy 編輯器）、腦與前置檢查。
 - **測試**：workspace 270+ 全綠、0 warning；真實企業模式 HTTPS 冒煙（建號→登入→強改→403 授權→停用失效→SSE 推送）與瀏覽器 e2e（三前端登入/首登強改/建號/部署/聊天/交辦）全過。
+- **個人版／企業版 release 資產分離**：桌面安裝包＝個人版（零設定）；Release 另附 `operoid-enterprise-{windows-x64.zip, linux-x64.tar.gz}` 企業部署包（oserver＋三前端＋`DEPLOYMENT.md`＋`operoid.example.toml`，伺服器機不需 Node/pnpm）。
 - **殘項**：M1 式真實環境驗收（真實 GBrain＋LLM 全閉環）；Linux systemd 實機驗證；obridge/工廠寫 UI 過渡期續用統一 GUI。
 
 ## [v0.3.7] - 2026-10-02
