@@ -13,6 +13,22 @@
 
 ---
 
+## [v0.4.0] - 2026-10-03
+
+### 遠端化（E14）——企業模式伺服器端地基＋三角色前端（R1–R7）
+
+> oserver 部署公司內網伺服器（HTTPS＋RBAC），使用者以瀏覽器經 `/admin`（系統管理者）、`/manager`（高階經理人）、`/user`（一般使用者）三個角色前端連入；個人模式（桌面 GUI）零變化。部署指引見 `DEPLOYMENT.md`。
+
+- **R1 傳輸層**：`operoid.toml` 企業模式組態（存在即企業模式；`[server]`/`[tls]`/`[llm env]`/`[gbrain]`/`[ingress]`）、`--host` bind 解除寫死、**非 loopback 無 TLS 拒絕啟動**（DR-E5 fail-closed）、axum-server rustls HTTPS、CORS 收緊為允許清單、靜態三前端服務與入口頁。
+- **R2 身份與 RBAC（C12b 最小版）**：帳號密碼登入（Argon2id、密碼政策 ≥12 碼、首登強改、停用即全 token 失效）；token 生命週期（**CSPRNG**、一 principal 多 token、TTL、last_used、逐 token 撤銷、refresh 輪替）；**端點級 RBAC 矩陣**（admin ⊃ manager ⊃ user、伺服器端 403 fail-closed、74 條路由 × 4 身份自動化斷言）；登入防暴（5 次失敗鎖 15 分）；員工歸屬（`owner_principal`）與「限自身」過濾（watch/inbox/events/員工操作/承諾核可）。
+- **R3 API 補齊**：`POST /api/commitments/{id}/satisfy`；**SSE 事件推送**（`GET /api/stream`，一次性短票認證、user 過濾自身相關、心跳保活）；`GET /api/service/status`；`/healthz` 回報 version。
+- **R4 前端 monorepo**（`frontends/`）：`@front/api-client`（token 記憶體持有、401/403/離線分類、SSE 短票流斷線自動換票重連）＋`@front/ui`（design tokens＋共用元件）＋三 app（Vue 3.5＋Vite 6＋vue-i18n 三語、角色守衛、登入頁含首登強改密）。
+- **R5 一般使用者前端**：部署員工（歸屬自己）、員工聊天（watch 輪詢＋送訊息）、交辦（202）、員工提案核可/退回、收件匣與事件流（伺服器端過濾自身相關）。
+- **R6 高階經理人前端**：營運儀表板（員工狀態總覽＋registry 分歧）、跨組織收件匣核可、**知識治理**（TTL 授權發放/撤銷＋scopes 總覽）。
+- **R7 系統管理者前端**：帳號管理（建號/停用/重設密碼/角色指派）、知識授權管理（principal/token/scopes/policy 編輯器）、腦與前置檢查。
+- **測試**：workspace 270+ 全綠、0 warning；真實企業模式 HTTPS 冒煙（建號→登入→強改→403 授權→停用失效→SSE 推送）與瀏覽器 e2e（三前端登入/首登強改/建號/部署/聊天/交辦）全過。
+- **殘項**：M1 式真實環境驗收（真實 GBrain＋LLM 全閉環）；Linux systemd 實機驗證；obridge/工廠寫 UI 過渡期續用統一 GUI。
+
 ## [v0.3.7] - 2026-10-02
 
 ### Enterprise C′（Permission-aware Knowledge Fabric）
