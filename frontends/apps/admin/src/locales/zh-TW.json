@@ -45,5 +45,59 @@
     "title": "無權限",
     "message": "此帳號的角色無法使用本介面。",
     "home": "回到登入"
+  },
+  "nav": {
+    "home": "總覽",
+    "accounts": "帳號管理",
+    "knowledge": "知識授權",
+    "brains": "腦與前置檢查"
+  },
+  "accounts": {
+    "createHeading": "建立帳號",
+    "loginName": "登入名",
+    "displayName": "顯示名稱",
+    "roles": "角色",
+    "create": "建立",
+    "createdNote": "臨時密碼（僅此一次顯示）：",
+    "list": "帳號",
+    "disabled": "已停用",
+    "mustChange": "待改密",
+    "editRoles": "編輯角色",
+    "resetPw": "重設密碼",
+    "disable": "停用",
+    "enable": "啟用",
+    "save": "儲存",
+    "newTempPw": "新臨時密碼（≥12 碼）",
+    "resetSubmit": "重設並撤銷 token",
+    "resetDone": "已重設 {id} 的密碼（token 全撤，首登強改）"
+  },
+  "ka": {
+    "principals": "Principals",
+    "createPrincipal": "建立 Principal",
+    "type": "型別",
+    "create": "建立",
+    "principalCreated": "principal 已建立",
+    "issueToken": "簽發 Token",
+    "targetPrincipal": "目標 principal",
+    "ttlHours": "TTL（小時）",
+    "emptyNoExpiry": "留空＝不過期",
+    "label": "標籤（裝置/session）",
+    "issue": "簽發",
+    "tokenOnce": "token 明文（僅此一次顯示）：",
+    "revokeAll": "撤銷全部 token",
+    "clearance": "clearance",
+    "scopes": "知識範圍（scopes）",
+    "upsertScope": "建立／更新 Scope",
+    "upsert": "送出",
+    "scopeList": "現行 scopes",
+    "policy": "授權政策（policy rules）",
+    "policySave": "儲存政策（version+1）",
+    "policyInvalidJson": "政策 JSON 格式錯誤",
+    "policySaved": "政策已儲存"
+  },
+  "brains": {
+    "heading": "腦",
+    "none": "未註冊腦",
+    "prereq": "前置檢查"
   }
 }

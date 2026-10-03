@@ -8,6 +8,24 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: () => import('./views/LoginView.vue') },
     { path: '/forbidden', name: 'forbidden', component: () => import('./views/ForbiddenView.vue') },
     {
+      path: '/accounts',
+      name: 'accounts',
+      component: () => import('./views/AccountsView.vue'),
+      meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/knowledge',
+      name: 'knowledge',
+      component: () => import('./views/KnowledgeAdminView.vue'),
+      meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/brains',
+      name: 'brains',
+      component: () => import('./views/BrainsView.vue'),
+      meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
+    },
+    {
       path: '/',
       name: 'home',
       component: () => import('./views/HomeView.vue'),

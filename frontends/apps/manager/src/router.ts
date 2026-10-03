@@ -10,8 +10,26 @@ export const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: () => import('./views/HomeView.vue'),
+      component: () => import('./views/DashboardView.vue'),
       meta: { auth: true, role: "manager" as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/inbox',
+      name: 'inbox',
+      component: () => import('./views/InboxView.vue'),
+      meta: { auth: true, role: 'manager' as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/grants',
+      name: 'grants',
+      component: () => import('./views/GrantsView.vue'),
+      meta: { auth: true, role: 'manager' as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/events',
+      name: 'events',
+      component: () => import('./views/EventsView.vue'),
+      meta: { auth: true, role: 'manager' as 'admin' | 'manager' | 'user' },
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

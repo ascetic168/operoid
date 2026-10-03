@@ -14,7 +14,7 @@ const streamUp = ref(false)
 const latest = ref<StreamEvent | null>(null)
 const offline = ref(false)
 const loadError = ref('')
-const scope = "counts＋帳號/服務/事件流（R7 全功能）"
+const scope = "帳號管理／知識授權／腦與前置檢查（obridge 與工廠寫 UI 過渡期續用統一 GUI）"
 
 let close: (() => void) | null = null
 
@@ -93,7 +93,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="card">
         <h2>{{ t('home.scope') }}</h2>
-        <p class="muted">counts＋帳號/服務/事件流（R7 全功能）</p>
+        <p class="muted">帳號管理／知識授權／腦與前置檢查（obridge 與工廠寫 UI 過渡期續用統一 GUI）</p>
       </div>
     </div>
   </div>

@@ -7,35 +7,13 @@
     }
   },
   "login": {
-    "heading": "登入 Operoid",
-    "server": "伺服器位址（可省略＝同源）",
-    "account": "帳號",
-    "password": "密碼",
-    "submit": "登入",
-    "submitting": "登入中…",
-    "offline": "無法連上伺服器——請確認服務已啟動",
-    "invalid": "帳號或密碼錯誤",
-    "locked": "嘗試次數過多，請稍後再試",
-    "forbidden": "此帳號無權使用本介面",
-    "mustChange": "首次登入請設定新密碼",
-    "newPassword": "新密碼（至少 12 碼）",
-    "changeSubmit": "設定新密碼並繼續",
-    "changed": "密碼已更新"
+    "offline": "無法連上伺服器"
   },
   "home": {
     "welcome": "連線正常",
-    "employees": "員工總數",
-    "templates": "模板總數",
-    "proposals": "待核可提案",
-    "flagged": "異常員工",
-    "service": "服務註冊",
-    "installed": "已註冊",
-    "notInstalled": "未註冊",
-    "stream": "事件流",
-    "streamOn": "即時連線中",
-    "streamDown": "未連線",
-    "latest": "最新事件",
-    "scope": "本介面範圍"
+    "emp": {
+      "chat": "聊天"
+    }
   },
   "header": {
     "logout": "登出",
@@ -45,5 +23,39 @@
     "title": "無權限",
     "message": "此帳號的角色無法使用本介面。",
     "home": "回到登入"
+  },
+  "nav": {
+    "dashboard": "營運儀表板",
+    "inbox": "收件匣",
+    "grants": "知識治理",
+    "events": "事件流"
+  },
+  "dash": {
+    "employeesByState": "員工狀態總覽",
+    "registry": "登記表分歧摘要",
+    "inboxHint": "待核可提案請到收件匣。"
+  },
+  "grants": {
+    "grantHeading": "發放 TTL 知識授權",
+    "principal": "身份",
+    "scope": "知識範圍",
+    "ttl": "有效時數",
+    "purpose": "用途（可省）",
+    "submit": "發放",
+    "granted": "已發放",
+    "list": "現行授權",
+    "revoke": "撤銷",
+    "none": "無",
+    "scopes": "知識範圍"
+  },
+  "inbox": {
+    "proposals": "待核可提案",
+    "empty": "目前沒有待核可提案",
+    "approve": "核可",
+    "reject": "退回",
+    "flagged": "異常員工"
+  },
+  "events": {
+    "empty": "目前沒有事件"
   }
 }

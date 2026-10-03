@@ -7,35 +7,13 @@
     }
   },
   "login": {
-    "heading": "Sign in to Operoid",
-    "server": "Server address (optional = same origin)",
-    "account": "Account",
-    "password": "Password",
-    "submit": "Sign in",
-    "submitting": "Signing in…",
-    "offline": "Cannot reach the server — make sure the service is running",
-    "invalid": "Invalid account or password",
-    "locked": "Too many attempts — try again later",
-    "forbidden": "This account cannot use this console",
-    "mustChange": "Set a new password on first login",
-    "newPassword": "New password (min 12 chars)",
-    "changeSubmit": "Set password and continue",
-    "changed": "Password updated"
+    "offline": "Cannot reach the server"
   },
   "home": {
     "welcome": "Connected",
-    "employees": "Employees",
-    "templates": "Templates",
-    "proposals": "Pending proposals",
-    "flagged": "Flagged employees",
-    "service": "Service registration",
-    "installed": "Installed",
-    "notInstalled": "Not installed",
-    "stream": "Event stream",
-    "streamOn": "Live",
-    "streamDown": "Offline",
-    "latest": "Latest event",
-    "scope": "Scope of this console"
+    "emp": {
+      "chat": "Chat"
+    }
   },
   "header": {
     "logout": "Sign out",
@@ -45,5 +23,39 @@
     "title": "Forbidden",
     "message": "This account cannot use this console.",
     "home": "Back to login"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "inbox": "Inbox",
+    "grants": "Knowledge governance",
+    "events": "Events"
+  },
+  "dash": {
+    "employeesByState": "Employees by state",
+    "registry": "Registry divergence",
+    "inboxHint": "Pending proposals are in the inbox."
+  },
+  "grants": {
+    "grantHeading": "Grant a TTL knowledge authorization",
+    "principal": "Principal",
+    "scope": "Knowledge scope",
+    "ttl": "Valid hours",
+    "purpose": "Purpose (optional)",
+    "submit": "Grant",
+    "granted": "Granted",
+    "list": "Active grants",
+    "revoke": "Revoke",
+    "none": "None",
+    "scopes": "Knowledge scopes"
+  },
+  "inbox": {
+    "proposals": "Pending proposals",
+    "empty": "No pending proposals",
+    "approve": "Approve",
+    "reject": "Reject",
+    "flagged": "Flagged employees"
+  },
+  "events": {
+    "empty": "No events yet"
   }
 }

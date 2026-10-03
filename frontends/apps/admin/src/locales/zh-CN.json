@@ -45,5 +45,59 @@
     "title": "无权限",
     "message": "此账号的角色无法使用本界面。",
     "home": "回到登录"
+  },
+  "nav": {
+    "home": "总览",
+    "accounts": "账号管理",
+    "knowledge": "知识授权",
+    "brains": "脑与前置检查"
+  },
+  "accounts": {
+    "createHeading": "建立账号",
+    "loginName": "登录名",
+    "displayName": "显示名称",
+    "roles": "角色",
+    "create": "建立",
+    "createdNote": "临时密码（仅此一次显示）：",
+    "list": "账号",
+    "disabled": "已停用",
+    "mustChange": "待改密",
+    "editRoles": "编辑角色",
+    "resetPw": "重设密码",
+    "disable": "停用",
+    "enable": "启用",
+    "save": "保存",
+    "newTempPw": "新临时密码（≥12 位）",
+    "resetSubmit": "重设并撤销 token",
+    "resetDone": "已重设 {id} 的密码（token 全撤，首登强改）"
+  },
+  "ka": {
+    "principals": "Principals",
+    "createPrincipal": "建立 Principal",
+    "type": "类型",
+    "create": "建立",
+    "principalCreated": "principal 已建立",
+    "issueToken": "签发 Token",
+    "targetPrincipal": "目标 principal",
+    "ttlHours": "TTL（小时）",
+    "emptyNoExpiry": "留空＝不过期",
+    "label": "标签（装置/session）",
+    "issue": "签发",
+    "tokenOnce": "token 明文（仅此一次显示）：",
+    "revokeAll": "撤销全部 token",
+    "clearance": "clearance",
+    "scopes": "知识范围（scopes）",
+    "upsertScope": "建立／更新 Scope",
+    "upsert": "送出",
+    "scopeList": "现行 scopes",
+    "policy": "授权政策（policy rules）",
+    "policySave": "保存政策（version+1）",
+    "policyInvalidJson": "政策 JSON 格式错误",
+    "policySaved": "政策已保存"
+  },
+  "brains": {
+    "heading": "脑",
+    "none": "未注册脑",
+    "prereq": "前置检查"
   }
 }

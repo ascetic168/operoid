@@ -45,5 +45,59 @@
     "title": "Forbidden",
     "message": "This account cannot use this console.",
     "home": "Back to login"
+  },
+  "nav": {
+    "home": "Overview",
+    "accounts": "Accounts",
+    "knowledge": "Knowledge authz",
+    "brains": "Brains & prereq"
+  },
+  "accounts": {
+    "createHeading": "Create an account",
+    "loginName": "Login name",
+    "displayName": "Display name",
+    "roles": "Roles",
+    "create": "Create",
+    "createdNote": "Temporary password (shown once):",
+    "list": "Accounts",
+    "disabled": "Disabled",
+    "mustChange": "Password change pending",
+    "editRoles": "Edit roles",
+    "resetPw": "Reset password",
+    "disable": "Disable",
+    "enable": "Enable",
+    "save": "Save",
+    "newTempPw": "New temporary password (≥12 chars)",
+    "resetSubmit": "Reset & revoke tokens",
+    "resetDone": "Password reset for {id} (tokens revoked, change required at login)"
+  },
+  "ka": {
+    "principals": "Principals",
+    "createPrincipal": "Create principal",
+    "type": "Type",
+    "create": "Create",
+    "principalCreated": "Principal created",
+    "issueToken": "Issue token",
+    "targetPrincipal": "Target principal",
+    "ttlHours": "TTL (hours)",
+    "emptyNoExpiry": "empty = no expiry",
+    "label": "Label (device/session)",
+    "issue": "Issue",
+    "tokenOnce": "Token plaintext (shown once):",
+    "revokeAll": "Revoke all tokens",
+    "clearance": "clearance",
+    "scopes": "Knowledge scopes",
+    "upsertScope": "Upsert scope",
+    "upsert": "Submit",
+    "scopeList": "Current scopes",
+    "policy": "Policy rules",
+    "policySave": "Save policy (version+1)",
+    "policyInvalidJson": "Invalid policy JSON",
+    "policySaved": "Policy saved"
+  },
+  "brains": {
+    "heading": "Brains",
+    "none": "No brains registered",
+    "prereq": "Prerequisites"
   }
 }
