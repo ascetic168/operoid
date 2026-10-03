@@ -169,6 +169,24 @@ The Architecture Handbook is at **v0.2 (Draft)**, and the roadmap's milestones
 have been **built end-to-end through Phase 7** — the vision in the handbook is
 now a running system, not just a draft.
 
+**v0.4.0 — remote deployment: one codebase, two release tracks.** The same
+binary now splits into a **personal edition** and an **enterprise edition** at
+the *configuration* layer — a fork of neither code nor releases:
+
+- **Personal (desktop installer):** unchanged — install and run; the app
+  manages a local `oserver` for you (loopback, hidden token, zero setup).
+- **Enterprise (server deployment package):** a `operoid-enterprise-*` archive
+  per platform (server binary + three browser frontends + deployment guide).
+  Drop an `operoid.toml` next to it (bind + TLS + RBAC), register it as a
+  service, and the whole company works from the browser through **role-based
+  frontends** — `/admin` (system administration), `/manager` (manager
+  dashboard, knowledge governance), `/user` (employee workspace) — backed by
+  **account & RBAC infrastructure**: password login (Argon2id) with a forced
+  first-login password change, per-principal tokens (CSPRNG, TTL, per-token
+  revocation), login lockout, endpoint-level authorization
+  (admin ⊃ manager ⊃ user, enforced server-side, fail-closed), and **SSE
+  event streaming**. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
 **v0.3.6 — a resident service, many frontends.** The backend now runs as
 **`oserver`**, a local service (HTTP API on 127.0.0.1) that owns the Runtime:
 Employees keep working whether or not any window is open. The desktop app is
@@ -219,6 +237,7 @@ backend.
 ## Tech stack
 
 **Frontend:** Vue 3 · TypeScript · Vite · Tailwind CSS v4 · Pinia · Vue Router · vue-i18n · lucide-vue-next
+**Enterprise frontends:** `frontends/` pnpm workspace — `@front/api-client` · `@front/ui` · `apps/{admin,manager,user}` (Vue 3.5 · Vite 6 · vue-i18n, served by `oserver`)
 **Core & service:** Rust — `ocore` (domain core) · `oserver` (axum service) · `obridge` (mail/WASM bridge)
 **Desktop shell:** Tauri v2 (window + desktop-specific capabilities; all logic lives in the service)
 
@@ -241,6 +260,23 @@ overridden on the **Config** page.
 your platform from the
 [**Releases** page](https://github.com/ascetic168/Operoid/releases) and run it.
 No need to `git clone` or build from source unless you intend to develop Operoid.
+
+### Personal vs. enterprise (v0.4.0)
+
+| | Personal | Enterprise |
+|---|---|---|
+| Artifact | Desktop installer | `operoid-enterprise-*` archive |
+| Where it runs | The user's own computer | A company intranet server |
+| Setup | None — install and run | `operoid.toml` (bind + TLS) + `oserver install` |
+| Frontend | The desktop app | Browser: `/admin` `/manager` `/user` |
+| Auth | Hidden local token | Password login + RBAC (admin/manager/user) |
+
+The desktop installer **is** the personal edition. Enterprise deployments
+download the `operoid-enterprise-*` archive from the same release and follow
+**[DEPLOYMENT.md](DEPLOYMENT.md)** — the server machine needs no Node/pnpm.
+Two cautions: do **not** run the desktop GUI on the enterprise server (it
+speaks personal-mode credentials), and the two editions coexist safely on one
+intranet (the personal edition binds to loopback only).
 
 ### Installing the boot-time service (Linux / macOS)
 
