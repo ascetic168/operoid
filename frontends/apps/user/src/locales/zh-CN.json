@@ -23,19 +23,26 @@
     "changed": "密码已更新"
   },
   "home": {
-    "welcome": "连接正常",
-    "employees": "员工总数",
-    "templates": "模板总数",
-    "proposals": "待核可提案",
-    "flagged": "异常员工",
-    "service": "服务注册",
-    "installed": "已注册",
-    "notInstalled": "未注册",
-    "stream": "事件流",
-    "streamOn": "实时连接中",
-    "streamDown": "未连接",
-    "latest": "最新事件",
-    "scope": "本界面范围"
+    "deploy": {
+      "heading": "部署新员工",
+      "template": "选择模板",
+      "name": "员工名称",
+      "submit": "部署",
+      "empty": "尚无模板——请系统管理者先建立"
+    },
+    "mine": "我的员工",
+    "others": "其他员工（只读）",
+    "none": "还没有员工——部署一个开始吧",
+    "emp": {
+      "chat": "聊天",
+      "stop": "停止",
+      "state": "状态"
+    },
+    "commit": {
+      "title": "交办标题",
+      "cond": "完成条件",
+      "submit": "送出交办"
+    }
   },
   "header": {
     "logout": "登出",
@@ -45,5 +52,34 @@
     "title": "无权限",
     "message": "此账号的角色无法使用本界面。",
     "home": "回到登录"
+  },
+  "nav": {
+    "home": "我的员工",
+    "inbox": "收件匣",
+    "events": "事件流"
+  },
+  "chat": {
+    "input": "输入讯息…",
+    "send": "送出",
+    "commitments": "承诺",
+    "proposals": "员工提案",
+    "empty": "尚无讯息——说点什么吧",
+    "back": "← 返回",
+    "forbidden": "此员工不在你的名下。",
+    "commitTitle": "交办标题",
+    "commitCond": "完成条件",
+    "commitSubmit": "送出",
+    "proposed": "附带提案"
+  },
+  "inbox": {
+    "proposals": "待核可提案",
+    "empty": "目前没有待核可提案",
+    "approve": "核可",
+    "reject": "退回",
+    "flagged": "异常员工",
+    "done": "已处理"
+  },
+  "events": {
+    "empty": "目前没有事件"
   }
 }

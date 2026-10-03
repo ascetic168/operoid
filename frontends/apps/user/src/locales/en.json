@@ -23,19 +23,26 @@
     "changed": "Password updated"
   },
   "home": {
-    "welcome": "Connected",
-    "employees": "Employees",
-    "templates": "Templates",
-    "proposals": "Pending proposals",
-    "flagged": "Flagged employees",
-    "service": "Service registration",
-    "installed": "Installed",
-    "notInstalled": "Not installed",
-    "stream": "Event stream",
-    "streamOn": "Live",
-    "streamDown": "Offline",
-    "latest": "Latest event",
-    "scope": "Scope of this console"
+    "deploy": {
+      "heading": "Deploy a new employee",
+      "template": "Template",
+      "name": "Employee name",
+      "submit": "Deploy",
+      "empty": "No templates yet — ask an admin to create one"
+    },
+    "mine": "My employees",
+    "others": "Other employees (read-only)",
+    "none": "No employees yet — deploy one to get started",
+    "emp": {
+      "chat": "Chat",
+      "stop": "Stop",
+      "state": "State"
+    },
+    "commit": {
+      "title": "Commitment title",
+      "cond": "Completion condition",
+      "submit": "Create commitment"
+    }
   },
   "header": {
     "logout": "Sign out",
@@ -45,5 +52,34 @@
     "title": "Forbidden",
     "message": "This account cannot use this console.",
     "home": "Back to login"
+  },
+  "nav": {
+    "home": "My employees",
+    "inbox": "Inbox",
+    "events": "Events"
+  },
+  "chat": {
+    "input": "Type a message…",
+    "send": "Send",
+    "commitments": "Commitments",
+    "proposals": "Employee proposals",
+    "empty": "No messages yet — say hello",
+    "back": "← Back",
+    "forbidden": "This employee is not yours.",
+    "commitTitle": "Commitment title",
+    "commitCond": "Completion condition",
+    "commitSubmit": "Create",
+    "proposed": "with proposal"
+  },
+  "inbox": {
+    "proposals": "Pending proposals",
+    "empty": "No pending proposals",
+    "approve": "Approve",
+    "reject": "Reject",
+    "flagged": "Flagged employees",
+    "done": "Done"
+  },
+  "events": {
+    "empty": "No events yet"
   }
 }

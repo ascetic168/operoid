@@ -8,6 +8,24 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: () => import('./views/LoginView.vue') },
     { path: '/forbidden', name: 'forbidden', component: () => import('./views/ForbiddenView.vue') },
     {
+      path: '/chat/:id',
+      name: 'chat',
+      component: () => import('./views/ChatView.vue'),
+      meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/inbox',
+      name: 'inbox',
+      component: () => import('./views/InboxView.vue'),
+      meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
+    },
+    {
+      path: '/events',
+      name: 'events',
+      component: () => import('./views/EventsView.vue'),
+      meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
+    },
+    {
       path: '/',
       name: 'home',
       component: () => import('./views/HomeView.vue'),

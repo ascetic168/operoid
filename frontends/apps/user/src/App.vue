@@ -37,6 +37,11 @@ watch(
       :roles="s?.principal.roles ?? []"
       @logout="doLogout"
     />
+    <nav class="nav">
+      <router-link to="/">{{ t('nav.home') }}</router-link>
+      <router-link to="/inbox">{{ t('nav.inbox') }}</router-link>
+      <router-link to="/events">{{ t('nav.events') }}</router-link>
+    </nav>
     <main class="main">
       <router-view />
     </main>
@@ -44,5 +49,8 @@ watch(
 </template>
 
 <style scoped>
+.nav { display: flex; gap: 1.2rem; padding: 0.6rem 1.25rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+.nav a { color: var(--muted); text-decoration: none; font-size: 0.92rem; }
+.nav a.router-link-active { color: var(--accent); font-weight: 600; }
 .main { padding: 1.5rem; max-width: 72rem; margin: 0 auto; }
 </style>

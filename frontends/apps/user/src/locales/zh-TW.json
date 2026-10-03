@@ -23,19 +23,26 @@
     "changed": "密碼已更新"
   },
   "home": {
-    "welcome": "連線正常",
-    "employees": "員工總數",
-    "templates": "模板總數",
-    "proposals": "待核可提案",
-    "flagged": "異常員工",
-    "service": "服務註冊",
-    "installed": "已註冊",
-    "notInstalled": "未註冊",
-    "stream": "事件流",
-    "streamOn": "即時連線中",
-    "streamDown": "未連線",
-    "latest": "最新事件",
-    "scope": "本介面範圍"
+    "deploy": {
+      "heading": "部署新員工",
+      "template": "選擇模板",
+      "name": "員工名稱",
+      "submit": "部署",
+      "empty": "尚無模板——請系統管理者先建立"
+    },
+    "mine": "我的員工",
+    "others": "其他員工（唯讀）",
+    "none": "還沒有員工——部署一個開始吧",
+    "emp": {
+      "chat": "聊天",
+      "stop": "停止",
+      "state": "狀態"
+    },
+    "commit": {
+      "title": "交辦標題",
+      "cond": "完成條件",
+      "submit": "送出交辦"
+    }
   },
   "header": {
     "logout": "登出",
@@ -45,5 +52,34 @@
     "title": "無權限",
     "message": "此帳號的角色無法使用本介面。",
     "home": "回到登入"
+  },
+  "nav": {
+    "home": "我的員工",
+    "inbox": "收件匣",
+    "events": "事件流"
+  },
+  "chat": {
+    "input": "輸入訊息…",
+    "send": "送出",
+    "commitments": "承諾",
+    "proposals": "員工提案",
+    "empty": "尚無訊息——說點什麼吧",
+    "back": "← 返回",
+    "forbidden": "此員工不在你的名下。",
+    "commitTitle": "交辦標題",
+    "commitCond": "完成條件",
+    "commitSubmit": "送出",
+    "proposed": "附帶提案"
+  },
+  "inbox": {
+    "proposals": "待核可提案",
+    "empty": "目前沒有待核可提案",
+    "approve": "核可",
+    "reject": "退回",
+    "flagged": "異常員工",
+    "done": "已處理"
+  },
+  "events": {
+    "empty": "目前沒有事件"
   }
 }
