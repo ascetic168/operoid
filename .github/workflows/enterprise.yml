@@ -95,8 +95,18 @@ jobs:
           cp deploy/operoid.example.toml "$stage/"
           tar -czf "${{ matrix.archive }}" -C stage operoid-enterprise
 
-      - name: attach to release
+      # 套件先存成 workflow artifact（本地再以 PAT 附加到 Release——GITHUB_TOKEN
+      # 對已存在 release 的 update 路徑曾回 403 not-accessible，見計畫文件 R8 紀錄）。
+      - name: upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+
+      - name: attach to release（best-effort；GITHUB_TOKEN 權限允許時直接附）
         if: startsWith(github.event.workflow_run.head_branch || github.ref_name, 'v')
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.workflow_run.head_branch || github.ref_name }}
