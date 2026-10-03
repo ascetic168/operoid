@@ -35,12 +35,11 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
+      # workflow_run 觸發＝抓觸發 release 的同一個 tag（淺抓 default branch 不含
+      # tag——v0.4.0 首跑事故）；workflow_dispatch＝抓觸發時選的 ref。
       - uses: actions/checkout@v4
-
-      # workflow_run 觸發時，取回觸發 release 的同一個 tag（workflow_dispatch 時為空＝本地 HEAD）
-      - name: checkout the triggering tag
-        if: github.event_name == 'workflow_run'
-        run: git checkout "$GITHUB_HEAD_REF" || git checkout "${{ github.event.workflow_run.head_branch }}"
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref_name }}
 
       - name: setup node
         uses: actions/setup-node@v4
@@ -97,6 +96,7 @@ jobs:
           tar -czf "${{ matrix.archive }}" -C stage operoid-enterprise
 
       - name: attach to release
+        if: startsWith(github.event.workflow_run.head_branch || github.ref_name, 'v')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.workflow_run.head_branch || github.ref_name }}
