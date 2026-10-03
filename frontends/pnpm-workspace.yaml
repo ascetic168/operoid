@@ -1,3 +1,10 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+# 允許執行安裝腳本的套件（pnpm 10+ 於此宣告；CI 嚴格模式缺它會 ERR_PNPM_IGNORED_BUILDS）
+allowBuilds:
+  esbuild: true
+
+onlyBuiltDependencies:
+  - esbuild

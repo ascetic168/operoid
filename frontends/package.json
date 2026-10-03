@@ -7,10 +7,5 @@
   },
   "devDependencies": {
     "typescript": "^5.6.0"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

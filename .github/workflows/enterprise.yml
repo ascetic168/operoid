@@ -62,7 +62,7 @@ jobs:
       - name: build frontends（三角色前端靜態檔）
         working-directory: frontends
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install --frozen-lockfile --allow-build=esbuild
           pnpm build
 
       - name: build oserver（release）
