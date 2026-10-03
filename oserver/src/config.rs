@@ -56,6 +56,24 @@ pub fn load_config(dir: &Path) -> AppConfig {
     }
 }
 
+/// 遠端化 R1（DR-E6）：**有效設定**＝app-settings.json 基底＋operoid.toml 覆寫。
+/// `toml_cfg=None`（個人模式）時行為與 `load_config` 完全一致（零改動）。
+/// toml 優先權：`[llm] env` 蓋同名鍵；`[gbrain]`/`[ingress]` 覆寫對應欄位。
+/// 呼叫端須先經 `operoid_toml::load`（啟動期解析失敗已明確報錯；此處不再檢查檔案）。
+pub fn load_effective(
+    dir: &Path,
+    toml_cfg: Option<&crate::operoid_toml::OperoidToml>,
+) -> anyhow::Result<AppConfig> {
+    let mut cfg = load_config(dir);
+    if let Some(t) = toml_cfg {
+        for (k, v) in &t.llm.env {
+            cfg.llm_env.insert(k.clone(), v.clone());
+        }
+        crate::operoid_toml::apply_overrides(&mut cfg, Some(t));
+    }
+    Ok(cfg)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

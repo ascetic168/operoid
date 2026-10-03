@@ -116,6 +116,19 @@ pub trait Store: Send + Sync {
     /// 列出全部 Principal（id 排序；C12a token 查找用）。
     fn list_principals(&self) -> Result<Vec<crate::knowledge::types::Principal>>;
 
+    // ── R2（遠端化）：principal token 生命週期（一 principal 多 token）──
+
+    /// 寫入（upsert）一個 token 記錄。
+    fn put_token(&self, token: &crate::knowledge::types::PrincipalToken) -> Result<()>;
+    /// 依 token 雜湊查找（authn 用；明文比對永不出現在 store）。
+    fn get_token_by_hash(&self, token_hash: &str) -> Result<Option<crate::knowledge::types::PrincipalToken>>;
+    /// 列出某 principal 的全部 token。
+    fn list_tokens_for_principal(&self, principal_id: &str) -> Result<Vec<crate::knowledge::types::PrincipalToken>>;
+    /// 逐 token 撤銷（冪等；回報是否確實存在過）。
+    fn delete_token(&self, token_id: &str) -> Result<bool>;
+    /// 撤銷某 principal 的全部 token（停用帳號／admin 重設密碼用）；回撤銷數。
+    fn delete_tokens_for_principal(&self, principal_id: &str) -> Result<usize>;
+
     // ── C5（D1/D3）：知識 scope 與 policy 的持久化（權威在 Operoid）──
 
     /// 寫入（upsert）一個 KnowledgeScope。
@@ -423,6 +436,55 @@ impl Store for JsonStore {
         Ok(out)
     }
 
+    // ── R2：principal token（JsonStore：tokens.json 全集合讀後過濾）──
+
+    fn put_token(&self, token: &crate::knowledge::types::PrincipalToken) -> Result<()> {
+        upsert_by_id(&self.path("principal_tokens.json"), token, |t| &t.id)
+    }
+    fn get_token_by_hash(&self, token_hash: &str) -> Result<Option<crate::knowledge::types::PrincipalToken>> {
+        Ok(self
+            .read::<crate::knowledge::types::PrincipalToken>("principal_tokens.json")?
+            .into_iter()
+            .find(|t| t.token_hash == token_hash))
+    }
+    fn list_tokens_for_principal(&self, principal_id: &str) -> Result<Vec<crate::knowledge::types::PrincipalToken>> {
+        let mut out: Vec<crate::knowledge::types::PrincipalToken> = self
+            .read::<crate::knowledge::types::PrincipalToken>("principal_tokens.json")?
+            .into_iter()
+            .filter(|t| t.principal_id == principal_id)
+            .collect();
+        out.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        Ok(out)
+    }
+    fn delete_token(&self, token_id: &str) -> Result<bool> {
+        let existed = self
+            .read::<crate::knowledge::types::PrincipalToken>("principal_tokens.json")?
+            .iter()
+            .any(|t| t.id == token_id);
+        if existed {
+            delete_by_id::<crate::knowledge::types::PrincipalToken, _>(
+                &self.path("principal_tokens.json"),
+                token_id,
+                |t| &t.id,
+            )?;
+        }
+        Ok(existed)
+    }
+    fn delete_tokens_for_principal(&self, principal_id: &str) -> Result<usize> {
+        let all = self.read::<crate::knowledge::types::PrincipalToken>("principal_tokens.json")?;
+        let kept: Vec<_> = all.iter().filter(|t| t.principal_id != principal_id).collect();
+        let removed = all.len() - kept.len();
+        if removed > 0 {
+            let path = self.path("principal_tokens.json");
+            let kept_owned: Vec<_> = kept.into_iter().cloned().collect();
+            std::fs::write(
+                &path,
+                serde_json::to_string_pretty(&kept_owned).map_err(|e| anyhow::anyhow!("encode: {e}"))?,
+            )?;
+        }
+        Ok(removed)
+    }
+
     fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()> {
         upsert_by_id(&self.path("knowledge_scopes.json"), scope, |s| &s.id)
     }
@@ -712,6 +774,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "t".into(),
+            owner_principal: None,
         };
         let mary = Employee {
             id: "mary".into(),
@@ -726,6 +789,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "t".into(),
+            owner_principal: None,
         };
         s.put_employee(&steve).unwrap();
         s.put_employee(&mary).unwrap();
@@ -760,6 +824,7 @@ mod tests {
                 archived: false,
                 tools: None,
                 created_at: "t".into(),
+            owner_principal: None,
             })
             .unwrap();
         }
@@ -776,6 +841,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "t".into(),
+            owner_principal: None,
         })
         .unwrap();
 

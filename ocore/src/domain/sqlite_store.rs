@@ -73,6 +73,9 @@ impl SqliteStore {
              CREATE INDEX IF NOT EXISTS idx_messages_employee ON messages(employee_id); \
              CREATE TABLE IF NOT EXISTS principals (id TEXT PRIMARY KEY, principal_type TEXT NOT NULL, employee_id TEXT, data TEXT NOT NULL); \
              CREATE INDEX IF NOT EXISTS idx_principals_employee ON principals(employee_id); \
+             CREATE TABLE IF NOT EXISTS principal_tokens (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, token_hash TEXT NOT NULL, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_principal_tokens_principal ON principal_tokens(principal_id); \
+             CREATE INDEX IF NOT EXISTS idx_principal_tokens_hash ON principal_tokens(token_hash); \
              CREATE TABLE IF NOT EXISTS knowledge_scopes (id TEXT PRIMARY KEY, visibility TEXT NOT NULL, data TEXT NOT NULL); \
              CREATE TABLE IF NOT EXISTS knowledge_policies (id TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT NOT NULL); \
              CREATE TABLE IF NOT EXISTS retrieval_receipts (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, employee_id TEXT, denied INTEGER NOT NULL, data TEXT NOT NULL); \
@@ -210,6 +213,45 @@ impl Store for SqliteStore {
     fn list_principals(&self) -> Result<Vec<crate::knowledge::types::Principal>> {
         let conn = self.lock()?;
         select_all(&conn, "principals", "ORDER BY id", params![])
+    }
+
+    // ── R2（遠端化）：principal token 生命週期 ──
+
+    fn put_token(&self, token: &crate::knowledge::types::PrincipalToken) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO principal_tokens (id, principal_id, token_hash, data) VALUES (?1, ?2, ?3, ?4)",
+            params![token.id, token.principal_id, token.token_hash, encode(token)?],
+        )
+        .map_err(|e| anyhow!("put_token: {e}"))?;
+        Ok(())
+    }
+    fn get_token_by_hash(&self, token_hash: &str) -> Result<Option<crate::knowledge::types::PrincipalToken>> {
+        let conn = self.lock()?;
+        select_one(&conn, "principal_tokens", "token_hash", token_hash)
+    }
+    fn list_tokens_for_principal(&self, principal_id: &str) -> Result<Vec<crate::knowledge::types::PrincipalToken>> {
+        let conn = self.lock()?;
+        select_all(
+            &conn,
+            "principal_tokens",
+            "WHERE principal_id = ?1 ORDER BY created_at",
+            params![principal_id],
+        )
+    }
+    fn delete_token(&self, token_id: &str) -> Result<bool> {
+        let conn = self.lock()?;
+        let n = conn
+            .execute("DELETE FROM principal_tokens WHERE id = ?1", params![token_id])
+            .map_err(|e| anyhow!("delete_token: {e}"))?;
+        Ok(n > 0)
+    }
+    fn delete_tokens_for_principal(&self, principal_id: &str) -> Result<usize> {
+        let conn = self.lock()?;
+        let n = conn
+            .execute("DELETE FROM principal_tokens WHERE principal_id = ?1", params![principal_id])
+            .map_err(|e| anyhow!("delete_tokens_for_principal: {e}"))?;
+        Ok(n)
     }
 
     fn put_scope(&self, scope: &crate::knowledge::types::KnowledgeScope) -> Result<()> {
@@ -687,6 +729,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "t".into(),
+            owner_principal: None,
         }
     }
 

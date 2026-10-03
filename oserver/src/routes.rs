@@ -23,7 +23,7 @@ use ocore::runtime::{
     registry_load_payload, watch_payload,
 };
 
-use crate::auth::{AuthProvider, AuthError};
+use crate::auth::{AuthProvider, Identity};
 
 /// 服務共享狀態。
 pub struct ServerState {
@@ -50,31 +50,55 @@ pub(crate) fn err_response(e: &AppError) -> Response {
         "agent_os.employeeNotRunning" | "agent_os.employeeArchived" => StatusCode::CONFLICT,
         "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
         "agent_os.invalidTransition" => StatusCode::CONFLICT,
+        // R2：認證／授權語意（401 未認證、403 無權、429 鎖定、400 政策不合）
+        "auth.unauthorized" | "auth.invalidCredentials" => StatusCode::UNAUTHORIZED,
+        "auth.forbidden" | "auth.accountDisabled" | "auth.mustChangePassword" => StatusCode::FORBIDDEN,
+        "auth.accountLocked" => StatusCode::TOO_MANY_REQUESTS,
+        "auth.weakPassword" | "auth.accountCreateFailed" | "auth.noSession" => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, Json(body)).into_response()
 }
 
 /// 認證中介：所有 /api/* 走此處（/healthz 在 router 層免認證）。
+/// R2：RBAC 中介層已做 authn 並把 `Identity` 放進 extensions——此處為縱深防禦
+/// 的第二次檢查（未來最佳化可讀 extensions，先不動 60 個呼叫點）。
 pub(crate) fn require_auth(state: &ServerState, headers: &HeaderMap) -> Result<(), Response> {
-    require_identity(state, headers).map(|_| ())
-}
-
-/// C12a（D-C12a-3）：認證並回傳請求身份（principal id）——Test 8 完整版的地基：
-/// 身份出自 token 鏈，不出自呼叫端參數。
-pub(crate) fn require_identity(
-    state: &ServerState,
-    headers: &HeaderMap,
-) -> Result<crate::auth::Identity, Response> {
-    let h = headers.get("authorization").and_then(|v| v.to_str().ok());
-    match state.auth.check(h) {
-        Ok(id) => Ok(id),
-        Err(AuthError) => Err((
+    match require_identity(state, headers, None) {
+        Some(_) => Ok(()),
+        None => Err((
             StatusCode::UNAUTHORIZED,
             Json(json!({"code": "auth.unauthorized"})),
         )
             .into_response()),
     }
+}
+
+/// R2：認證並回傳請求身份——優先讀 RBAC 中介層放入 extensions 的 `Identity`，
+/// 沒有才走 header 檢查。身份一律出自 token 鏈，不出自呼叫端參數（Test 8 保證）。
+pub(crate) fn require_identity(
+    state: &ServerState,
+    headers: &HeaderMap,
+    ext: Option<axum::Extension<Identity>>,
+) -> Option<Identity> {
+    if let Some(axum::Extension(id)) = ext {
+        return Some(id);
+    }
+    let h = headers.get("authorization").and_then(|v| v.to_str().ok());
+    state.auth.check(h).ok()
+}
+
+/// R2：「限自身」過濾的資料源——某 principal 名下（owner_principal）的員工 id 集。
+pub(crate) fn owned_employee_ids(
+    store: &SqliteStore,
+    principal_id: &str,
+) -> Result<std::collections::HashSet<String>, AppError> {
+    Ok(store
+        .list_all_employees()?
+        .into_iter()
+        .filter(|e| e.owner_principal.as_deref() == Some(principal_id))
+        .map(|e| e.id)
+        .collect())
 }
 
 /// 開 store（handler 內先認證、再進 spawn_blocking 開連線）。
@@ -84,9 +108,31 @@ pub(crate) fn open_store(state: &ServerState) -> Result<SqliteStore, AppError> {
     })
 }
 
-/// CORS：Tauri webview（tauri://localhost／http://tauri.localhost）與 vite dev
-/// （http://localhost:1420）對 127.0.0.1:7340 都是跨域——JSON POST 會發 OPTIONS
-/// 預檢。本機Only＋Bearer 認證在前，permissive 無風險（P2 計畫的 localhost 邊界）。
+/// CORS 允許清單（遠端化 R1 收緊——取代 `very_permissive`，差距清單第 1 條：
+/// Bearer 過網路後不得再配 permissive CORS）：
+/// - Tauri webview（個人模式）：macOS/Linux `tauri://localhost`、Windows `http(s)://tauri.localhost`；
+/// - vite dev（開發期）：`http://localhost:1420`／`http://127.0.0.1:1420`；
+/// - 企業模式三前端由 oserver 同 origin 服務（`/{app}` 靜態檔）——瀏覽器請求不經 CORS。
+pub fn cors_layer() -> CorsLayer {
+    use axum::http::{header, HeaderValue, Method};
+    CorsLayer::new()
+        .allow_origin([
+            HeaderValue::from_static("tauri://localhost"),
+            HeaderValue::from_static("http://tauri.localhost"),
+            HeaderValue::from_static("https://tauri.localhost"),
+            HeaderValue::from_static("http://localhost:1420"),
+            HeaderValue::from_static("http://127.0.0.1:1420"),
+        ])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+}
+
 pub fn router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -100,14 +146,21 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/inbox", get(api_inbox))
         .route("/api/events", get(api_events))
         .route("/api/registry", get(api_registry))
-        .layer(CorsLayer::very_permissive())
+        .route("/api/service/status", get(api_service_status))
+        .layer(cors_layer())
         .with_state(state)
 }
 
 /// 免認證健康檢查：`warming`（初始化中）→ `ready`。
+/// R3 加驗：`version`——GUI/前端可比對新舊（遠端化診斷教訓：舊版服務被 healthz
+/// 探測誤沿用，造成「部分端點 404」的隱性故障）。
 async fn healthz(State(state): State<Arc<ServerState>>) -> Response {
     let ready = state.ready.load(std::sync::atomic::Ordering::SeqCst);
-    Json(json!({"status": if ready { "ready" } else { "warming" }})).into_response()
+    Json(json!({
+        "status": if ready { "ready" } else { "warming" },
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+    .into_response()
 }
 
 async fn api_state(
@@ -169,16 +222,23 @@ async fn api_templates(
 
 async fn api_watch(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         check_enabled(&st)?;
         let store = open_store(&st)?;
+        // R2「限自身」：user 僅能監看自己名下的員工（manager/admin 不限；既有員工＝operator 歸屬）。
+        if let Some(ident) = &identity {
+            if let Some(emp) = store.get_employee(&id)? {
+                if !crate::rbac::can_access_employee(ident, emp.owner_principal.as_deref()) {
+                    return Err(AppError::new("auth.forbidden"));
+                }
+            }
+        }
         watch_payload(&st.cfg, &store, &id)
     })
     .await;
@@ -187,16 +247,29 @@ async fn api_watch(
 
 async fn api_inbox(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         check_enabled(&st)?;
         let store = open_store(&st)?;
-        inbox_summary_payload(&store)
+        let summary = inbox_summary_payload(&store)?;
+        match &identity {
+            // R2：user 的收件匣過濾到「自身相關」（員工歸屬）。
+            Some(id) if !crate::rbac::satisfies(id, crate::rbac::Req::Manager) => {
+                let owned = owned_employee_ids(&store, &id.name)?;
+                let v = serde_json::to_value(&summary)
+                    .unwrap_or_else(|_| serde_json::Value::Null);
+                Ok(filter_payload_by_employees(
+                    v,
+                    &[("proposals", "employee_id"), ("flagged_employees", "employee_id")],
+                    &owned,
+                ))
+            }
+            _ => Ok(serde_json::to_value(&summary).unwrap_or_else(|_| serde_json::Value::Null)),
+        }
     })
     .await;
     finish(res)
@@ -204,12 +277,11 @@ async fn api_inbox(
 
 async fn api_events(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let limit = q
         .get("limit")
         .and_then(|v| v.parse::<usize>().ok())
@@ -218,10 +290,41 @@ async fn api_events(
     let res = tokio::task::spawn_blocking(move || {
         check_enabled(&st)?;
         let store = open_store(&st)?;
-        recent_events_payload(&store, limit)
+        let events = recent_events_payload(&store, limit)?;
+        match &identity {
+            // R2：user 的事件流過濾到「自身相關」。
+            Some(id) if !crate::rbac::satisfies(id, crate::rbac::Req::Manager) => {
+                let owned = owned_employee_ids(&store, &id.name)?;
+                Ok(serde_json::json!(events
+                    .into_iter()
+                    .filter(|e| owned.contains(&e.employee_id))
+                    .collect::<Vec<_>>()))
+            }
+            _ => Ok(serde_json::json!(events)),
+        }
     })
     .await;
     finish(res)
+}
+
+/// R2：依員工歸屬過濾 payload 內的陣列（`[(欄位名, 員工id欄)]`）；缺欄位的項目保留。
+pub(crate) fn filter_payload_by_employees(
+    mut v: serde_json::Value,
+    arrays: &[(&str, &str)],
+    owned: &std::collections::HashSet<String>,
+) -> serde_json::Value {
+    if let Some(obj) = v.as_object_mut() {
+        for (key, field) in arrays {
+            if let Some(arr) = obj.get_mut(*key).and_then(|x| x.as_array_mut()) {
+                arr.retain(|item| {
+                    item.get(*field)
+                        .and_then(|f| f.as_str())
+                        .map_or(true, |eid| owned.contains(eid))
+                });
+            }
+        }
+    }
+    v
 }
 
 async fn api_registry(
@@ -250,6 +353,20 @@ async fn api_registry(
 }
 
 // ── 輔助 ─────────────────────────────────────────────────────────────
+
+/// R3：服務狀態唯讀（admin——矩陣明示 Admin）。`running` 以本行程存在為準
+/// （服務在跑才答得到）；`installed` 查 OS 服務註冊。install/uninstall 不開遠端
+/// Web 操作（克制清單——管理面不開遠端破壞性動作，留伺服器 CLI）。
+async fn api_service_status(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let installed = crate::service::is_installed().unwrap_or(false);
+    Json(json!({"installed": installed, "running": true})).into_response()
+}
 
 fn check_enabled(st: &ServerState) -> Result<(), AppError> {
     if !st.cfg.agent_os_enabled {
@@ -305,8 +422,10 @@ async fn api_event(
             return (StatusCode::OK, Json(json!({"status": "duplicate; ignored"}))).into_response();
         }
     }
-    // dispatch（cfg 即時載——熱生效）。
-    let cfg = crate::config::load_config(&state.settings_dir);
+    // dispatch（cfg 即時載——熱生效；operoid.toml 覆寫與 app-settings 同批）。
+    let toml_cfg = crate::operoid_toml::load(&state.settings_dir).unwrap_or(None);
+    let cfg = crate::config::load_effective(&state.settings_dir, toml_cfg.as_ref())
+        .unwrap_or_else(|_| crate::config::load_config(&state.settings_dir));
     let db_path = state.db_path.clone();
     match ocore::event_bus::dispatch_event(app_state, &cfg, &db_path, ev).await {
         Ok(()) => (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),

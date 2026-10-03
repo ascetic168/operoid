@@ -65,7 +65,7 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/factories/classify", post(api_factory_classify))
         // 前置檢查
         .route("/api/prereq", get(api_prereq))
-        .layer(tower_http::cors::CorsLayer::very_permissive())
+        .layer(crate::routes::cors_layer())
 }
 
 // ── 輔助 ─────────────────────────────────────────────────────────────
@@ -687,9 +687,12 @@ async fn api_op_run(
     body: Json<OpRunBody>,
 ) -> Response {
     // C12a（D-C12a-3）：身份出自 token 鏈（Test 8 完整版）——檢索改道用它構造 AccessContext。
-    let requestor = match require_identity(&state, &headers) {
-        Ok(id) => id.name,
-        Err(r) => return r,
+    let Some(requestor) = require_identity(&state, &headers, None).map(|i| i.name) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
     };
     let st = state.clone();
     let cfg = match tokio::task::spawn_blocking(move || {
@@ -897,9 +900,12 @@ async fn api_factory_write_pages(
     body: Json<WritePagesBody>,
 ) -> Response {
     // C13c（D-C13i）：批次路徑同樣受寫入端天花板管制。
-    let owner = match require_identity(&state, &headers) {
-        Ok(id) => id.name,
-        Err(r) => return r,
+    let Some(owner) = require_identity(&state, &headers, None).map(|i| i.name) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
     };
     let st = state.clone();
     let b = body.0;
@@ -973,9 +979,12 @@ async fn api_factory_save_authored(
     body: Json<SaveAuthoredBody>,
 ) -> Response {
     // C13c：身份即作者（token 鏈裁定——D-C13i owner provenance）。
-    let owner = match require_identity(&state, &headers) {
-        Ok(id) => id.name,
-        Err(r) => return r,
+    let Some(owner) = require_identity(&state, &headers, None).map(|i| i.name) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
     };
     let st = state.clone();
     let b = body.0;

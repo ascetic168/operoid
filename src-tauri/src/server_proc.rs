@@ -12,13 +12,13 @@ use tauri::{AppHandle, Runtime};
 
 use crate::config::app_config;
 
-/// 隨機 hex token（64 bit，密碼學品味足以擋本機亂試；非對外安全邊界）。
+/// R2（遠端化缺口 8）：master token 改 **CSPRNG**（OS 熵源 256-bit）——
+/// 遠端化後 master token 過網路且具 admin 全權，M1 的時間＋pid 簡易熵源退役。
 fn gen_token() -> String {
-    // 以時間＋行程 id 疊加的簡易熵源；本機 127.0.0.1 情境足夠（P5 換 toml 時可升級）。
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-    let p = std::process::id() as u128;
-    format!("{:016x}{:016x}", t as u64 ^ (p << 32) as u64, (t >> 64) as u64 ^ p as u64)
+    use getrandom::getrandom;
+    let mut b = [0u8; 32];
+    getrandom(&mut b).expect("OS 熵源不可用");
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// 探測 oserver 是否在跑（healthz，1s timeout）。

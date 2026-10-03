@@ -12,7 +12,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
-use tower_http::cors::CorsLayer;
+use crate::routes::cors_layer;
 
 use crate::routes::{err_response, open_store, require_auth, ServerState};
 use ocore::domain::Store as _;
@@ -30,7 +30,7 @@ pub fn knowledge_admin_routes() -> Router<Arc<ServerState>> {
             "/api/knowledge/principals/{id}/token",
             post(api_token_issue).delete(api_token_revoke),
         )
-        .layer(CorsLayer::very_permissive())
+        .layer(cors_layer())
 }
 
 /// 一次抓齊管理面三集合（scopes 唯讀參考＋principals＋grants）。
@@ -256,6 +256,10 @@ async fn api_principal_create(
             display_name: b.display_name,
             attrs: Default::default(),
             token_hash: None,
+            login_name: None,
+            password_hash: None,
+            disabled: false,
+            must_change_password: false,
         };
         ocore::knowledge::identity::create_principal(&store, p.clone())?;
         Ok(p)
@@ -268,44 +272,59 @@ async fn api_principal_create(
     }
 }
 
-/// 簽發/輪替 principal token——**明文只在此回應出現一次**。
+/// R2：簽發 principal token（CSPRNG；一 principal 多 token）。body 可省（長期服務 token）；
+/// 帶 `ttl_secs` → 會話 token；`label` 標記裝置/session。**明文只在此回應出現一次**。
+#[derive(Deserialize, Default)]
+struct TokenIssueBody {
+    #[serde(default)]
+    ttl_secs: Option<i64>,
+    #[serde(default)]
+    label: Option<String>,
+}
+
 async fn api_token_issue(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
     AxPath(id): AxPath<String>,
+    body: Option<Json<TokenIssueBody>>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
-    let st = state;
+    let st = state.clone();
+    let (ttl, label) = body
+        .map(|Json(b)| (b.ttl_secs, b.label))
+        .unwrap_or((None, None));
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
-        ocore::knowledge::identity::issue_principal_token(&store, &id)
+        ocore::knowledge::identity::issue_principal_token_v2(&store, &id, ttl, label.as_deref())
     })
     .await;
     match res {
-        Ok(Ok(token)) => (StatusCode::OK, Json(json!({"token": token}))).into_response(),
+        Ok(Ok((token, rec))) => (
+            StatusCode::OK,
+            Json(json!({
+                "token": token,
+                "token_id": rec.id,
+                "expires_at": rec.expires_at,
+                "label": rec.label,
+            })),
+        )
+            .into_response(),
         Ok(Err(e)) => err_response(&ocore::i18n::AppError::new("knowledge.principalFailed").p("detail", e.to_string())),
         Err(e) => err_response(&ocore::i18n::AppError::new("server.internal").p("detail", e.to_string())),
     }
 }
 
+/// R2：撤銷 principal 的**全部** token（逐 token 撤銷走 logout；此端點為管理面全撤）。
 async fn api_token_revoke(
     State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
-    let st = state;
+    let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
-        ocore::knowledge::identity::revoke_principal_token(&store, &id)
+        ocore::knowledge::identity::revoke_all_tokens(&store, &id)
     })
     .await;
     match res {
-        Ok(Ok(())) => (StatusCode::OK, Json(json!({"ok": true}))).into_response(),
+        Ok(Ok(n)) => (StatusCode::OK, Json(json!({"ok": true, "revoked": n}))).into_response(),
         Ok(Err(e)) => err_response(&ocore::i18n::AppError::new("knowledge.principalFailed").p("detail", e.to_string())),
         Err(e) => err_response(&ocore::i18n::AppError::new("server.internal").p("detail", e.to_string())),
     }

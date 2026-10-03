@@ -11,11 +11,12 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, post};
 use axum::{Json, Router};
-use tower_http::cors::CorsLayer;
+use crate::routes::cors_layer;
 use serde::Deserialize;
 use serde_json::json;
 
 use ocore::agent_state::AppState;
+use ocore::domain::Store as _;
 use ocore::i18n::AppError;
 use ocore::runtime::{
     approve_commitment_core, archive_commitment_core, archive_employee_core,
@@ -27,7 +28,34 @@ use ocore::runtime::{
     send_message_core, stop_employee_core, unarchive_employee_core,
 };
 
-use crate::routes::{err_response, open_store, require_auth, ServerState};
+use crate::routes::{err_response, open_store, require_auth, require_identity, ServerState};
+use crate::auth::Identity;
+
+/// R2「限自身」：user 僅能操作自己名下的員工（manager/admin 不限；既有員工＝operator 歸屬）。
+fn ensure_employee_access(
+    identity: &Identity,
+    store: &ocore::domain::SqliteStore,
+    employee_id: &str,
+) -> Result<(), AppError> {
+    if let Some(emp) = store.get_employee(employee_id)? {
+        if !crate::rbac::can_access_employee(identity, emp.owner_principal.as_deref()) {
+            return Err(AppError::new("auth.forbidden"));
+        }
+    }
+    Ok(())
+}
+
+/// R2「限自身」：承諾 → 其員工 → 歸屬判定。
+fn ensure_commitment_access(
+    identity: &Identity,
+    store: &ocore::domain::SqliteStore,
+    commitment_id: &str,
+) -> Result<(), AppError> {
+    if let Some(c) = store.get_commitment(commitment_id)? {
+        ensure_employee_access(identity, store, &c.owner_employee_id)?;
+    }
+    Ok(())
+}
 
 pub fn write_routes() -> Router<Arc<ServerState>> {
     Router::new()
@@ -44,10 +72,11 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/commitments/{id}/reject", post(api_reject))
         .route("/api/commitments/{id}/archive", post(api_archive))
         .route("/api/commitments/{id}/review", post(api_review_commitment))
+        .route("/api/commitments/{id}/satisfy", post(api_satisfy_commitment))
         .route("/api/registry/drill", post(api_registry_drill))
         .route("/api/tasks/{id}/cancel", post(api_cancel_task))
         .route("/api/registry", post(api_registry_save))
-        .layer(CorsLayer::very_permissive())
+        .layer(cors_layer())
 }
 
 #[derive(Deserialize)]
@@ -62,17 +91,19 @@ struct ReviewBody {
 
 async fn api_review_commitment(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
     body: Json<ReviewBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let mis = body.0.misclassified;
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_commitment_access(ident, &store, &id)?;
+        }
         let data_dir = st
             .db_path
             .parent()
@@ -282,15 +313,17 @@ async fn api_delete_employee(
 /// W1（E13）：解除封存（恢復可喚醒身分；歷史本就保留）。
 async fn api_unarchive_employee(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_employee_access(ident, &store, &id)?;
+        }
         unarchive_employee_core(&store, &id)
     })
     .await;
@@ -299,17 +332,19 @@ async fn api_unarchive_employee(
 
 async fn api_rename_employee(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
     body: Json<RenameBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let name = body.0.name;
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_employee_access(ident, &store, &id)?;
+        }
         rename_employee_core(&store, &id, &name)
     })
     .await;
@@ -319,16 +354,18 @@ async fn api_rename_employee(
 /// W1 合作式停止：對執行中員工設停止旗標（runner 於步驟邊界優雅中止）。
 async fn api_stop_employee(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let as_ = app_state(&st)?.clone();
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_employee_access(ident, &store, &id)?;
+        }
         stop_employee_core(&as_, &store, &id)
     })
     .await;
@@ -341,19 +378,20 @@ struct DeployBody {
     instance_name: String,
 }
 
+/// R2：部署記錄部署者（`owner_principal`）——「限自身」歸屬的資料源。
 async fn api_deploy(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     body: Json<DeployBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let b = body.0;
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
-        let employee_id = deploy_instance(&store, &b.template_id, &b.instance_name)?;
+        let employee_id =
+            deploy_instance(&store, &b.template_id, &b.instance_name, identity.as_ref().map(|i| i.name.as_str()))?;
         Ok(json!({ "employee_id": employee_id }))
     })
     .await;
@@ -368,18 +406,20 @@ struct SendMessageBody {
 
 async fn api_send_message(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
     body: Json<SendMessageBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let b = body.0;
     let res = tokio::task::spawn_blocking(move || {
         let as_ = app_state(&st)?;
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_employee_access(ident, &store, &id)?;
+        }
         send_message_core(as_, &store, &id, &b.text, b.commitment_id.as_deref())
     })
     .await;
@@ -388,15 +428,17 @@ async fn api_send_message(
 
 async fn api_clear_messages(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_employee_access(ident, &store, &id)?;
+        }
         clear_messages_core(&store, &id)
     })
     .await;
@@ -448,16 +490,18 @@ async fn api_create_commitment(
 
 async fn api_approve(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let as_ = app_state(&st)?.clone();
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_commitment_access(ident, &store, &id)?;
+        }
         approve_commitment_core(&as_, &st.cfg, &st.db_path, &store, &id)
     })
     .await;
@@ -466,15 +510,17 @@ async fn api_approve(
 
 async fn api_reject(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_commitment_access(ident, &store, &id)?;
+        }
         reject_commitment_core(&store, &id)
     })
     .await;
@@ -483,19 +529,49 @@ async fn api_reject(
 
 async fn api_archive(
     State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_commitment_access(ident, &store, &id)?;
+        }
         archive_commitment_core(&store, &id)
     })
     .await;
     finish(res)
+}
+
+/// R3：人工覆寫承諾為 Satisfied（原殼專屬 invoke——API 覆蓋缺口補齊；「限自身」歸屬檢查）。
+async fn api_satisfy_commitment(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let identity = require_identity(&state, &headers, identity);
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_commitment_access(ident, &store, &id)?;
+        }
+        ocore::runtime::satisfy_commitment_core(&store, &id)
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => Json(json!({ "ok": true })).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn api_cancel_task(

@@ -54,6 +54,7 @@ pub async fn agent_seed<R: tauri::Runtime>(
         archived: false,
         tools: None,
         created_at: now_rfc3339(),
+        owner_principal: None,
     })?;
 
     Ok(SeedResult {
@@ -99,6 +100,7 @@ pub async fn agent_recruit<R: tauri::Runtime>(
         archived: false,
         tools: None,
         created_at: now_rfc3339(),
+        owner_principal: None,
     })?;
     Ok(RecruitResult { employee_id: emp_id })
 }
@@ -143,7 +145,7 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
         return Err(AppError::new("agent_os.disabled"));
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
-    let employee_id = deploy_instance(&store, &template_id, &instance_name)?;
+    let employee_id = deploy_instance(&store, &template_id, &instance_name, None)?;
     Ok(DeployResult { employee_id })
 }
 
@@ -330,13 +332,7 @@ pub async fn agent_satisfy_commitment<R: tauri::Runtime>(
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
 
-    let mut com = store
-        .get_commitment(&commitment_id)?
-        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", &commitment_id))?;
-    com.status = CommitmentStatus::Satisfied;
-    com.updated_at = now_rfc3339();
-    store.put_commitment(&com)?;
-    Ok(())
+    ocore::runtime::satisfy_commitment_core(&store, &commitment_id)
 }
 
 // ───────────────── 承諾審核（Phase 7c，Ch.11/Ch.20 §5）─────────────────

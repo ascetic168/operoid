@@ -189,6 +189,7 @@ mod tests {
                     archived: true,
                     tools: None,
                     created_at: "t".into(),
+                    owner_principal: None,
                 })
                 .unwrap();
         }

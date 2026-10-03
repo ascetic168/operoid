@@ -162,7 +162,7 @@ fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory
 }
 
 /// 記錄一則生命週期 Event（Handbook Ch.14，Phase 6d 輕量）。best-effort：記錄失敗不中斷循環。
-pub(crate) fn record_event(
+pub fn record_event(
     store: &dyn Store,
     workspace_id: &str,
     employee_id: &str,
@@ -2124,12 +2124,28 @@ pub struct RecruitResult {
     pub employee_id: String,
 }
 
+/// R3：人工覆寫承諾為 Satisfied（原殼專屬 invoke 的核心抽取——單一實作）。
+/// 自動判斷由 `run_autonomous` 的 `evaluate_done` 承擔；此函式為人工覆寫入口。
+pub fn satisfy_commitment_core(
+    store: &(dyn Store + Send + Sync),
+    commitment_id: &str,
+) -> Result<(), AppError> {
+    let mut com = store
+        .get_commitment(commitment_id)?
+        .ok_or_else(|| AppError::new("agent_os.commitmentNotFound").p("id", commitment_id))?;
+    com.status = CommitmentStatus::Satisfied;
+    com.updated_at = now_rfc3339();
+    store.put_commitment(&com)?;
+    Ok(())
+}
+
 /// 從 template 部署一個獨立 Instance（Ch.04 §7）：抄襲 brain／role、設 `template_id`、
 /// fresh Sleeping。抽成函式以便單測（免 AppHandle）。
 pub fn deploy_instance(
     store: &(dyn Store + Send + Sync),
     template_id: &str,
     instance_name: &str,
+    deployed_by: Option<&str>,
 ) -> anyhow::Result<String> {
     let tmpl = store
         .get_template(template_id)?
@@ -2151,6 +2167,8 @@ pub fn deploy_instance(
         archived: false,
         tools: tmpl.tools.clone(), // W3（D-H3）：allowlist 隨模板繼承
         created_at: now_rfc3339(),
+        // R2：部署者歸屬（「限自身」過濾資料源；None＝operator 歸屬）。
+        owner_principal: deployed_by.map(|s| s.to_string()),
     })?;
     Ok(emp_id)
 }
@@ -2635,6 +2653,7 @@ mod tests {
                 archived: false,
                 tools: None,
                 created_at: "t".into(),
+                owner_principal: None,
             })
             .unwrap();
         emp_id
@@ -2937,6 +2956,7 @@ mod tests {
                 archived: false,
                 tools: None,
                 created_at: "t".into(),
+                owner_principal: None,
             })
             .unwrap();
         // 兩個 Human message task，各帶自己的（source, reply_to）錨點——模擬兩封進站事件。
@@ -4288,7 +4308,7 @@ mod tests {
             Some(&[crate::write_note::TOOL_WRITE_NOTE]),
         )
         .unwrap();
-        let emp_id = deploy_instance(&store, "writer", "W1").unwrap();
+        let emp_id = deploy_instance(&store, "writer", "W1", None).unwrap();
         let emp = store.get_employee(&emp_id).unwrap().unwrap();
         assert_eq!(
             emp.tools,
@@ -4801,6 +4821,7 @@ mod tests {
                 archived: false,
                 tools: None,
                 created_at: now_rfc3339(),
+                owner_principal: None,
             })
             .unwrap();
 
@@ -4902,6 +4923,7 @@ mod tests {
                 archived: false,
                 tools: None,
                 created_at: now_rfc3339(),
+                owner_principal: None,
             })
             .unwrap();
         // 一個 Assigned inbox task（訊息或交接投遞）。
@@ -5004,6 +5026,7 @@ mod tests {
                 archived: false,
                 tools: None,
                 created_at: now_rfc3339(),
+                owner_principal: None,
             })
             .unwrap();
         let c_id = "c1".to_string();
@@ -5127,6 +5150,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                owner_principal: None,
                 })
                 .unwrap();
             store
@@ -5262,6 +5286,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                owner_principal: None,
                 })
                 .unwrap();
         }
@@ -5315,6 +5340,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                owner_principal: None,
                 })
                 .unwrap();
         }
@@ -5416,6 +5442,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                owner_principal: None,
                 })
                 .unwrap();
         }
@@ -5488,9 +5515,9 @@ mod tests {
             })
             .unwrap();
         // 部署 3 個 instance
-        let tw = deploy_instance(&store, "steve", "Steve-TW").unwrap();
-        let nj = deploy_instance(&store, "steve", "Steve-NJ").unwrap();
-        let vn = deploy_instance(&store, "steve", "Steve-VN").unwrap();
+        let tw = deploy_instance(&store, "steve", "Steve-TW", None).unwrap();
+        let nj = deploy_instance(&store, "steve", "Steve-NJ", None).unwrap();
+        let vn = deploy_instance(&store, "steve", "Steve-VN", None).unwrap();
 
         let emps = store.list_employees(&ws).unwrap();
         assert_eq!(emps.len(), 3);
@@ -5578,6 +5605,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                    owner_principal: None,
                 })
                 .unwrap();
         }
@@ -5636,6 +5664,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                owner_principal: None,
                 })
                 .unwrap();
         }
@@ -5749,6 +5778,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                owner_principal: None,
                 })
                 .unwrap();
         }
@@ -5814,6 +5844,7 @@ mod tests {
                     archived: false,
                     tools: None,
                     created_at: now_rfc3339(),
+                    owner_principal: None,
                 })
                 .unwrap();
         }
@@ -6826,6 +6857,7 @@ mod recovery_tests {
             archived: false,
             tools: None,
             created_at: now_rfc3339(),
+                owner_principal: None,
         };
         store.put_employee(&emp).unwrap();
         store.put_task(&Task {

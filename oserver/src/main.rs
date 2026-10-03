@@ -1,4 +1,4 @@
-//! `oserver` — Operoid 服務 binary（前後端分離計畫 P2–P5）。
+//! `oserver` — Operoid 服務 binary（前後端分離計畫 P2–P5；遠端化 R1）。
 //!
 //! 啟動序（三條紀律）：bind-first → healthz（warming→ready）→ 背景 init。
 //! 關機觸發：一般模式＝Ctrl+C；服務模式＝SCM Stop 設 `SERVICE_STOP`（等價）。
@@ -6,16 +6,25 @@
 //!
 //! 模式：一般（前景）／`--service`（Windows SCM dispatcher；Linux/macOS 前景同一般）。
 //! 子命令：`install`／`uninstall`／`status`（P5）。
-//! token：`OSERVER_TOKEN` env **或** `app-settings.json` 的 `server_token`
-//! （服務模式無使用者 env——由設定檔提供）。
+//! token：`OSERVER_TOKEN` env **或** `operoid.toml` `[server].token` **或**
+//! `app-settings.json` 的 `server_token`（服務模式無使用者 env——由設定檔提供）。
+//! **個人／企業模式**（遠端化 DR-E6）：settings 目錄有 `operoid.toml`＝企業模式
+//! （可 bind 外部位址＋rustls TLS＋靜態三前端）；沒有＝個人模式（loopback、行為零變化）。
+//! 非 loopback bind 且未啟用 TLS → 拒絕啟動（DR-E5 fail-closed）。
 
+mod accounts;
 mod auth;
 mod knowledge_admin;
 mod config;
 mod gbrain;
+mod operoid_toml;
 mod operations;
+mod rbac;
+#[cfg(test)]
+mod matrix_tests;
 mod routes;
 mod service;
+mod sse;
 mod writes;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,20 +43,33 @@ static SHARED_STATE: OnceLock<AppState> = OnceLock::new();
 /// 服務模式的停止旗標（SCM Stop 設 true——與 Ctrl+C 等價的關機觸發）。
 pub(crate) static SERVICE_STOP: AtomicBool = AtomicBool::new(false);
 
-/// 解析 CLI 中與目錄/port 相關的引數（供 run() 與子命令共用）。
+/// 解析 CLI 中與目錄/bind 相關的引數（供 run() 與子命令共用）。
 struct DirArgs {
     settings_dir: Option<String>,
     db_dir: Option<String>,
     data_dir: Option<String>,
+    host: Option<String>,
+    frontends_dir: Option<String>,
     port: u16,
+    /// port 是否被明示（CLI --port 或 OSERVER_PORT env）——決定 toml port 是否生效。
+    port_explicit: bool,
 }
 
 fn parse_args() -> DirArgs {
     let args: Vec<String> = std::env::args().collect();
-    let mut a = DirArgs { settings_dir: None, db_dir: None, data_dir: None, port: 7340 };
+    let mut a = DirArgs {
+        settings_dir: None,
+        db_dir: None,
+        data_dir: None,
+        host: None,
+        frontends_dir: None,
+        port: 7340,
+        port_explicit: false,
+    };
     if let Ok(p) = std::env::var("OSERVER_PORT") {
         if let Ok(v) = p.parse() {
             a.port = v;
+            a.port_explicit = true;
         }
     }
     let mut i = 1;
@@ -65,16 +87,41 @@ fn parse_args() -> DirArgs {
                 a.db_dir = Some(args[i + 1].clone());
                 i += 2;
             }
+            "--host" if i + 1 < args.len() => {
+                a.host = Some(args[i + 1].clone());
+                i += 2;
+            }
+            "--frontends-dir" if i + 1 < args.len() => {
+                a.frontends_dir = Some(args[i + 1].clone());
+                i += 2;
+            }
             "--port" if i + 1 < args.len() => {
                 if let Ok(v) = args[i + 1].parse() {
                     a.port = v;
                 }
+                a.port_explicit = true;
                 i += 2;
             }
             _ => i += 1,
         }
     }
     a
+}
+
+/// 遠端化 R1：bind host/port 解析（CLI --host/--port > operoid.toml [server] > 預設
+/// 127.0.0.1:7340）。port_explicit 時 toml port 不生效（明示引數最優先）。
+fn resolve_bind(a: &DirArgs, t: Option<&operoid_toml::OperoidToml>) -> (String, u16) {
+    let host = a
+        .host
+        .clone()
+        .or_else(|| t.and_then(|t| t.server.host.clone()))
+        .unwrap_or_else(|| "127.0.0.1".into());
+    let port = if a.port_explicit {
+        a.port
+    } else {
+        t.and_then(|t| t.server.port).unwrap_or(a.port)
+    };
+    (host, port)
 }
 
 /// 由引數解析最終兩目錄（--settings-dir/--db-dir 優先 → --data-dir 同覆 → 桌面預設）。
@@ -126,8 +173,13 @@ fn main() {
         }
         Some("status") => {
             let installed = service::is_installed().unwrap_or(false);
+            // 遠端化 R1：探測位址隨企業模式（operoid.toml [server]）走；解析失敗回落預設。
+            let toml_cfg = resolve_from_args(&a)
+                .ok()
+                .and_then(|d| operoid_toml::load(&d.settings_dir).ok().flatten());
+            let (host, port) = resolve_bind(&a, toml_cfg.as_ref());
             let running = std::net::TcpStream::connect_timeout(
-                &format!("127.0.0.1:{}", a.port).parse().expect("addr"),
+                &format!("{host}:{port}").parse().expect("addr"),
                 Duration::from_secs(1),
             )
             .is_ok();
@@ -159,9 +211,14 @@ fn main() {
 
 async fn run(a: &DirArgs) -> anyhow::Result<()> {
     let dirs = resolve_from_args(a)?;
-    let cfg = config::load_config(&dirs.settings_dir);
-    // 服務行程（LocalSystem）看不到使用者環境——注入殼層快照的 provider keys
-    // （llm::complete 與 gbrain 子行程自此都有 key）。
+    // 遠端化 R1（DR-E6）：operoid.toml 存在＝企業模式；解析失敗 → 明確報錯退出（非靜默）。
+    let toml_cfg = operoid_toml::load(&dirs.settings_dir)?;
+    if toml_cfg.is_some() {
+        eprintln!("[oserver] 企業模式：operoid.toml 已載入");
+    }
+    let cfg = config::load_effective(&dirs.settings_dir, toml_cfg.as_ref())?;
+    // 服務行程（LocalSystem）看不到使用者環境——注入殼層快照與 operoid.toml [llm] 的
+    // provider keys（llm::complete 與 gbrain 子行程自此都有 key；toml 蓋同名鍵）。
     for (k, v) in &cfg.llm_env {
         std::env::set_var(k, v);
     }
@@ -169,24 +226,59 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         eprintln!("[oserver] 已注入 {} 個 LLM 環境變數（設定快照）", cfg.llm_env.len());
     }
 
-    // token：env 優先，否則設定檔 server_token（服務模式路徑）。
+    // ── 遠端化 R1：bind/TLS/frontends 解析（CLI > operoid.toml > 預設 127.0.0.1）──
+    let (host, port) = resolve_bind(a, toml_cfg.as_ref());
+    let tls = match &toml_cfg {
+        Some(t) => t.tls.validate()?,
+        None => None,
+    };
+    // DR-E5 fail-closed：非 loopback bind 必須有 TLS（Bearer 不得明文過網路）。
+    operoid_toml::ensure_transport_safe(&host, tls.is_some())?;
+    let frontends_dir = a
+        .frontends_dir
+        .clone()
+        .or_else(|| toml_cfg.as_ref().and_then(|t| t.server.frontends_dir.clone()));
+
+    // token：env 優先，其次 operoid.toml [server].token，否則設定檔 server_token（服務模式路徑）。
     let token = std::env::var("OSERVER_TOKEN")
         .ok()
         .filter(|t| !t.trim().is_empty())
+        .or_else(|| {
+            toml_cfg
+                .as_ref()
+                .and_then(|t| t.server.token.clone())
+                .filter(|t| !t.trim().is_empty())
+        })
         .or_else(|| cfg.server_token.clone().filter(|t| !t.trim().is_empty()));
     let Some(token) = token else {
         anyhow::bail!(
-            "無 token——設 OSERVER_TOKEN env，或 app-settings.json 需有 server_token（GUI 首次啟動會生成）"
+            "無 token——設 OSERVER_TOKEN env、operoid.toml [server].token，或 app-settings.json 需有 server_token（GUI 首次啟動會生成）"
         );
     };
     let db_path = agent_db_path_in(&dirs.db_dir);
 
-    // ── bind-first（單例守衛）──
-    let addr = format!("127.0.0.1:{}", a.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| anyhow::anyhow!("bind {addr} 失敗（已有 oserver 實例？）：{e}"))?;
-    eprintln!("[oserver] 監聽 http://{addr}（healthz: /healthz）");
+    // ── bind-first（單例守衛）：bind 先行（失敗明確退出）→ serve 隨後。
+    // HTTPS：std listener 先 bind（守住單例語意）→ axum-server from_tcp_rustls；HTTP 走既有 axum::serve。
+    enum Bound {
+        Http(tokio::net::TcpListener),
+        Https(axum_server::Server<axum_server::tls_rustls::RustlsAcceptor>),
+    }
+    let addr = format!("{host}:{port}");
+    let bound = if let Some((cert, key)) = &tls {
+        let rc = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
+            .await
+            .map_err(|e| anyhow::anyhow!("TLS 憑證載入失敗（cert={cert}, key={key}）：{e}"))?;
+        let std_listener = std::net::TcpListener::bind(&addr)
+            .map_err(|e| anyhow::anyhow!("bind {addr} 失敗（已有 oserver 實例？）：{e}"))?;
+        Bound::Https(axum_server::tls_rustls::from_tcp_rustls(std_listener, rc))
+    } else {
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("bind {addr} 失敗（已有 oserver 實例？）：{e}"))?;
+        Bound::Http(listener)
+    };
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    eprintln!("[oserver] 監聽 {scheme}://{addr}（healthz: /healthz）");
 
     // AppState（寫入面喚醒＋scheduler 共用；CfgLoader 每次呼叫重讀設定檔——熱生效）。
     let (wake_tx, wake_rx) = tokio::sync::mpsc::channel(64);
@@ -242,7 +334,13 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     }
 
     let dir_for_loader = dirs.settings_dir.clone();
-    let load_cfg: scheduler::CfgLoader = Arc::new(move || Ok(config::load_config(&dir_for_loader)));
+    // CfgLoader（scheduler 熱重載）：app-settings.json＋operoid.toml 同一批重讀——
+    // [llm] env／[gbrain]／[ingress] 熱生效（host/port/tls/frontends 屬啟動期，改檔須重啟）。
+    // operoid.toml 此刻已通過啟動期解析；運行中被人改壞 → Err（scheduler 跳過該輪，不 crash）。
+    let load_cfg: scheduler::CfgLoader = Arc::new(move || {
+        let t = operoid_toml::load(&dir_for_loader)?;
+        config::load_effective(&dir_for_loader, t.as_ref())
+    });
     scheduler::spawn_loop(app_state, load_cfg, db_path.clone(), wake_rx, event_rx);
     eprintln!("[oserver] scheduler 已啟動（30s tick＋事件/訊息喚醒）");
     ready.store(true, Ordering::SeqCst);
@@ -251,12 +349,81 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     let app = routes::router(Arc::clone(&state))
         .merge(writes::write_routes().with_state(Arc::clone(&state)))
         .merge(knowledge_admin::knowledge_admin_routes().with_state(Arc::clone(&state)))
-        .merge(gbrain::gbrain_routes().with_state(state));
+        .merge(accounts::account_routes().with_state(Arc::clone(&state)))
+        .merge(sse::sse_routes().with_state(Arc::clone(&state)))
+        .merge(gbrain::gbrain_routes().with_state(Arc::clone(&state)));
+    let app = mount_frontends(app, frontends_dir.as_deref());
+    // R2（DR-E4）：RBAC 中介層掛最外層——authn → must_change_password 閘 → 矩陣裁定（403）。
+    // OPTIONS preflight 與公開路徑（healthz／登入／靜態頁）直接放行。
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&state),
+        rbac::rbac_middleware,
+    ));
 
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_wait());
-    server.await?;
+    match bound {
+        Bound::Http(listener) => {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_wait())
+                .await?;
+        }
+        Bound::Https(server) => {
+            // axum-server 0.7 的關機是 Handle 式：等 shutdown_wait()（Ctrl+C／SERVICE_STOP
+            // → busy 清空）後觸發 graceful——停 accept、等在途連線結束。
+            let handle = axum_server::Handle::new();
+            tokio::spawn({
+                let h = handle.clone();
+                async move {
+                    shutdown_wait().await;
+                    h.graceful_shutdown(None);
+                }
+            });
+            server.handle(handle).serve(app.into_make_service()).await?;
+        }
+    }
     eprintln!("[oserver] 已退出");
     Ok(())
+}
+
+/// 遠端化 R1（DR-E2）：企業模式靜態檔服務——frontends_dir 內 admin/manager/user
+/// 子目錄各掛 `/{app}`（SPA fallback index.html）；`/` 為入口頁。個人模式不啟用。
+fn mount_frontends(app: axum::Router, dir: Option<&str>) -> axum::Router {
+    use tower_http::services::{ServeDir, ServeFile};
+    let Some(dir) = dir else { return app };
+    let root = std::path::PathBuf::from(dir);
+    let mut app = app;
+    for name in ["admin", "manager", "user"] {
+        let sub = root.join(name);
+        if sub.is_dir() {
+            let index = sub.join("index.html");
+            app = app.nest_service(
+                &format!("/{name}"),
+                ServeDir::new(&sub).fallback(ServeFile::new(&index)),
+            );
+            eprintln!("[oserver] 前端「{name}」→ {}（/{name}）", sub.display());
+        } else {
+            eprintln!("[oserver] 警告：前端目錄不存在——{}", sub.display());
+        }
+    }
+    app.route("/", axum::routing::get(frontends_landing))
+}
+
+/// 三前端入口頁（/）：只做導航，不做認證判斷（各 app 自帶登入頁）。
+async fn frontends_landing() -> axum::response::Html<&'static str> {
+    axum::response::Html(
+        r#"<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Operoid</title>
+<style>body{font-family:system-ui,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;background:#f6f7f9}
+main{display:flex;gap:1.5rem}a{display:block;width:11rem;padding:2rem 1.5rem;background:#fff;border:1px solid #e2e5ea;border-radius:.75rem;
+text-decoration:none;color:#1a1d23;font-size:1.05rem;font-weight:600;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+a:hover{border-color:#7c8cf8;color:#4f5ef0}small{display:block;margin-top:.5rem;font-weight:400;color:#8a8f99;font-size:.8rem}</style></head>
+<body><main>
+<a href="/admin">系統管理介面<small>admin</small></a>
+<a href="/manager">經理人儀表板<small>manager</small></a>
+<a href="/user">一般使用者介面<small>user</small></a>
+</main></body></html>"#,
+    )
 }
 
 /// 關機觸發：Ctrl+C **或** 服務模式的 SERVICE_STOP（SCM Stop 設）。

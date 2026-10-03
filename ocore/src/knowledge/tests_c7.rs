@@ -168,6 +168,7 @@ fn c7b_attrs_enrichment() {
         archived: false,
         tools: None,
         created_at: "2026-10-02T00:00:00Z".into(),
+        owner_principal: None,
     };
 
     // bob 有 attrs 列 → 富集；carol 無列 → M1 行為（空屬性）。
@@ -184,6 +185,10 @@ fn c7b_attrs_enrichment() {
                 clearance: None,
             },
             token_hash: None,
+            disabled: false,
+            login_name: None,
+            must_change_password: false,
+            password_hash: None,
         })
         .unwrap();
     let bob = access_context_for_employee_enriched(&store, &mk_emp("bob"), None, None).unwrap();

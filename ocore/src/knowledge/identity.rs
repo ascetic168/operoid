@@ -1,18 +1,21 @@
-//! 身份基礎建設（M1-WP-C4）——Principal 的兩個**唯一**構造入口（I4／D6）。
+//! 身份基礎建設（M1-WP-C4 → R2 遠端化擴充）——Principal 的兩個**唯一**構造入口（I4／D6）。
 //!
 //! 1. **operator**：bootstrap human principal（對應共用 Bearer token 的單人版；
 //!    於 store 冪等建立，見 [`ensure_operator_principal`]）。
 //! 2. **ai_employee**：由 `Employee` **讀時推導**（不儲存——Q6 裁決，無同步問題）。
 //!
 //! `AccessContext` 只能經本模組或 bootstrap 產生；**不存在**「呼叫端字串自稱
-//! principal」的 API 路徑（Test 8 的結構性保證）。部門/角色屬性 M1 恆空——
-//! 屬性條件與正規化屬 WP-C7+。
+//! principal」的 API 路徑（Test 8 的結構性保證）。
+//! R2（遠端化）：CSPRNG token 生命週期（多 token／TTL／逐 token 撤銷）＋
+//! 帳號密碼（Argon2id、登入名、停用、首次登入強改）——C12b 最小版（DR-E3）。
 
 use anyhow::Result;
 
-use super::types::{AccessContext, Principal, PrincipalAttrs, PrincipalType, SecurityLevel};
-use crate::domain::models::Employee;
+use super::types::{
+    AccessContext, Principal, PrincipalAttrs, PrincipalToken, PrincipalType, SecurityLevel,
+};
 use crate::domain::store::Store;
+use crate::domain::models::Employee;
 
 /// bootstrap human principal 的固定 id。
 pub const OPERATOR_PRINCIPAL_ID: &str = "principal-operator";
@@ -32,6 +35,10 @@ pub fn operator_principal() -> Principal {
             clearance: Some(SecurityLevel::Secret),
         },
         token_hash: None,
+        login_name: None,
+        password_hash: None,
+        disabled: false,
+        must_change_password: false,
     }
 }
 
@@ -59,70 +66,318 @@ pub fn create_principal(store: &dyn Store, principal: Principal) -> Result<()> {
     Ok(())
 }
 
-/// C12a：簽發 principal 的 API token（明文**只在此回傳一次**；存 SHA-256；Rule 8 留痕）。
-/// 輪替＝對同一 principal 重簽（舊 token 立即失效——hash 被覆寫）。
-pub fn issue_principal_token(store: &dyn Store, principal_id: &str) -> Result<String> {
-    let mut p = store
-        .get_principal(principal_id)?
-        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
-    let token = format!(
-        "okt-{}-{}",
-        principal_id.trim_start_matches("ai:").trim_start_matches("principal-"),
-        uuid_like(),
-    );
-    p.token_hash = Some(hash_token(&token));
-    store.put_principal(&p)?;
+// ── R2（遠端化）：CSPRNG、帳號密碼、token 生命週期（C12b 最小版，DR-E3）──
+
+/// 密碼長度下限（密碼政策）。
+pub const MIN_PASSWORD_LEN: usize = 12;
+
+/// CSPRNG → hex（遠端化缺口 8：取代 M1「時間＋pid」務實取捨——token 可預測性）。
+fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    getrandom::getrandom(&mut buf).expect("OS 熵源不可用");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Argon2id PHC 字串（明文永不落 store）。
+pub fn hash_password(password: &str) -> Result<String> {
+    use argon2::password_hash::SaltString;
+    use argon2::{Argon2, PasswordHasher};
+    // 鹽：自家 CSPRNG 16 bytes → b64（不依賴 argon2 的 rand feature）。
+    let mut salt_bytes = [0u8; 16];
+    getrandom::getrandom(&mut salt_bytes).expect("OS 熵源不可用");
+    let salt = SaltString::encode_b64(&salt_bytes).map_err(|e| anyhow::anyhow!("salt: {e}"))?;
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| anyhow::anyhow!("argon2 hash: {e}"))
+}
+
+/// 驗證密碼（對 PHC 字串）；PHC 格式壞 → false（fail closed）。
+pub fn verify_password(password: &str, phc: &str) -> bool {
+    use argon2::{Argon2, PasswordHash, PasswordVerifier};
+    match PasswordHash::new(phc) {
+        Ok(h) => Argon2::default()
+            .verify_password(password.as_bytes(), &h)
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// 密碼政策（R2：長度下限；複雜度規則隨 C12b 完整版）。
+pub fn validate_password(password: &str) -> Result<()> {
+    if password.chars().count() < MIN_PASSWORD_LEN {
+        anyhow::bail!("密碼長度不足：至少 {MIN_PASSWORD_LEN} 碼");
+    }
+    Ok(())
+}
+
+/// 產生 token 明文——`okt2-` 前綴＝CSPRNG 新制（舊制 `okt-` 已退役，一律重簽）。
+fn mint_token_plain(principal_id: &str) -> String {
+    let name = principal_id
+        .trim_start_matches("ai:")
+        .trim_start_matches("principal-");
+    format!("okt2-{name}-{}", random_hex(32))
+}
+
+/// 簽發 principal token（R2 版）：**不覆蓋既有 token**（一 principal 多 token＝
+/// 裝置／session 粒度），可帶 TTL（人類會話短 TTL；None＝長期服務 token）與標籤。
+/// 明文**只在此回傳一次**；稽核留痕（Rule 8）。
+pub fn issue_principal_token_v2(
+    store: &dyn Store,
+    principal_id: &str,
+    ttl_secs: Option<i64>,
+    label: Option<&str>,
+) -> Result<(String, PrincipalToken)> {
+    if store.get_principal(principal_id)?.is_none() {
+        anyhow::bail!("principal 不存在：{principal_id}");
+    }
+    let plain = mint_token_plain(principal_id);
+    let token = PrincipalToken {
+        id: format!("tok-{}", random_hex(8)),
+        principal_id: principal_id.to_string(),
+        token_hash: hash_token(&plain),
+        created_at: crate::domain::now_rfc3339(),
+        expires_at: ttl_secs
+            .map(|s| (chrono::Utc::now() + chrono::Duration::seconds(s)).to_rfc3339()),
+        last_used_at: None,
+        label: label.map(|l| l.to_string()),
+    };
+    store.put_token(&token)?;
     crate::runtime::record_event(
         store,
         crate::runtime::AGENT_WS,
         "knowledge",
         "principal_token_issued",
-        principal_id,
+        &format!("{principal_id}/{}", token.id),
     );
-    Ok(token)
+    Ok((plain, token))
 }
 
-/// C12a：撤銷 principal 的 API token（即時失效；Rule 8 留痕）。冪等。
-pub fn revoke_principal_token(store: &dyn Store, principal_id: &str) -> Result<()> {
-    let mut p = match store.get_principal(principal_id)? {
-        Some(p) => p,
-        None => return Ok(()),
+/// authn 查找：明文 → (token 記錄, principal)。過期／principal 停用 → None（401 語意）。
+pub fn find_valid_token(
+    store: &dyn Store,
+    plain: &str,
+) -> Result<Option<(PrincipalToken, Principal)>> {
+    let Some(tok) = store.get_token_by_hash(&hash_token(plain))? else {
+        return Ok(None);
     };
-    if p.token_hash.is_none() {
+    if let Some(exp) = &tok.expires_at {
+        let expired = chrono::DateTime::parse_from_rfc3339(exp)
+            .map(|d| d <= chrono::Utc::now())
+            .unwrap_or(true); // 壞時間戳＝fail closed
+        if expired {
+            return Ok(None);
+        }
+    }
+    let Some(p) = store.get_principal(&tok.principal_id)? else {
+        return Ok(None);
+    };
+    if p.disabled {
+        return Ok(None);
+    }
+    Ok(Some((tok, p)))
+}
+
+/// last_used 節流更新（60s 內不重寫——請求路徑寫入放大防護）。
+pub fn touch_token_last_used(store: &dyn Store, token: &PrincipalToken) -> Result<()> {
+    let due = token
+        .last_used_at
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| {
+            chrono::Utc::now().signed_duration_since(d) > chrono::Duration::seconds(60)
+        })
+        .unwrap_or(true);
+    if !due {
         return Ok(());
     }
-    p.token_hash = None;
+    let mut t = token.clone();
+    t.last_used_at = Some(crate::domain::now_rfc3339());
+    store.put_token(&t)
+}
+
+/// 逐 token 撤銷（冪等）。稽核留痕。
+pub fn revoke_token_by_id(store: &dyn Store, token_id: &str) -> Result<bool> {
+    let removed = store.delete_token(token_id)?;
+    if removed {
+        crate::runtime::record_event(
+            store,
+            crate::runtime::AGENT_WS,
+            "knowledge",
+            "principal_token_revoked",
+            token_id,
+        );
+    }
+    Ok(removed)
+}
+
+/// 撤銷某 principal 全部 token（停用帳號／admin 重設密碼）。稽核留痕。
+pub fn revoke_all_tokens(store: &dyn Store, principal_id: &str) -> Result<usize> {
+    let n = store.delete_tokens_for_principal(principal_id)?;
+    if n > 0 {
+        crate::runtime::record_event(
+            store,
+            crate::runtime::AGENT_WS,
+            "knowledge",
+            "principal_tokens_revoked_all",
+            &format!("{principal_id}/{n}"),
+        );
+    }
+    Ok(n)
+}
+
+// ── 帳號（C12b 最小版：本機帳號密碼登入）──
+
+/// 建人類帳號的規格（oserver 帳號管理 API 的輸入）。
+pub struct AccountSpec {
+    pub id: String,
+    pub login_name: String,
+    pub display_name: String,
+    pub roles: Vec<String>,
+    /// None → 自動產生臨時密碼（明文隨回傳值**僅出現一次**）。
+    pub temp_password: Option<String>,
+}
+
+/// 建人類帳號：登入名唯一、Argon2id、`must_change_password=true`（稽核留痕）。
+/// 回傳 (Principal, 臨時密碼明文)。
+pub fn create_account(store: &dyn Store, spec: AccountSpec) -> Result<(Principal, String)> {
+    if spec.id.is_empty() || spec.login_name.is_empty() {
+        anyhow::bail!("id 與 login_name 不可空");
+    }
+    if store.get_principal(&spec.id)?.is_some() {
+        anyhow::bail!("principal 已存在：{}", spec.id);
+    }
+    if store
+        .list_principals()?
+        .iter()
+        .any(|p| p.login_name.as_deref() == Some(spec.login_name.as_str()))
+    {
+        anyhow::bail!("login_name 已存在：{}", spec.login_name);
+    }
+    let temp = match spec.temp_password {
+        Some(p) => {
+            validate_password(&p)?;
+            p
+        }
+        None => random_hex(8), // 16 hex 臨時密碼（≥12 碼）
+    };
+    let p = Principal {
+        id: spec.id.clone(),
+        principal_type: PrincipalType::Human,
+        employee_id: None,
+        display_name: spec.display_name,
+        attrs: PrincipalAttrs {
+            roles: spec.roles.clone(),
+            departments: vec![],
+            projects: vec![],
+            clearance: None,
+        },
+        token_hash: None,
+        login_name: Some(spec.login_name.clone()),
+        password_hash: Some(hash_password(&temp)?),
+        disabled: false,
+        must_change_password: true,
+    };
+    create_principal(store, p.clone())?; // 既有入口（稽核 principal_created）
+    Ok((p, temp))
+}
+
+/// 帳密驗證（登入用）。失敗回傳原因代碼（no_such_account／disabled／no_password／
+/// bad_credentials）——鎖定計數在 oserver 層（ocore 保持無狀態）。
+pub fn verify_login(store: &dyn Store, login_name: &str, password: &str) -> Result<Principal> {
+    let p = store
+        .list_principals()?
+        .into_iter()
+        .find(|p| p.login_name.as_deref() == Some(login_name))
+        .ok_or_else(|| anyhow::anyhow!("no_such_account"))?;
+    if p.disabled {
+        anyhow::bail!("disabled");
+    }
+    let Some(hash) = &p.password_hash else {
+        anyhow::bail!("no_password");
+    };
+    if !verify_password(password, hash) {
+        anyhow::bail!("bad_credentials");
+    }
+    Ok(p)
+}
+
+/// 改自身密碼（驗舊密碼；清 must_change_password）。稽核留痕。
+pub fn change_password(store: &dyn Store, principal_id: &str, old: &str, new: &str) -> Result<()> {
+    validate_password(new)?;
+    let mut p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    let Some(hash) = &p.password_hash else {
+        anyhow::bail!("no_password");
+    };
+    if !verify_password(old, hash) {
+        anyhow::bail!("bad_credentials");
+    }
+    p.password_hash = Some(hash_password(new)?);
+    p.must_change_password = false;
     store.put_principal(&p)?;
     crate::runtime::record_event(
         store,
         crate::runtime::AGENT_WS,
         "knowledge",
-        "principal_token_revoked",
+        "principal_password_changed",
         principal_id,
     );
     Ok(())
 }
 
-/// C12a：以 token 雜湊查找 principal（authn 用；明文比對永不出現在 store）。
-pub fn find_principal_by_token(store: &dyn Store, token: &str) -> Result<Option<Principal>> {
-    let hash = hash_token(token);
-    Ok(store
-        .list_principals()?
-        .into_iter()
-        .find(|p| p.token_hash.as_deref() == Some(hash.as_str())))
+/// admin 重設密碼：設臨時密碼＋must_change_password=true＋撤銷全部 token。稽核留痕。
+pub fn admin_reset_password(store: &dyn Store, principal_id: &str, new: &str) -> Result<()> {
+    validate_password(new)?;
+    let mut p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    p.password_hash = Some(hash_password(new)?);
+    p.must_change_password = true;
+    store.put_principal(&p)?;
+    revoke_all_tokens(store, principal_id)?;
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        "principal_password_reset",
+        principal_id,
+    );
+    Ok(())
 }
 
-/// 32 hex（token 尾段）：時間＋pid＋進程內計數器經 SHA-256——本機服務的務實取捨；
-/// C12b（IdP）改 CSPRNG。
-fn uuid_like() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    use sha2::{Digest, Sha256};
-    let mut h = Sha256::new();
-    h.update(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos().to_le_bytes());
-    h.update(std::process::id().to_le_bytes());
-    h.update(SEQ.fetch_add(1, Ordering::Relaxed).to_le_bytes());
-    format!("{:x}", h.finalize())
+/// 停用／啟用帳號：停用即撤銷全部 token（登入與既有 session 立即失效）。稽核留痕。
+pub fn set_account_disabled(store: &dyn Store, principal_id: &str, disabled: bool) -> Result<()> {
+    let mut p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    p.disabled = disabled;
+    store.put_principal(&p)?;
+    if disabled {
+        revoke_all_tokens(store, principal_id)?;
+    }
+    crate::runtime::record_event(
+        store,
+        crate::runtime::AGENT_WS,
+        "knowledge",
+        if disabled {
+            "principal_disabled"
+        } else {
+            "principal_enabled"
+        },
+        principal_id,
+    );
+    Ok(())
+}
+
+/// admin 設定角色（僅 roles，其餘 attrs 不動——複用 set_principal_attrs 留痕）。
+pub fn set_account_roles(store: &dyn Store, principal_id: &str, roles: Vec<String>) -> Result<()> {
+    let mut p = store
+        .get_principal(principal_id)?
+        .ok_or_else(|| anyhow::anyhow!("principal 不存在：{principal_id}"))?;
+    p.attrs.roles = roles;
+    set_principal_attrs(store, principal_id, p.attrs)
 }
 
 /// 於 store 冪等確保 operator principal 存在（oserver 啟動與殼層初始化呼叫）。
@@ -187,6 +442,10 @@ pub fn principal_for_employee(emp: &Employee) -> Principal {
         display_name: emp.name.clone(),
         attrs: Default::default(),
         token_hash: None,
+        login_name: None,
+        password_hash: None,
+        disabled: false,
+        must_change_password: false,
     }
 }
 
@@ -316,6 +575,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "2026-10-02T00:00:00Z".into(),
+            owner_principal: None,
         }
     }
 

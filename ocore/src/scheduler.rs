@@ -518,6 +518,7 @@ mod tests {
             archived,
             tools: None,
             created_at: "t".into(),
+            owner_principal: None,
         }
     }
 

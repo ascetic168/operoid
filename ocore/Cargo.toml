@@ -23,6 +23,9 @@ csv = "1"
 serde_yaml = "0.9"
 regex = "1"
 sha2 = "0.10"
+# R2（遠端化）：CSPRNG token 生成＋帳號密碼雜湊（C12b 最小版）。
+getrandom = "0.2"
+argon2 = "0.5"
 rmcp = { version = "3", features = ["client", "transport-child-process"] }
 
 [dev-dependencies]

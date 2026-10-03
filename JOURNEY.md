@@ -311,7 +311,7 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 ## 延後
 
 - **D3 — GUI 演進策略：⏸ 刻意延後，做到 Phase 1+ 再想。** 目前唯一共識：「feature flag 隔離、先不動既有 GBrain 頁面」；新頁面何時上線，等 Phase 1 有東西可展示再決定。
-- **D6 — GUI 與 oserver 跨機器分離部署：⏸ 延後（2026-08-22 記錄）。** v0.3.0 刻意限定 oserver 僅本機（bind 127.0.0.1、前端寫死 127.0.0.1、token 明文本機假設）。未來跨機器時有四個必改點，**含最易漏的 CSP connect-src**（2026-08-22 NSIS 安裝版事件：CSP 只在打包版生效、dev 不套用——dev 正常、安裝版待辦全空）。完整清單見待處理清單 E14；屆時以專檔計畫展開。
+- **D6 — GUI 與 oserver 跨機器分離部署：🧭 規劃完成（2026-10-03，專檔 `docs/Operoid-計畫-遠端化.md`）。** 2026-08-22 延後至今，因 Horizon 遠端化觸發條件成立（Enterprise C′ 收官＋三角色多前端需求）而啟動：DR-E1–E9 定案（Web 三角色前端／C12b 最小版登入／端點級 RBAC／rustls TLS／operoid.toml 復活／SSE／GBrain stdio 維持）、權限矩陣、八階段 R1–R8；個人模式零破壞並存。——原 2026-08-22 記錄：v0.3.0 刻意限定 oserver 僅本機（bind 127.0.0.1、前端寫死 127.0.0.1、token 明文本機假設），四個必改點**含最易漏的 CSP connect-src**（NSIS 安裝版事件）。完整清單見待處理清單 E14。
 
 ## 已定案（2026-08-18）
 

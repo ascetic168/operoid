@@ -18,6 +18,8 @@ pub enum PrincipalType {
 /// Principal——「這是誰」。M1 的兩個實體來源：`principal-operator`（bootstrap human）
 /// 與 `ai:{employee_id}`（由 Employee 推導，讀時構造、不儲存——Q6）。
 /// C7：`attrs` 為管理員可賦的授權屬性（疊加進 AccessContext；JSON blob 零遷移）。
+/// R2（遠端化，C12b 最小版）：帳號密碼欄位（login_name/password_hash/disabled/
+/// must_change_password）與 token 生命週期（見 [`PrincipalToken`]）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Principal {
     pub id: String,
@@ -28,9 +30,44 @@ pub struct Principal {
     pub display_name: String,
     #[serde(default)]
     pub attrs: PrincipalAttrs,
-    /// C12a（D-C12a-1）：API token 的 SHA-256 hex（明文只在簽發時回傳一次）。
+    /// C12a 舊制：單一 token 的 SHA-256 hex。**R2 起不再使用**（改 `principal_tokens`
+    /// 表——一 principal 多 token）；欄位保留作舊 JSON 相容，舊 token 一律重簽。
     #[serde(default)]
     pub token_hash: Option<String>,
+    /// R2：帳號密碼登入名（唯一）；None＝非帳號身份（operator／ai_employee）。
+    #[serde(default)]
+    pub login_name: Option<String>,
+    /// R2：Argon2id PHC 字串（明文永不落 store）；None＝未設密碼（不可密碼登入）。
+    #[serde(default)]
+    pub password_hash: Option<String>,
+    /// R2：停用旗標——停用即登入被拒＋全部 token 撤銷（稽核留痕）。
+    #[serde(default)]
+    pub disabled: bool,
+    /// R2：臨時密碼旗標——true 時除改密碼／登出外，全部 API 回 403 auth.mustChangePassword。
+    #[serde(default)]
+    pub must_change_password: bool,
+}
+
+/// R2（遠端化缺口 8）：principal 的 API token 記錄——**一 principal 多 token**
+/// （裝置／session 粒度）、可到期（TTL）、可逐 token 撤銷。明文只在簽發時回傳一次。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrincipalToken {
+    /// "tok-<16hex>"。
+    pub id: String,
+    pub principal_id: String,
+    /// SHA-256 hex（C12a 沿用；明文比對永不出現在 store）。
+    pub token_hash: String,
+    /// RFC3339。
+    pub created_at: String,
+    /// RFC3339；None＝不過期（服務間長期 token）。
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// RFC3339；authn 時節流更新（60s 內不重寫）。
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+    /// 裝置／session 標記（如 "web-admin"、"obridge"）。
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 /// Principal 的授權屬性（C7b）——policy 的 principal 側條件（departments/projects）

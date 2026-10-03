@@ -413,6 +413,7 @@ fn m1_t8_impersonation() {
         archived: false,
         tools: None,
         created_at: "2026-10-02T00:00:00Z".into(),
+        owner_principal: None,
     };
     let ctx = access_context_for_employee(&emp, None, None);
     assert_eq!(ctx.principal_id, "ai:mallory");
@@ -527,6 +528,10 @@ fn c13_clearance_ceiling_and_grants() {
             display_name: "Bob".into(),
             attrs: Default::default(),
             token_hash: None,
+            disabled: false,
+            login_name: None,
+            must_change_password: false,
+            password_hash: None,
         })
         .unwrap();
     crate::knowledge::identity::set_principal_attrs(
@@ -553,6 +558,7 @@ fn c13_clearance_ceiling_and_grants() {
             archived: false,
             tools: None,
             created_at: "2026-10-02T00:00:00Z".into(),
+            owner_principal: None,
         },
         None,
         None,

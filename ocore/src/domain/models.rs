@@ -105,6 +105,10 @@ pub struct Employee {
     #[serde(default)]
     pub tools: Option<Vec<String>>,
     pub created_at: Timestamp,
+    /// R2（遠端化）：部署者 principal（歸屬標記——「限自身」過濾的資料源）。
+    /// None＝operator 歸屬（既有員工／AI 招募）；使用者 deploy 時記錄部署者。
+    #[serde(default)]
+    pub owner_principal: Option<String>,
 }
 
 /// Employee 運行狀態（Ch.04 §5.1）。Sleep 為預設休息態。
@@ -414,6 +418,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "t".into(),
+            owner_principal: None,
         };
         let v = serde_json::to_value(&emp).unwrap();
         let back: Employee = serde_json::from_value(v).unwrap();

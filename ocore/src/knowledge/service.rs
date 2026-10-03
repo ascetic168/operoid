@@ -419,6 +419,7 @@ mod tests {
             archived: false,
             tools: None,
             created_at: "2026-10-02T00:00:00Z".into(),
+            owner_principal: None,
         }
     }
 }
