@@ -18,7 +18,7 @@
     "locked": "Too many attempts — try again later",
     "forbidden": "This account cannot use this console",
     "mustChange": "Set a new password on first login",
-    "newPassword": "New password (min 12 chars)",
+    "newPassword": "New password (min 8 chars)",
     "changeSubmit": "Set password and continue",
     "changed": "Password updated"
   },
@@ -50,6 +50,7 @@
     "home": "Overview",
     "accounts": "Accounts",
     "knowledge": "Knowledge authz",
+    "templates": "Employee templates",
     "brains": "Brains & prereq"
   },
   "accounts": {
@@ -67,7 +68,7 @@
     "disable": "Disable",
     "enable": "Enable",
     "save": "Save",
-    "newTempPw": "New temporary password (≥12 chars)",
+    "newTempPw": "New temporary password (≥8 chars)",
     "resetSubmit": "Reset & revoke tokens",
     "resetDone": "Password reset for {id} (tokens revoked, change required at login)"
   },
@@ -99,5 +100,25 @@
     "heading": "Brains",
     "none": "No brains registered",
     "prereq": "Prerequisites"
+  },
+  "templates": {
+    "heading": "Employee templates",
+    "createHeading": "Create a template",
+    "name": "Name",
+    "brain": "Brain (knowledge source on deploy)",
+    "activeBrain": "Active brain (empty = default)",
+    "role": "Role (optional)",
+    "tools": "Tool allowlist (comma-separated, empty = default set)",
+    "create": "Create",
+    "created": "Template created",
+    "list": "Current templates",
+    "none": "No templates yet — create one, then deploy AI employees from the user console",
+    "rename": "Rename",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deleteConfirm": "Delete template \"{name}\"? Deployed employees are not affected.",
+    "renamed": "Template renamed",
+    "deleted": "Template deleted"
   }
 }

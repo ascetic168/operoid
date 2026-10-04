@@ -20,6 +20,12 @@ export const router = createRouter({
       meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
     },
     {
+      path: '/ask',
+      name: 'ask',
+      component: () => import('./views/KnowledgeAskView.vue'),
+      meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
+    },
+    {
       path: '/events',
       name: 'events',
       component: () => import('./views/EventsView.vue'),

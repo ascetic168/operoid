@@ -41,6 +41,7 @@ watch(
       <router-link to="/">{{ t('nav.home') }}</router-link>
       <router-link to="/accounts">{{ t('nav.accounts') }}</router-link>
       <router-link to="/knowledge">{{ t('nav.knowledge') }}</router-link>
+      <router-link to="/templates">{{ t('nav.templates') }}</router-link>
       <router-link to="/brains">{{ t('nav.brains') }}</router-link>
     </nav>
     <main class="main">

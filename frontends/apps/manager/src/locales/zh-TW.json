@@ -7,7 +7,19 @@
     }
   },
   "login": {
-    "offline": "無法連上伺服器"
+    "offline": "無法連上伺服器——請確認服務已啟動",
+    "heading": "登入 Operoid",
+    "server": "伺服器位址（可省略＝同源）",
+    "account": "帳號",
+    "password": "密碼",
+    "submit": "登入",
+    "submitting": "登入中…",
+    "invalid": "帳號或密碼錯誤",
+    "locked": "嘗試次數過多，請稍後再試",
+    "forbidden": "此帳號無權使用本介面",
+    "mustChange": "首次登入請設定新密碼",
+    "newPassword": "新密碼（至少 8 碼）",
+    "changeSubmit": "設定新密碼並繼續"
   },
   "home": {
     "welcome": "連線正常",
@@ -28,6 +40,7 @@
     "dashboard": "營運儀表板",
     "inbox": "收件匣",
     "grants": "知識治理",
+    "operations": "營運主控台",
     "events": "事件流"
   },
   "dash": {
@@ -57,5 +70,34 @@
   },
   "events": {
     "empty": "目前沒有事件"
+  },
+  "operations": {
+    "title": "營運主控台",
+    "desc": "直接對知識腦下查詢與維運操作；ask／query／think 依登入者的知識範圍過濾。",
+    "askPlaceholder": "輸入查詢（Enter=think）…",
+    "slugPlaceholder": "dir/slug",
+    "output": "輸出",
+    "clear": "清除",
+    "empty": "尚無輸出——點上方操作開始。",
+    "stepOp": "{op} 執行中…",
+    "done": "完成 ✓",
+    "failed": "失敗 ✗",
+    "dropped": "⚠ 輸出超過行數上限，部分內容被捨棄。",
+    "timeout": "等待逾時——操作仍在伺服器執行，請稍後由事件流確認。",
+    "ops": {
+      "statsDesc": "腦統計（頁數／連結／來源）",
+      "syncDesc": "同步筆記 repo（git sync）",
+      "extractDesc": "萃取待處理筆記",
+      "askDesc": "對腦問答（知識範圍過濾）",
+      "queryDesc": "檢索查詢（知識範圍過濾）",
+      "thinkDesc": "推理思考（知識範圍過濾）"
+    },
+    "diag": {
+      "doctorDesc": "腦健康檢查",
+      "orphansDesc": "孤兒頁掃描",
+      "storageDesc": "儲存用量",
+      "graphQueryDesc": "圖譜查詢（dir/slug）",
+      "unifyTypesDesc": "型別統一"
+    }
   }
 }

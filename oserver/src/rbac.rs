@@ -73,6 +73,10 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("POST", Some("/api/employees/{id}/messages"))
         | ("DELETE", Some("/api/employees/{id}/messages")) => Req::User,
 
+        // 使用者級知識檢索（C12a：身份出自 token 鏈，policy 依序過濾——僅 ask/query/think；
+        // 維運／診斷 ops 留在 Req::Manager 的 /api/operations）
+        ("POST", Some("/api/knowledge/ask")) => Req::User,
+
         // 高階經理人（營運視圖＋治理動作；承諾核可「限自身」由 handler 細化）
         ("GET", Some("/api/registry"))
         | ("POST", Some("/api/operations"))

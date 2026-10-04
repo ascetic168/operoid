@@ -69,7 +69,7 @@ pub fn create_principal(store: &dyn Store, principal: Principal) -> Result<()> {
 // ── R2（遠端化）：CSPRNG、帳號密碼、token 生命週期（C12b 最小版，DR-E3）──
 
 /// 密碼長度下限（密碼政策）。
-pub const MIN_PASSWORD_LEN: usize = 12;
+pub const MIN_PASSWORD_LEN: usize = 8;
 
 /// CSPRNG → hex（遠端化缺口 8：取代 M1「時間＋pid」務實取捨——token 可預測性）。
 fn random_hex(bytes: usize) -> String {
@@ -259,7 +259,7 @@ pub fn create_account(store: &dyn Store, spec: AccountSpec) -> Result<(Principal
             validate_password(&p)?;
             p
         }
-        None => random_hex(8), // 16 hex 臨時密碼（≥12 碼）
+        None => random_hex(8), // 16 hex 臨時密碼（≥8 碼）
     };
     let p = Principal {
         id: spec.id.clone(),

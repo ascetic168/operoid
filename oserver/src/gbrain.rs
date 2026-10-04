@@ -56,6 +56,8 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         // 長跑操作
         .route("/api/operations", post(api_op_run))
         .route("/api/operations/{id}", get(api_op_snapshot))
+        // 使用者級知識檢索（Req::User；僅 ask/query/think——同步回應，不進 op registry）
+        .route("/api/knowledge/ask", post(api_knowledge_ask))
         // 工廠
         .route("/api/factories/types", get(api_factory_types))
         .route("/api/factories/run", post(api_factory_run))
@@ -824,6 +826,117 @@ async fn api_op_snapshot(
             Json(json!({"code": "server.opNotFound", "params": {"id": id}})),
         )
             .into_response(),
+    }
+}
+
+/// 使用者級知識檢索（Req::User；C12a）：**僅** ask／query／think，同步回應（不進
+/// op registry——registry id 為流水號，輪詢面不開給 user）。檢索與 manager 面同一
+/// KnowledgeService 路徑：身份出自 token 鏈（I4：source 集合只由 policy 推導）、
+/// I1 檢索前授權＋I2 fail-closed、一律留 receipt；`ops_retrieval_enabled=false` 時
+/// 一併停用。維運／診斷 ops 不在此端點——manager 面 `/api/operations`。
+#[derive(serde::Deserialize)]
+struct KnowledgeAskBody {
+    op: String,
+    arg: String,
+}
+
+async fn api_knowledge_ask(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    body: Json<KnowledgeAskBody>,
+) -> Response {
+    let Some(requestor) = require_identity(&state, &headers, None).map(|i| i.name) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
+    };
+    let b = body.0;
+    let kind = match b.op.as_str() {
+        "think" => ocore::knowledge::backend::RetrieveKind::Think,
+        "ask" | "query" => ocore::knowledge::backend::RetrieveKind::Search,
+        _ => {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({"code": "auth.forbidden"})),
+            )
+                .into_response()
+        }
+    };
+    let st = state.clone();
+    let cfg = match tokio::task::spawn_blocking(move || {
+        let cfg = load_cfg(&st)?;
+        exe_of(&cfg).map(|exe| (cfg, exe))
+    })
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return err_response(&e),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"code": "server.internal", "detail": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+    if !cfg.0.ops_retrieval_enabled {
+        return err_response(&ocore::i18n::AppError::new("op.retrievalDisabled"));
+    }
+    let access = match tokio::task::spawn_blocking({
+        let db = state.db_path.clone();
+        let requestor = requestor.clone();
+        move || {
+            let store = ocore::domain::SqliteStore::open(&db)?;
+            ocore::knowledge::identity::access_context_for_principal(
+                &store,
+                &requestor,
+                ocore::runtime::AGENT_WS,
+            )
+        }
+    })
+    .await
+    {
+        Ok(Ok(a)) => a,
+        Ok(Err(e)) => {
+            return err_response(
+                &ocore::i18n::AppError::new("auth.unauthorized").p("detail", e.to_string()),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"code": "server.internal", "detail": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+    let tctx = ocore::domain::tools::ToolCtx {
+        gbrain_exe: cfg.1.clone(),
+        gbrain_home: cfg.0.active_env_home().map(str::to_string),
+        chat_model: None,
+        mcp: if cfg.0.gbrain_transport == "mcp" {
+            Some(std::sync::Arc::new(ocore::gbrain_mcp::GbrainMcpClient::new(
+                cfg.1.clone(),
+                cfg.0.active_env_home().map(str::to_string),
+            )))
+        } else {
+            None
+        },
+        allowed_tools: Default::default(),
+        employee_output_root: std::path::PathBuf::from(&cfg.0.employee_output_path),
+        registry: None,
+        knowledge: None,
+        access,
+    };
+    let svc = ocore::knowledge::service::KnowledgeService::new(&state.db_path);
+    match svc.retrieve(&tctx.access, kind, &b.arg, None, 10, &tctx).await {
+        Ok(o) => {
+            let denied = o.meta.get("denied").and_then(|v| v.as_bool()).unwrap_or(false);
+            ok_json(json!({ "text": o.text, "denied": denied }))
+        }
+        Err(e) => err_response(&ocore::i18n::AppError::new("op.runFailed").p("detail", e.to_string())),
     }
 }
 

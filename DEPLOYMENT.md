@@ -151,6 +151,33 @@ sudo ufw allow 7340/tcp
 
 ## 6. 首次啟動與帳號開通
 
+**首選：部署設定精靈（`configure`）。** 在伺服器機的終端機執行：
+
+```bash
+./oserver configure --data-dir /opt/operoid/data   # Windows：.\oserver.exe configure --data-dir C:\operoid
+```
+
+精靈依序進行（Enter 採用 [預設值]，`?` 顯示說明，寫入前有摘要確認閘）：
+
+1. **前置檢查**——探測 git／bun／gbrain；缺項顯示用途與安裝指引（可 `r` 重新檢查）。
+2. **部署模式**——個人（本機 loopback）或企業（內網服務，寫入 operoid.toml）。
+3. **監聽與前端**——bind host/port、frontends 目錄（即時檢查三子目錄）、TLS cert/key
+   （非 loopback 必填，與啟動期 DR-E5 檢查同規則）。
+4. **知識腦工作目錄**——gbrain 執行檔（自動探測 PATH／`~/.bun/bin`）與 `gbrain_home`；
+   目錄不存在可現場 `gbrain init` 建新腦；另可填 notes repo 與 LLM keys。
+5. **master token**——現場 CSPRNG 生成 64 碼（僅此一次完整顯示）或貼上既有值。
+6. **管理員帳號**——預設 `admin`／`admin1234`；`must_change_password=true`，**首次登入
+   系統強制設定新密碼（≥8 碼）**，改密前除改密／登出外全部 API 拒絕（伺服器端閘）。
+7. **系統服務**——可選擇當場註冊開機自啟（等同 `install` 子命令）。
+
+產出：企業模式寫 `<data-dir>/operoid.toml`＋`app-settings.json`（腦清單）；個人模式僅
+`app-settings.json`。管理員帳號直接建於 `operoid.db`。
+
+> ⚠️ 服務／GUI 等**無終端環境**遇首次執行不會彈出精靈——服務啟動會失敗並提示先跑
+> `configure`。**註冊服務前務必先完成精靈。**
+
+手動替代流程（不用精靈，適合自動化佈署）：
+
 1. 啟動服務，確認 `https://<伺服器IP>:7340/healthz` 回 `{"status":"ready","version":"..."}`。
 2. 瀏覽器開 `https://<伺服器IP>:7340/`——三前端入口頁。
    （對照：桌面安裝包＝**個人版**——裝在使用者電腦直接用，與本文件無關；企業部署＝本文件。）
@@ -163,7 +190,7 @@ sudo ufw allow 7340/tcp
    # 回應含 temporary_password（僅此一次顯示）——交給該使用者
    ```
 
-4. 該使用者開 `/admin` 登入（臨時密碼）→ 系統**強制**設定新密碼（≥12 碼）→ 之後在「帳號管理」頁建立 manager/user 帳號。
+4. 該使用者開 `/admin` 登入（臨時密碼）→ 系統**強制**設定新密碼（≥8 碼）→ 之後在「帳號管理」頁建立 manager/user 帳號。
 5. （可選）服務間整合用長期 token：管理者介面「知識授權」→ 簽發 token（TTL 留空＝不過期）。
 
 ---

@@ -18,7 +18,7 @@
     "locked": "嘗試次數過多，請稍後再試",
     "forbidden": "此帳號無權使用本介面",
     "mustChange": "首次登入請設定新密碼",
-    "newPassword": "新密碼（至少 12 碼）",
+    "newPassword": "新密碼（至少 8 碼）",
     "changeSubmit": "設定新密碼並繼續",
     "changed": "密碼已更新"
   },
@@ -50,6 +50,7 @@
     "home": "總覽",
     "accounts": "帳號管理",
     "knowledge": "知識授權",
+    "templates": "AI 員工模板",
     "brains": "腦與前置檢查"
   },
   "accounts": {
@@ -67,7 +68,7 @@
     "disable": "停用",
     "enable": "啟用",
     "save": "儲存",
-    "newTempPw": "新臨時密碼（≥12 碼）",
+    "newTempPw": "新臨時密碼（≥8 碼）",
     "resetSubmit": "重設並撤銷 token",
     "resetDone": "已重設 {id} 的密碼（token 全撤，首登強改）"
   },
@@ -99,5 +100,25 @@
     "heading": "腦",
     "none": "未註冊腦",
     "prereq": "前置檢查"
+  },
+  "templates": {
+    "heading": "AI 員工模板",
+    "createHeading": "建立模板",
+    "name": "名稱",
+    "brain": "腦（部署來源知識）",
+    "activeBrain": "作用中腦（留空＝預設）",
+    "role": "角色（選填）",
+    "tools": "工具 allowlist（逗號分隔，留空＝預設集）",
+    "create": "建立",
+    "created": "模板已建立",
+    "list": "現行模板",
+    "none": "尚無模板——建立後可在使用者介面部署 AI 員工",
+    "rename": "改名",
+    "save": "儲存",
+    "cancel": "取消",
+    "delete": "刪除",
+    "deleteConfirm": "確定刪除模板「{name}」？已部署的員工不受影響。",
+    "renamed": "模板已改名",
+    "deleted": "模板已刪除"
   }
 }

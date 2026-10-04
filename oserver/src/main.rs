@@ -5,7 +5,7 @@
 //! 優雅關機：停 accept → 等 `busy_ids()` 清空（上限 120s）→ 退出。
 //!
 //! 模式：一般（前景）／`--service`（Windows SCM dispatcher；Linux/macOS 前景同一般）。
-//! 子命令：`install`／`uninstall`／`status`（P5）。
+//! 子命令：`configure`（首次執行部署精靈）／`install`／`uninstall`／`status`（P5）。
 //! token：`OSERVER_TOKEN` env **或** `operoid.toml` `[server].token` **或**
 //! `app-settings.json` 的 `server_token`（服務模式無使用者 env——由設定檔提供）。
 //! **個人／企業模式**（遠端化 DR-E6）：settings 目錄有 `operoid.toml`＝企業模式
@@ -14,6 +14,7 @@
 
 mod accounts;
 mod auth;
+mod configure;
 mod knowledge_admin;
 mod config;
 mod gbrain;
@@ -156,6 +157,14 @@ fn main() {
     // ── 子命令分派 ──
     let cmd = std::env::args().nth(1);
     match cmd.as_deref() {
+        Some("configure") => {
+            let dirs = resolve_from_args(&a).expect("解析資料目錄失敗");
+            if let Err(e) = configure::run_wizard(&dirs) {
+                eprintln!("[oserver] configure 失敗：{e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         Some("install") => {
             let dirs = resolve_from_args(&a).expect("解析資料目錄失敗");
             if let Err(e) = service::install(&dirs.settings_dir, &dirs.db_dir) {
@@ -211,6 +220,24 @@ fn main() {
 
 async fn run(a: &DirArgs) -> anyhow::Result<()> {
     let dirs = resolve_from_args(a)?;
+    // 首次執行（無任何設定檔）：互動終端 → 部署設定精靈；headless（服務／GUI 產生
+    // 的行程 stdin=null）不自動彈出——印指引後退出（fail-closed，比缺 token 訊息更具體）。
+    if configure::needs_setup(&dirs.settings_dir) {
+        use std::io::IsTerminal as _;
+        if std::io::stdin().is_terminal() {
+            configure::run_wizard(&dirs)?;
+        } else {
+            let dir_hint = a
+                .data_dir
+                .as_ref()
+                .map(|d| format!(" --data-dir {d}"))
+                .unwrap_or_default();
+            anyhow::bail!(
+                "首次執行（{} 無設定檔）——請先在終端機執行 `oserver configure{dir_hint}` 完成部署設定；服務／GUI 等無終端環境不自動彈出精靈",
+                dirs.settings_dir.display()
+            );
+        }
+    }
     // 遠端化 R1（DR-E6）：operoid.toml 存在＝企業模式；解析失敗 → 明確報錯退出（非靜默）。
     let toml_cfg = operoid_toml::load(&dirs.settings_dir)?;
     if toml_cfg.is_some() {

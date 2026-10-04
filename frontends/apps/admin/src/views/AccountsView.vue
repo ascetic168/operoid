@@ -88,7 +88,7 @@ async function setDisabled(id: string, disabled: boolean): Promise<void> {
 }
 
 async function resetPassword(id: string): Promise<void> {
-  if (!resetPw.value || resetPw.value.length < 12) return
+  if (!resetPw.value || resetPw.value.length < 8) return
   busyId.value = id
   actionError.value = ''
   try {
@@ -186,7 +186,7 @@ onMounted(load)
       </div>
       <div v-if="resetTarget === a.id" class="sub">
         <input v-model="resetPw" type="password" :placeholder="t('accounts.newTempPw')" />
-        <button class="mini" :disabled="resetPw.length < 12 || busyId === a.id" @click="resetPassword(a.id)">
+        <button class="mini" :disabled="resetPw.length < 8 || busyId === a.id" @click="resetPassword(a.id)">
           {{ t('accounts.resetSubmit') }}
         </button>
       </div>

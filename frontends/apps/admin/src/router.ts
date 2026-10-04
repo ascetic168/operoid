@@ -20,6 +20,12 @@ export const router = createRouter({
       meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
     },
     {
+      path: '/templates',
+      name: 'templates',
+      component: () => import('./views/TemplatesView.vue'),
+      meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
+    },
+    {
       path: '/brains',
       name: 'brains',
       component: () => import('./views/BrainsView.vue'),

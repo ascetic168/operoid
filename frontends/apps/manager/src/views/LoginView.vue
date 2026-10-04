@@ -93,7 +93,7 @@ async function submitChange(): Promise<void> {
       <template v-else>
         <p class="muted">{{ t('login.mustChange') }}</p>
         <label for="new">{{ t('login.newPassword') }}</label>
-        <input id="new" v-model="newPassword" type="password" autocomplete="new-password" required minlength="12" />
+        <input id="new" v-model="newPassword" type="password" autocomplete="new-password" required minlength="8" />
         <p style="margin-top: 1rem">
           <button class="primary" :disabled="busy" type="submit">
             {{ busy ? t('login.submitting') : t('login.changeSubmit') }}

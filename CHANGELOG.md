@@ -13,6 +13,33 @@
 
 ---
 
+## [v0.4.1] - 2026-10-04
+
+### 部署精靈＋Web 三前端功能補齊＋密碼政策放寬
+
+- **admin 前端「AI 員工模板」管理頁**：模板列表／建立（name／腦／role／tools allowlist）／
+  inline 改名／刪除——補齊先前僅 API 與桌面殼層有的模板 CRUD（`POST/PATCH/DELETE
+  /api/templates`）。
+- **oserver `configure` 精靈**：首次執行（資料目錄無任何設定檔）且終端互動時自動彈出，
+  或以 `oserver configure` 手動執行（可管線餵答案）。流程：前置檢查（git/bun/gbrain，
+  缺項給安裝指引、可重檢）→ 部署模式 → bind/TLS/frontends → 知識腦工作目錄（重用
+  `add_brain_core`，可現場 `gbrain init`）→ master token（CSPRNG 生成）→ 預設管理員
+  帳號（`admin`/`admin1234`，首登強改）→ 可選註冊系統服務；寫入前有摘要確認閘。
+  企業模式寫出 `operoid.toml`（工作區首個 toml writer）；headless 首次執行印指引後退出。
+- **使用者級知識檢索**：新端點 `POST /api/knowledge/ask`（Req::User）——**僅** ask/query/
+  think，同步回應，內部與 manager 面同一 KnowledgeService 路徑（C12a 身份過濾＋I1/I2
+  fail-closed＋receipt＋`ops_retrieval_enabled` 總開關）；非檢索 op 一律 403。不進 op
+  registry（id 為流水號，輪詢面維持 manager 專屬）。user 前端新增「知識查詢」頁
+  （ask/think，結果渲染 gbrain 引用標註）。
+- **manager 前端「營運主控台」**：對齊桌面 GUI OperationsView——stats/sync/extract/ask/
+  query/think＋診斷 ops（doctor/orphans/storage/graph-query/unify-types）經既有
+  `/api/operations`（Manager 層級）輪詢執行；ask/query/think 走 KnowledgeService 按
+  登入者身份做知識範圍過濾（C12a）。輸出支援 gbrain `[[slug]]` 引用渲染（唯讀標註）。
+- **manager 登入頁三語補齊**：login 區塊由僅 offline 一鍵補至完整 13 鍵（en/zh-TW/zh-CN）。
+- **密碼下限 12→8 碼**（`MIN_PASSWORD_LEN`）：三前端 minlength 與文案、DEPLOYMENT.md 同步。
+
+---
+
 ## [v0.4.0] - 2026-10-03
 
 ### 遠端化（E14）——企業模式伺服器端地基＋三角色前端（R1–R7）

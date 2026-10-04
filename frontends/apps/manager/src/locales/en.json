@@ -7,7 +7,19 @@
     }
   },
   "login": {
-    "offline": "Cannot reach the server"
+    "offline": "Cannot reach the server — make sure the service is running",
+    "heading": "Sign in to Operoid",
+    "server": "Server address (optional = same origin)",
+    "account": "Account",
+    "password": "Password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "invalid": "Invalid account or password",
+    "locked": "Too many attempts — try again later",
+    "forbidden": "This account cannot use this console",
+    "mustChange": "Set a new password on first login",
+    "newPassword": "New password (min 8 chars)",
+    "changeSubmit": "Set password and continue"
   },
   "home": {
     "welcome": "Connected",
@@ -28,6 +40,7 @@
     "dashboard": "Dashboard",
     "inbox": "Inbox",
     "grants": "Knowledge governance",
+    "operations": "Operations console",
     "events": "Events"
   },
   "dash": {
@@ -57,5 +70,34 @@
   },
   "events": {
     "empty": "No events yet"
+  },
+  "operations": {
+    "title": "Operations console",
+    "desc": "Query and maintain the knowledge brain directly; ask/query/think are filtered by the signed-in principal's knowledge scopes.",
+    "askPlaceholder": "Type a query (Enter=think)…",
+    "slugPlaceholder": "dir/slug",
+    "output": "Output",
+    "clear": "Clear",
+    "empty": "No output yet — pick an operation above.",
+    "stepOp": "Running {op}…",
+    "done": "Done ✓",
+    "failed": "Failed ✗",
+    "dropped": "⚠ Output exceeded the line cap; some content was dropped.",
+    "timeout": "Wait timed out — the operation is still running on the server; check the event stream later.",
+    "ops": {
+      "statsDesc": "Brain stats (pages/links/sources)",
+      "syncDesc": "Sync notes repo (git sync)",
+      "extractDesc": "Extract pending notes",
+      "askDesc": "Q&A over the brain (scope-filtered)",
+      "queryDesc": "Retrieval query (scope-filtered)",
+      "thinkDesc": "Reasoning over notes (scope-filtered)"
+    },
+    "diag": {
+      "doctorDesc": "Brain health check",
+      "orphansDesc": "Orphan page scan",
+      "storageDesc": "Storage usage",
+      "graphQueryDesc": "Graph query (dir/slug)",
+      "unifyTypesDesc": "Unify types"
+    }
   }
 }

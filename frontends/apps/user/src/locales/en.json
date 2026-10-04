@@ -18,7 +18,7 @@
     "locked": "Too many attempts — try again later",
     "forbidden": "This account cannot use this console",
     "mustChange": "Set a new password on first login",
-    "newPassword": "New password (min 12 chars)",
+    "newPassword": "New password (min 8 chars)",
     "changeSubmit": "Set password and continue",
     "changed": "Password updated"
   },
@@ -55,8 +55,18 @@
   },
   "nav": {
     "home": "My employees",
+    "ask": "Knowledge Q&A",
     "inbox": "Inbox",
     "events": "Events"
+  },
+  "ask": {
+    "title": "Knowledge Q&A",
+    "desc": "Ask the knowledge brain directly — results are filtered by your knowledge scopes (request more from a manager via TTL grants).",
+    "placeholder": "Ask the knowledge brain…",
+    "ask": "Ask",
+    "think": "Think",
+    "running": "Retrieving…",
+    "denied": "No authorized retrieval scope — request a knowledge grant from a manager."
   },
   "chat": {
     "input": "Type a message…",
