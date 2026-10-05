@@ -195,17 +195,30 @@ sudo ufw allow 7340/tcp
 
 ---
 
-## 7. obridge（外部事件進氣）
+## 7. obridge（外部事件進氣——郵件橋接）
 
-obridge 佈署在能觸達事件的機器，`obridge.toml` 的 `[operoid]` 指向伺服器：
+企業包內含 `obridge` 執行檔（與 `oserver` 同目錄）＋ `obridge.example.toml` 範本。
+oserver **子行程代管** obridge：admin 開 `/admin` →「郵件橋接」頁，以表單設定
+IMAP／SMTP 帳號與路由，存檔即寫入 `<settings-dir>/obridge/obridge.toml`（先經
+`obridge --check` 驗證、原子寫入），並自動啟動／重啟子行程（stderr 導入同目錄
+`obridge.log`）。密碼／密鑰欄**留空＝保留現值**；同機代管時 ingress 位址與密鑰
+（server token）由伺服器自動寫入，表單不需填。
 
-```toml
-[operoid]
-ingress_url = "http://<伺服器IP>:7340/event"   # 企業模式：主 port /event
-secret = "<ingress-secret>"                     # 與 operoid.toml [ingress].secret 一致
-```
+兩種佈署模式：
 
-> `[ingress].port` 有設時 ingress 走獨立 port；未設則共用主 port 的 `/event`（Bearer＝master token 或 ingress secret）。
+- **同機代管（預設）**：obridge 與 oserver 同機。表單「由本服務代管」開啟＋
+  存檔後 oserver 自動帶起 obridge；回信方向（`event_outbound_url`/`_secret` 指向
+  obridge send endpoint）也一併自動同步。收信去重狀態檔為
+  `<settings-dir>/obridge/<source>-state.json`——刪除會重掃信（伺服器端
+  `(source, external_ref)` 去重擋重複事件）。
+- **遠端橋接**：obridge 佈署在能觸達郵件伺服器的另一台機器。表單切「遠端橋接」
+  填 oserver 的 `/event` 位址與密鑰，存檔後把該 `obridge.toml` 與 `obridge` 執行檔
+  複製到該機，自行以 systemd unit／排程啟動：
+  `obridge --config /path/to/obridge.toml`（頻道設定變更會被 obridge 自身 2 秒
+  mtime 熱載入；`[listen]`/`[operoid]` 變更需重啟）。注意 obridge send endpoint
+  **僅綁 127.0.0.1**——遠端橋接模式下回信方向不可跨機，郵件為單向進氣。
+
+> `[ingress].port` 有設時 ingress 走獨立 port；未設則共用主 port 的 `/event`（Bearer＝master token 或 ingress secret）。安全：`obridge.toml` 內含明文密碼，務必限服務帳戶可讀；設定檔變更歷程見 obridge.log。
 
 ---
 
@@ -229,3 +242,4 @@ secret = "<ingress-secret>"                     # 與 operoid.toml [ingress].sec
 | 登入回 429 | 連續 5 次密碼錯誤鎖定 15 分鐘（行程內狀態，重啟服務即解除）；admin 可用「重設密碼」 |
 | 服務模式 LLM 失效 | 服務帳戶看不到使用者 env——keys 必須寫 operoid.toml `[llm] env`，改後重啟 |
 | 員工喚醒無反應 | GBrain 安裝於伺服器機了嗎？`/api/prereq`（admin）檢查 git/bun/gbrain |
+| obridge 行為像舊版（新旗標無效、log 格式不同） | 新舊二進位混用——啟動 log 各有 build id，`/api/obridge/status` 的 `exe_build_match=false` 即是；oserver 帶起時也會警告。兩者必須出自同一建置（`cargo dev-build`／同一部署包） |

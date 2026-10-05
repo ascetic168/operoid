@@ -32,6 +32,12 @@ export const router = createRouter({
       meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
     },
     {
+      path: '/obridge',
+      name: 'obridge',
+      component: () => import('./views/ObridgeView.vue'),
+      meta: { auth: true, role: 'admin' as 'admin' | 'manager' | 'user' },
+    },
+    {
       path: '/',
       name: 'home',
       component: () => import('./views/HomeView.vue'),

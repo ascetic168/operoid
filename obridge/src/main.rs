@@ -5,6 +5,9 @@
 //! - **出氣**：`POST /send`（Operoid 的 `event_outbound_url` 指向此）→ 依 `source` 分派通道。
 //!
 //! 設定：`obridge.toml`（`--config <path>` 指定；預設依序找 cwd／執行檔同目錄）。
+//! `obridge --check --config <path>`：只驗證設定檔可解析（oserver 存檔前驗證用），
+//! 缺檔**不**寫範本——與正常啟動（缺檔產生範本後 exit 1）不同。
+//! `obridge --version`：印 build id（oserver 帶起前核對——抓新舊二進位混用）。
 
 mod channels;
 mod core;
@@ -21,7 +24,41 @@ use core::config;
 const TEMPLATE: &str = include_str!("../config.example.toml");
 
 fn main() {
+    // --version：印 build id（oserver 帶起子行程前核對用——抓「跑到舊版二進位」）。
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!(
+            "obridge {} (build {} {})",
+            env!("CARGO_PKG_VERSION"),
+            env!("OPEROID_BUILD_HASH"),
+            env!("OPEROID_BUILD_TIME")
+        );
+        return;
+    }
+    let check_only = std::env::args().any(|a| a == "--check");
     let cfg_path = find_config_path();
+    if check_only {
+        if !cfg_path.exists() {
+            eprintln!("設定檔不存在：{}", cfg_path.display());
+            std::process::exit(1);
+        }
+        match std::fs::read_to_string(&cfg_path)
+            .map_err(|e| e.to_string())
+            .and_then(|s| config::parse(&s).map_err(|e| e.to_string()))
+        {
+            Ok(c) => {
+                println!(
+                    "ok：{} 個通道（{:?}）",
+                    c.channels.len(),
+                    c.channels.iter().map(|c| c.source.clone()).collect::<Vec<_>>()
+                );
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("設定檔解析失敗：{e}");
+                std::process::exit(1);
+            }
+        }
+    }
     // 首次使用：檔案不存在 → 產生範本並提示編輯（範本是可跑的骨架，但帳號是佔位值，
     // 直接跑只會 poll 失敗重試——提示使用者先填比較友善）。
     if !cfg_path.exists() {
@@ -95,7 +132,8 @@ fn find_config_path() -> std::path::PathBuf {
 
 async fn run(cfg_path: std::path::PathBuf, cfg: config::Config, state_dir: std::path::PathBuf) {
     eprintln!(
-        "[obridge] 啟動：{} 個通道（{:?}）→ {}（設定熱重載：watch {}）",
+        "[obridge] 啟動（build {}）：{} 個通道（{:?}）→ {}（設定熱重載：watch {}）",
+        env!("OPEROID_BUILD_HASH"),
         cfg.channels.len(),
         cfg.channels.iter().map(|c| c.source.clone()).collect::<Vec<_>>(),
         cfg.operoid.ingress_url,

@@ -43,6 +43,7 @@ watch(
       <router-link to="/knowledge">{{ t('nav.knowledge') }}</router-link>
       <router-link to="/templates">{{ t('nav.templates') }}</router-link>
       <router-link to="/brains">{{ t('nav.brains') }}</router-link>
+      <router-link to="/obridge">{{ t('nav.obridge') }}</router-link>
     </nav>
     <main class="main">
       <router-view />

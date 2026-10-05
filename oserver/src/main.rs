@@ -18,6 +18,7 @@ mod configure;
 mod knowledge_admin;
 mod config;
 mod gbrain;
+mod obridge_admin;
 mod operoid_toml;
 mod operations;
 mod rbac;
@@ -157,6 +158,16 @@ fn main() {
     // ── 子命令分派 ──
     let cmd = std::env::args().nth(1);
     match cmd.as_deref() {
+        // version：印 build id（運維核對「跑的是哪個建置」——舊版服務誤用的辨識點）。
+        Some("version") | Some("--version") | Some("-V") => {
+            println!(
+                "oserver {} (build {} {})",
+                env!("CARGO_PKG_VERSION"),
+                env!("OPEROID_BUILD_HASH"),
+                env!("OPEROID_BUILD_TIME")
+            );
+            return;
+        }
         Some("configure") => {
             let dirs = resolve_from_args(&a).expect("解析資料目錄失敗");
             if let Err(e) = configure::run_wizard(&dirs) {
@@ -306,6 +317,11 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     };
     let scheme = if tls.is_some() { "https" } else { "http" };
     eprintln!("[oserver] 監聽 {scheme}://{addr}（healthz: /healthz）");
+    eprintln!(
+        "[oserver] build {}（{}）——obridge 子行程會核對同一 id，不一致即警告",
+        env!("OPEROID_BUILD_HASH"),
+        env!("OPEROID_BUILD_TIME")
+    );
 
     // AppState（寫入面喚醒＋scheduler 共用；CfgLoader 每次呼叫重讀設定檔——熱生效）。
     let (wake_tx, wake_rx) = tokio::sync::mpsc::channel(64);
@@ -316,13 +332,16 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     let ready = Arc::new(AtomicBool::new(false));
     let state = Arc::new(ServerState {
         // C12a：token-per-principal authn（master token→operator；principal token→該身份）。
-        auth: Arc::new(PrincipalTokenProvider::new(token, db_path.clone())),
+        auth: Arc::new(PrincipalTokenProvider::new(token.clone(), db_path.clone())),
         cfg: cfg.clone(),
         db_path: db_path.clone(),
         ready: Arc::clone(&ready),
         agent_state: Some(app_state.clone()),
         ops: Arc::new(operations::OpRegistry::new()),
         settings_dir: dirs.settings_dir.clone(),
+        // obridge managed 模式用（ingress secret 寫入 obridge 設定檔；不出 API）。
+        server_token: Some(token),
+        server_port: port,
     });
 
     // 驗 DB（spawn_blocking——rusqlite 同步 API）。
@@ -373,12 +392,16 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     ready.store(true, Ordering::SeqCst);
     eprintln!("[oserver] 就緒（healthz → ready）");
 
+    // obridge 自動帶起（autostart 開＋設定檔存在；失敗僅 log——不擋服務啟動）。
+    obridge_admin::autostart(&dirs.settings_dir, &cfg);
+
     let app = routes::router(Arc::clone(&state))
         .merge(writes::write_routes().with_state(Arc::clone(&state)))
         .merge(knowledge_admin::knowledge_admin_routes().with_state(Arc::clone(&state)))
         .merge(accounts::account_routes().with_state(Arc::clone(&state)))
         .merge(sse::sse_routes().with_state(Arc::clone(&state)))
-        .merge(gbrain::gbrain_routes().with_state(Arc::clone(&state)));
+        .merge(gbrain::gbrain_routes().with_state(Arc::clone(&state)))
+        .merge(obridge_admin::obridge_routes().with_state(Arc::clone(&state)));
     let app = mount_frontends(app, frontends_dir.as_deref());
     // R2（DR-E4）：RBAC 中介層掛最外層——authn → must_change_password 閘 → 矩陣裁定（403）。
     // OPTIONS preflight 與公開路徑（healthz／登入／靜態頁）直接放行。
@@ -407,6 +430,8 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
             server.handle(handle).serve(app.into_make_service()).await?;
         }
     }
+    // 優雅關機收尾：帶走 managed 的 obridge 子行程。
+    obridge_admin::kill_managed();
     eprintln!("[oserver] 已退出");
     Ok(())
 }

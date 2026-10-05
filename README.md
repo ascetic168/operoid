@@ -270,6 +270,7 @@ No need to `git clone` or build from source unless you intend to develop Operoid
 | Setup | None — install and run | `operoid.toml` (bind + TLS) + `oserver install` |
 | Frontend | The desktop app | Browser: `/admin` `/manager` `/user` |
 | Auth | Hidden local token | Password login + RBAC (admin/manager/user) |
+| Mail bridge (obridge) | Bundled, managed by the desktop app | Bundled; managed by oserver — form config in `/admin` (or deploy on a separate machine) |
 
 The desktop installer **is** the personal edition. Enterprise deployments
 download the `operoid-enterprise-*` archive from the same release and follow
@@ -313,6 +314,13 @@ npm run tauri build  # build a distributable installer
 
 Frontend only (in a browser at http://localhost:1420): `npm run dev`,
 `npm run build`.
+
+When working on `oserver`/`obridge` directly, build them **together** with
+`cargo dev-build` (or `scripts/dev-rebuild.ps1`, which also stops dev
+processes first): oserver spawns `obridge` as a sibling executable, so
+building only one crate leaves the other stale. Both binaries embed a build
+id (git hash) and cross-check at spawn — a mismatch is logged loudly and
+shown in the admin UI (`/api/obridge/status` → `exe_build_match`).
 
 ## Development
 

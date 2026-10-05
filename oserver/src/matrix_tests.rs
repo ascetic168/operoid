@@ -48,6 +48,8 @@ fn test_state(dir: &std::path::Path) -> Arc<ServerState> {
         agent_state: None,
         ops: Arc::new(crate::operations::OpRegistry::new()),
         settings_dir: dir.to_path_buf(),
+        server_token: Some("master-token".into()),
+        server_port: 7340,
     })
 }
 
@@ -59,6 +61,7 @@ fn test_router(dir: &std::path::Path) -> axum::Router {
         .merge(crate::accounts::account_routes().with_state(state.clone()))
         .merge(crate::sse::sse_routes().with_state(state.clone()))
         .merge(crate::gbrain::gbrain_routes().with_state(state.clone()))
+        .merge(crate::obridge_admin::obridge_routes().with_state(state.clone()))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::rbac::rbac_middleware,
@@ -147,6 +150,11 @@ const INVENTORY: &[(&str, &str)] = &[
     ("POST", "/api/accounts/{id}/enable"),
     ("POST", "/api/accounts/{id}/password"),
     ("POST", "/api/accounts/{id}/roles"),
+    // obridge_admin.rs（企業模式 obridge 管理；未列 matrix → Admin fail-closed）
+    ("GET", "/api/obridge/status"),
+    ("GET", "/api/obridge/config"),
+    ("PUT", "/api/obridge/config"),
+    ("POST", "/api/obridge/restart"),
 ];
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -289,6 +297,8 @@ fn real_state(dir: &std::path::Path) -> Arc<ServerState> {
         agent_state: None,
         ops: Arc::new(crate::operations::OpRegistry::new()),
         settings_dir: dir.to_path_buf(),
+        server_token: Some("master-token".into()),
+        server_port: 7340,
     })
 }
 

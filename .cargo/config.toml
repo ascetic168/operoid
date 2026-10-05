@@ -1,0 +1,6 @@
+# Cargo 別名——開發流程防呆。
+# `cargo dev-build`：一次編譯 oserver＋obridge。兩者是 sibling 解析（oserver 帶起
+# 同目錄的 obridge；桌面殼帶起同目錄的 oserver）——只建一半就會跑到舊版二進位。
+# 兩個執行檔的 build id 不一致時，oserver 啟動 log 與 /api/obridge/status 會警告。
+[alias]
+dev-build = "build -p oserver -p obridge"

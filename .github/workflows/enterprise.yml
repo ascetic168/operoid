@@ -2,9 +2,11 @@ name: enterprise-package
 
 # 企業部署包（與桌面安裝包分開的 release 資產）：
 #   推送 v* 標籤 → publish-tauri 建立草稿 Release（桌面安裝包＝個人版）→
-#   本 job 接續編譯 oserver（release）＋三個前端靜態檔，打包為
+#   本 job 接續編譯 oserver＋obridge（release）＋三個前端靜態檔，打包為
 #   operoid-enterprise-<平台>.zip / .tar.gz 附加到同一個 Release。
-#   企業部署者下載部署包即可照 DEPLOYMENT.md 部署（伺服器機不需 Node/pnpm）。
+#   企業部署者下載部署包即可照 DEPLOYMENT.md 部署（伺服器機不需 Node/pnpm）；
+#   obridge 由 oserver 子行程代管（/admin「郵件橋接」表單設定），或複製到
+#   能觸達郵件伺服器的機器做遠端橋接。
 #
 # 個人版與企業版在 release 資產層區分：桌面安裝包＝個人版；
 # operoid-enterprise-*.zip/tar.gz＝企業版。版本與 CHANGELOG 仍單一真相。
@@ -65,8 +67,10 @@ jobs:
           pnpm install --frozen-lockfile --allow-build=esbuild
           pnpm build
 
-      - name: build oserver（release）
-        run: cargo build --release -p oserver
+      - name: build oserver＋obridge（release）
+        # obridge＝企業版郵件橋接執行檔：oserver 子行程代管（sibling 解析），
+        # 也可單獨複製到能觸達郵件伺服器的機器做遠端橋接。
+        run: cargo build --release -p oserver -p obridge
 
       - name: assemble package（windows）
         if: matrix.platform == 'windows-latest'
@@ -75,6 +79,8 @@ jobs:
           $stage = "stage/operoid-enterprise"
           New-Item -ItemType Directory -Force -Path "$stage/frontends" | Out-Null
           Copy-Item target/release/oserver.exe "$stage/"
+          Copy-Item target/release/obridge.exe "$stage/"
+          Copy-Item obridge/config.example.toml "$stage/obridge.example.toml"
           foreach ($app in @('admin', 'manager', 'user')) {
             Copy-Item "frontends/apps/$app/dist" "$stage/frontends/$app" -Recurse
           }
@@ -88,6 +94,8 @@ jobs:
           stage="stage/operoid-enterprise"
           mkdir -p "$stage/frontends"
           cp target/release/oserver "$stage/"
+          cp target/release/obridge "$stage/"
+          cp obridge/config.example.toml "$stage/obridge.example.toml"
           for app in admin manager user; do
             cp -r "frontends/apps/$app/dist" "$stage/frontends/$app"
           done

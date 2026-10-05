@@ -37,6 +37,11 @@ pub struct ServerState {
     pub ops: Arc<crate::operations::OpRegistry>,
     /// 桌面設定目錄（app-settings.json 讀寫——與殼同一檔）。
     pub settings_dir: std::path::PathBuf,
+    /// server token（啟動期解析結果）——obridge managed 模式寫入 ingress secret 用；
+    /// 僅伺服器端使用，不出任何 API。
+    pub server_token: Option<String>,
+    /// 本服務實際 bind 的 port（obridge managed 模式推導 ingress_url 用）。
+    pub server_port: u16,
 }
 
 /// 統一錯誕回應：`AppError` → JSON＋status 映射。
@@ -55,6 +60,10 @@ pub(crate) fn err_response(e: &AppError) -> Response {
         "auth.forbidden" | "auth.accountDisabled" | "auth.mustChangePassword" => StatusCode::FORBIDDEN,
         "auth.accountLocked" => StatusCode::TOO_MANY_REQUESTS,
         "auth.weakPassword" | "auth.accountCreateFailed" | "auth.noSession" => StatusCode::BAD_REQUEST,
+        // obridge 管理（企業模式）：驗證失敗／未啟用／非代管模式 → 400；重複啟動 → 409；exe 缺 → 404
+        "obridge.configInvalid" | "obridge.notEnabled" | "obridge.notManaged" => StatusCode::BAD_REQUEST,
+        "obridge.alreadyRunning" => StatusCode::CONFLICT,
+        "obridge.exeNotFound" => StatusCode::NOT_FOUND,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, Json(body)).into_response()

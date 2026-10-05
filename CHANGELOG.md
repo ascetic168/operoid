@@ -13,6 +13,41 @@
 
 ---
 
+## [v0.4.2] - 2026-10-05
+
+### obridge 併入企業封裝＋admin 表單式郵件橋接設定
+
+- **build id 防呆**：oserver／obridge 內嵌 git 短 hash（`build_common.rs` 經各自
+  build.rs 注入，dirty 亦標記）；雙方啟動 log 帶 id、`oserver version`／
+  `obridge --version` 可查；oserver 帶起 obridge 前以 `--version` 核對，不一致
+  大聲警告，`/api/obridge/status` 新增 `exe_build_match` 供 admin 介面顯示。
+  動機：sibling 解析只認路徑不認版本——開發期曾發生 target/debug 的 obridge 被
+  換回月前舊 artifact（`--check` 被無視→API 卡死）。另加 `cargo dev-build` 別名
+  （兩 crate 一起編）與 `scripts/dev-rebuild.ps1`（先停 dev 行程、避開 Windows
+  鎖檔 os error 5，建完印 build id 供核對）。
+
+- **企業包內建 obridge**：`enterprise.yml` 改編譯 `oserver`＋`obridge`，部署包新增
+  obridge 執行檔（與 oserver 同層）與 `obridge.example.toml` 範本——個人版／企業版
+  的郵件橋接能力對齊（先前僅桌面安裝檔打包 obridge）。
+- **oserver 子行程代管 obridge**（**僅企業模式**）：啟動期依 `obridge_autostart`
+  自動帶起（僅設定檔存在時；Windows 加 `CREATE_NO_WINDOW`），優雅關機收尾 kill，
+  stderr 導入 `<settings-dir>/obridge/obridge.log`；存檔後 `[listen]`/`[operoid]`
+  變更才重啟（頻道走 obridge 自身 2 秒 mtime 熱載入）。個人模式 obridge 行程仍由
+  桌面殼代管——oserver 若也 spawn 會變雙行程（同一份 autostart 旗標＋同一設定檔）。
+- **obridge `--check`**：新旗標——只驗證設定檔可解析（缺檔不寫範本），供 oserver
+  存檔前驗證（obridge 自身解析規則當單一真相）。
+- **admin 前端「郵件橋接」頁**（`/obridge`，Admin 層級）：表單式設定取代 raw TOML
+  ——ingress 模式（同機代管／遠端橋接）、listen port／密鑰、email-imap 頻道
+  （IMAP/SMTP 帳號、路由地址→員工/腦下拉、寄件身分）、狀態卡（執行中 pid／
+  autostart 開關／重啟鈕）；wasm 頻道原樣保留不進表單。三語 i18n。
+- **新 API**（未列 RBAC 矩陣 → Admin fail-closed）：`GET /api/obridge/status`、
+  `GET/PUT /api/obridge/config`、`POST /api/obridge/restart`。密碼／密鑰**遮蔽**
+  （`null`＋`has_*` 旗標，留空＝保留現值）；managed 模式 ingress 密鑰（server
+  token）僅伺服器端寫入設定檔，零回傳；存檔自動同步 `event_outbound_url`/`_secret`
+  （回信閉環）與 `obridge_autostart`。設定寫入走「暫存檔 → `obridge --check` →
+  原子改名」（check 逾時 10 秒即 kill、fail-closed 保留舊檔，API 不卡死），wasm
+  頻道與未知頂層鍵 round-trip 保留。
+
 ## [v0.4.1] - 2026-10-04
 
 ### 部署精靈＋Web 三前端功能補齊＋密碼政策放寬

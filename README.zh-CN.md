@@ -197,6 +197,22 @@ Operoid 把这件事当成宪法层级的原则——
 [**Releases** 页面](https://github.com/ascetic168/Operoid/releases)下载对应平台的最新版本并运行。
 除非你要开发 Operoid，否则不需要 `git clone` 或从源码构建。
 
+### 个人版与企业版（v0.4.0）
+
+| | 个人版 | 企业版 |
+|---|---|---|
+| 资产 | 桌面安装文件 | `operoid-enterprise-*` 部署包 |
+| 运行位置 | 用户自己的电脑 | 公司内网服务器 |
+| 设置 | 无——安装即用 | `operoid.toml`（bind＋TLS）＋`oserver install` |
+| 前端 | 桌面 app | 浏览器：`/admin` `/manager` `/user` |
+| 认证 | 隐藏的本机 token | 密码登录＋RBAC（admin／manager／user） |
+| 邮件桥接（obridge） | 内置，由桌面 app 托管 | 内置；由 oserver 托管——`/admin` 表单设置（或部署在另一台机器） |
+
+桌面安装文件**就是**个人版。企业部署从同一个 Release 下载 `operoid-enterprise-*`
+部署包，照 **[DEPLOYMENT.md](DEPLOYMENT.md)** 操作——服务器机不需要 Node/pnpm。
+两个注意事项：**不要**在企业服务器上运行桌面 GUI（它使用的是个人模式的凭据）；
+两个版本可在同一内网安全并存（个人版仅绑定 loopback）。
+
 ### 安装开机服务（Linux / macOS）
 
 Linux 与 macOS 的开机服务在**任何用户登录前**就会启动
@@ -227,6 +243,12 @@ npm run tauri build  # 构建分发用安装包
 ```
 
 仅前端（于 http://localhost:1420 在浏览器运行）：`npm run dev`、`npm run build`。
+
+直接开发 `oserver`／`obridge` 时，请用 `cargo dev-build` **两个一起编译**
+（或 `scripts/dev-rebuild.ps1`——会先停掉 dev 进程再编译）：oserver 以 sibling
+方式拉起同目录的 `obridge`，只编译单一 crate 就会跑到另一个的旧文件。两个可执行文件
+都内嵌 build id（git hash）并在拉起时互相核对——不一致会在启动 log 大声警告，
+并显示在 admin 界面（`/api/obridge/status` 的 `exe_build_match`）。
 
 ## 开发
 
