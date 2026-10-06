@@ -313,7 +313,25 @@ pub struct Memory {
     pub notes: Vec<String>,
     #[serde(default)]
     pub last_artifact_id: Option<String>,
+    /// M3：員工的規劃清單（todo）——update_todos 工具讀寫、喚醒自動還原（跨 session 存活）。
+    /// 上下文壓縮後 notes 會遺失細節，todos 是「任務進度」的結構化錨點。
+    #[serde(default)]
+    pub todos: Vec<TodoItem>,
     pub updated_at: Timestamp,
+}
+
+/// M3：一項 todo（content＋status＋priority）。字串欄位寬容解析——未知 status 視為 pending。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TodoItem {
+    pub content: String,
+    #[serde(default = "default_todo_status")]
+    pub status: String,
+    #[serde(default)]
+    pub priority: Option<String>,
+}
+
+fn default_todo_status() -> String {
+    "pending".into()
 }
 
 // ───────────────── Event（Handbook Ch.14，Phase 6d 輕量）─────────────────

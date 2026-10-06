@@ -19,6 +19,7 @@ pub mod tools;
 pub use models::{
     Artifact, ArtifactStatus, BrainRef, Commitment, CommitmentStatus, Employee, EmployeeState,
     EmployeeTemplate, Event, Memory, Message, MessageDirection, Project, ProjectStatus, Task,
+    TodoItem,
     TaskStatus, Timestamp, Workspace, WorkspaceStatus,
 };
 pub use sqlite_store::SqliteStore;

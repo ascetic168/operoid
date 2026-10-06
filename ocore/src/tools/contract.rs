@@ -87,6 +87,28 @@ pub fn turn_tool_contracts(ctx: &crate::domain::tools::ToolCtx) -> Vec<ToolContr
             ),
         },
     ];
+    defs.push(ToolContract {
+        name: "update_todos",
+        description: "更新你的規劃清單（todo）——全量替換。複雜任務先拆解步驟再逐一推進；每完成一項就把該項標成 completed。清單跨回合保存。",
+        parameters: obj_schema(
+            serde_json::json!({
+                "todos": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                            "priority": {"type": "string", "enum": ["high", "medium", "low"]}
+                        },
+                        "required": ["content", "status"]
+                    }
+                }
+            }),
+            &["todos"],
+        ),
+    });
+    // ── 桌面工具（M2）：allowlist 閘門——未授權即不存在 ──
     if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
         defs.push(ToolContract {
             name: "write_note",
@@ -101,7 +123,6 @@ pub fn turn_tool_contracts(ctx: &crate::domain::tools::ToolCtx) -> Vec<ToolContr
             ),
         });
     }
-    // ── 桌面工具（M2）：allowlist 閘門——未授權即不存在 ──
     if ctx.allowed_tools.contains(TOOL_READ_FILE) {
         defs.push(ToolContract {
             name: FN_READ_FILE,

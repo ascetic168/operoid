@@ -138,7 +138,7 @@ pub async fn run_cycle(
         .push(format!("ran \"{query}\" → artifact {artifact_id}"));
     memory.last_artifact_id = Some(artifact_id.clone());
     memory.updated_at = now_rfc3339();
-    store.put_memory(&memory)?;
+    put_memory_preserving_todos(store, employee_id, &mut memory)?;
 
     emp.state = EmployeeState::Sleeping;
     store.put_employee(&emp)?;
@@ -158,6 +158,7 @@ fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory
         employee_id: employee_id.to_string(),
         notes: Vec::new(),
         last_artifact_id: None,
+        todos: Vec::new(),
         updated_at: now_rfc3339(),
     }))
 }
@@ -592,7 +593,7 @@ async fn run_inbox_inner(
 
     // Sleep：Inbox 吃光才睡；W1 停止 → Paused（人工停止態，排程器不再自動喚醒）。
     memory.updated_at = now_rfc3339();
-    store.put_memory(&memory)?;
+    put_memory_preserving_todos(store, employee_id, &mut memory)?;
     // 重讀最新員工列再寫終態——保留期間的並發欄位變更（如 W1 封存的 archived=true），
     // 避免以喚醒時的舊 struct 整份覆寫回去。
     let mut emp_end = store.get_employee(employee_id)?.unwrap_or(emp);
@@ -725,7 +726,10 @@ async fn run_conversational_turn(
         Vec::new()
     };
 
+    let mut step_idx: u32 = 0;
+    let mut last_todo_step: u32 = 0;
     for _ in 0..ctx.turn_max_steps.max(1) {
+        step_idx += 1;
         // W1 合作式停止：步間窺視（不消耗旗標——由外層 runner 消耗），請求停止時
         // 視同靜默提前結束回合（不外發、不回覆；task 由呼叫端照常收尾）。
         if let Some(c) = cancel {
@@ -736,6 +740,15 @@ async fn run_conversational_turn(
         }
         if native {
             // ── native 步：多訊息歷史＋原生 function calling ──
+            // M3：todo 提醒——每 10 步沒更新清單就注入提醒（進度錨點；對抗上下文漂移）。
+            if step_idx.saturating_sub(last_todo_step) >= 10 {
+                let memory = restore_memory(store, employee_id)?;
+                history.push(llm::ChatMessage::user(format!(
+                    "<system-reminder>\n{}\n（若清單已過時，請用 update_todos 更新）\n</system-reminder>",
+                    format_todo_state(&memory.todos)
+                )));
+                last_todo_step = step_idx;
+            }
             let turn = match reasoner.chat_step(&history, &tools).await {
                 Ok(t) => t,
                 Err(e) => {
@@ -785,6 +798,9 @@ async fn run_conversational_turn(
             // 補佔位 tool 結果，保協議完整（每個 tool_call_id 都要有回應）。
             let mut finish_now = false;
             for tc in &turn.tool_calls {
+                if tc.name == "update_todos" || tc.name == "todos" {
+                    last_todo_step = step_idx;
+                }
                 let action = s.execute_tool_call(&tc.name, &tc.arguments).await;
                 match action {
                     Some(TurnAction::Continue { note }) => {
@@ -1283,10 +1299,94 @@ impl<'a> TurnSession<'a> {
                     .unwrap_or_else(|e| format!("[run_command] 失敗：{e}"));
                 Some(TurnAction::Continue { note })
             }
+            // M3：規劃清單（todo）——純 session 狀態（Memory 落庫、跨回合存活），免 allowlist。
+            "update_todos" | "todos" => {
+                let Some(list) = args.get("todos").and_then(|v| v.as_array()) else {
+                    return Some(TurnAction::Continue {
+                        note: "[update_todos] 失敗：缺 todos 陣列。".into(),
+                    });
+                };
+                let todos: Vec<crate::domain::TodoItem> = list
+                    .iter()
+                    .filter_map(|v| {
+                        let content = v.get("content")?.as_str()?.trim().to_string();
+                        if content.is_empty() {
+                            return None;
+                        }
+                        Some(crate::domain::TodoItem {
+                            content,
+                            status: v
+                                .get("status")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("pending")
+                                .to_string(),
+                            priority: v.get("priority").and_then(|x| x.as_str()).map(str::to_string),
+                        })
+                    })
+                    .collect();
+                let n = todos.len();
+                let mut memory = match restore_memory(self.store, self.employee_id) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        return Some(TurnAction::Continue {
+                            note: format!("[update_todos] 讀取記憶失敗：{e}"),
+                        })
+                    }
+                };
+                memory.todos = todos;
+                if let Err(e) = self.store.put_memory(&memory) {
+                    return Some(TurnAction::Continue {
+                        note: format!("[update_todos] 記憶寫入失敗：{e}"),
+                    });
+                }
+                Some(TurnAction::Continue {
+                    note: format!("[update_todos] 已更新（{n} 項）。
+{}", format_todo_state(&memory.todos)),
+                })
+            }
             "finish" => Some(self.finish_from_args(args).await),
             _ => None,
         }
     }
+}
+
+/// M3：寫回工作記憶——**保留 store 端 todos**。回合內 `update_todos` 直接落庫，
+/// 而呼叫端持有的本地 `memory` 是喚醒時的快照（todos 舊值）；直接 put 會把清單洗掉。
+/// notes／last_artifact 以本地為準（回合內推進的進度），todos 以 store 為準。
+fn put_memory_preserving_todos(
+    store: &(dyn Store + Send + Sync),
+    employee_id: &str,
+    memory: &mut Memory,
+) -> anyhow::Result<()> {
+    if let Ok(Some(latest)) = store.get_memory(employee_id) {
+        memory.todos = latest.todos;
+    }
+    memory.updated_at = now_rfc3339();
+    store.put_memory(memory)
+}
+
+/// M3：todo 清單的人類／LLM 可讀呈現（進 native 提醒、自主循環 PLAN、EVAL）。
+fn format_todo_state(todos: &[crate::domain::TodoItem]) -> String {
+    if todos.is_empty() {
+        return "（尚未建立 todo 清單）".into();
+    }
+    let mut lines = vec![format!("目前 todo（共 {} 項）：", todos.len())];
+    for t in todos {
+        let mark = match t.status.as_str() {
+            "completed" => "x",
+            "in_progress" => "~",
+            _ => " ",
+        };
+        lines.push(format!("- [{mark}] {}{}", t.content, {
+            match t.priority.as_deref() {
+                Some("high") => "（高）",
+                Some("low") => "（低）",
+                _ => "",
+            }
+        }));
+    }
+    lines.join("
+")
 }
 
 /// 通道情境行（M1）：來源／事件時間／回覆通道——讓「BCC 副本降優先」「回信回同一 thread」
@@ -1791,7 +1891,7 @@ async fn run_autonomous_inner(
             // 本輪處理了 inbox，跳過 plan/act/eval；下輪再推進承諾。
             // 持久化 memory（含回覆 note），確保即便隨後 Satisfied 也不遺失上下文。
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             continue;
         }
 
@@ -1817,11 +1917,12 @@ async fn run_autonomous_inner(
         let plan_user = format!(
             "現在時間：{now}。\n承諾：{title}\n完成條件：{cond}\n\
              已查得的成果（近期）：\n{arts}\n\
-             近期已做：\n{recent}\n{plan_tail}",
+             近期已做：\n{recent}\n進度清單：\n{todos}\n{plan_tail}",
             title = commitment.title,
             cond = commitment.completion_condition,
             arts = if summaries.is_empty() { "(尚無)".into() } else { summaries.join("\n") },
             recent = if recent.is_empty() { "(尚無)".into() } else { recent.join("\n") },
+            todos = format_todo_state(&memory.todos),
             now = now_line(),
         );
         let plan = match reasoner.reason(&plan_system_prompt(ctx, send_allowed), &plan_user).await {
@@ -1891,7 +1992,7 @@ async fn run_autonomous_inner(
                     ));
                     cap_notes(&mut memory);
                     memory.updated_at = now_rfc3339();
-                    store.put_memory(&memory)?;
+                    put_memory_preserving_todos(store, employee_id, &mut memory)?;
                     continue;
                 }
                 Err(e) => {
@@ -1925,7 +2026,7 @@ async fn run_autonomous_inner(
                 );
                 cap_notes(&mut memory);
                 memory.updated_at = now_rfc3339();
-                store.put_memory(&memory)?;
+                put_memory_preserving_todos(store, employee_id, &mut memory)?;
                 continue;
             }
             let text = plan
@@ -1981,7 +2082,7 @@ async fn run_autonomous_inner(
             memory.notes.push(format!("（已主動外發：{}）", out.text));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             continue;
         }
         // W3（D-H2/D-H3）：PLAN 選 write——主動把產出寫成筆記（allowlist 閘門），
@@ -1992,7 +2093,7 @@ async fn run_autonomous_inner(
                     .notes
                     .push("（write 未啟用：此員工無 write-note 工具權限，請改用其他行動）".into());
                 cap_notes(&mut memory);
-                store.put_memory(&memory)?;
+                put_memory_preserving_todos(store, employee_id, &mut memory)?;
                 continue;
             }
             let mut params = serde_json::Map::new();
@@ -2047,14 +2148,14 @@ async fn run_autonomous_inner(
                 artifact_ids.push(aid.clone());
                 produced_any = true;
                 memory.updated_at = now_rfc3339();
-                store.put_memory(&memory)?;
+                put_memory_preserving_todos(store, employee_id, &mut memory)?;
                 commitment.updated_at = now_rfc3339();
                 store.put_commitment(&commitment)?;
             }
             memory.notes.push(format!("（已寫入筆記：{}）", out.text));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             continue;
         }
         let Some(next_query) = plan
@@ -2084,7 +2185,7 @@ async fn run_autonomous_inner(
                 .push(format!("（「{}」已查過且重複，請換角度）", next_query));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             continue;
         }
         repeat_count = 0;
@@ -2135,7 +2236,7 @@ async fn run_autonomous_inner(
             ));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             continue;
         }
         barren_streak = 0;
@@ -2159,7 +2260,7 @@ async fn run_autonomous_inner(
         cap_notes(&mut memory);
         memory.last_artifact_id = Some(artifact_id);
         memory.updated_at = now_rfc3339();
-        store.put_memory(&memory)?;
+        put_memory_preserving_todos(store, employee_id, &mut memory)?;
         commitment.updated_at = now_rfc3339();
         store.put_commitment(&commitment)?;
 
@@ -2213,7 +2314,7 @@ async fn run_autonomous_inner(
                 .push(format!("承諾「{}」本輪未完成{progress}（{reason}），下次喚醒再續", commitment.title));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             store.put_commitment(&commitment)?; // 維持 Active
         }
         AutonomousOutcome::Errored { detail } => {
@@ -2222,7 +2323,7 @@ async fn run_autonomous_inner(
                 .push(format!("承諾「{}」暫時失敗（{detail}），下次喚醒再試", commitment.title));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             store.put_commitment(&commitment)?; // 維持 Active（不進 Error 死巷）
         }
         AutonomousOutcome::Cancelled { .. } => {
@@ -2231,7 +2332,7 @@ async fn run_autonomous_inner(
                 .push(format!("承諾「{}」被人工停止（人類可隨時再觸發續跑）", commitment.title));
             cap_notes(&mut memory);
             memory.updated_at = now_rfc3339();
-            store.put_memory(&memory)?;
+            put_memory_preserving_todos(store, employee_id, &mut memory)?;
             store.put_commitment(&commitment)?; // 維持 Active
         }
     }
@@ -2277,6 +2378,7 @@ fn recent_artifact_summaries(
 
 /// 諮詢 Brain 判斷 completion_condition 是否已滿足（Handbook Ch.13 §4 修訂：完成評估＝生命週期控制）。
 /// 回傳 (done, rationale 摘要)——rationale 供呼叫端寫入診斷軌跡（record_event）。
+/// M3：附 todo 清單——完成評估看得到計畫進度（哪些項目還 pending），不再只看 400 字摘要。
 async fn evaluate_done(
     reasoner: &dyn Reasoner,
     commitment: &Commitment,
@@ -2284,8 +2386,15 @@ async fn evaluate_done(
     store: &(dyn Store + Send + Sync),
 ) -> anyhow::Result<(bool, String)> {
     let summaries = recent_artifact_summaries(store, artifact_ids, 6, 2_000)?;
+    let todos = store
+        .get_memory(&commitment.owner_employee_id)
+        .ok()
+        .flatten()
+        .map(|m| m.todos)
+        .unwrap_or_default();
     let eval_user = format!(
         "完成條件：{cond}\n本次產出的成果（近期）：\n{arts}\n\
+         進度清單：\n{todos}\n\
          判斷完成條件是否已滿足。只回 JSON：{{\"done\": true 或 false, \"rationale\": \"...\"}}。",
         cond = commitment.completion_condition,
         arts = if summaries.is_empty() {
@@ -2293,6 +2402,7 @@ async fn evaluate_done(
         } else {
             summaries.join("\n")
         },
+        todos = format_todo_state(&todos),
     );
     let v = reasoner.reason(EVAL_SYSTEM, &eval_user).await?;
     let done = v.get("done").and_then(|x| x.as_bool()).unwrap_or(false);
@@ -4643,7 +4753,8 @@ mod tests {
                 employee_id: emp_id.clone(),
                 notes: vec!["note".into()],
                 last_artifact_id: None,
-                updated_at: "t".into(),
+
+todos: Vec::new(),                updated_at: "t".into(),
             })
             .unwrap();
         store

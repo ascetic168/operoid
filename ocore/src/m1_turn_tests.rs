@@ -274,6 +274,66 @@ async fn conversational_downgrades_to_legacy_on_unsupported() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// native：update_todos 寫入 Memory（落庫、跨回合存活）＋結果 note 帶清單狀態。
+#[tokio::test]
+async fn conversational_native_update_todos_persists() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "幫我追蹤這件事");
+    let tool = StubTool::new("x");
+    let reasoner = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call(
+            "update_todos",
+            serde_json::json!({"todos": [
+                {"content": "蒐集出貨紀錄", "status": "completed", "priority": "high"},
+                {"content": "比對差異", "status": "in_progress"},
+                {"content": "回報客戶", "status": "pending", "priority": "low"}
+            ]}),
+        ),
+        NativeStubReasoner::text("已建立追蹤清單。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let memory = store.get_memory(&emp_id).unwrap().unwrap();
+    assert_eq!(memory.todos.len(), 3, "todos 應落庫");
+    assert_eq!(memory.todos[0].content, "蒐集出貨紀錄");
+    assert_eq!(memory.todos[0].status, "completed");
+    assert_eq!(memory.todos[2].priority.as_deref(), Some("low"));
+    // 回合仍正常收斂（有最終回覆）。
+    let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+    assert!(msgs.iter().any(|m| m.text.contains("追蹤清單")));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// format_todo_state：狀態標記與空清單語意。
+#[test]
+fn todo_state_format_marks_status() {
+    let todos = vec![
+        crate::domain::TodoItem {
+            content: "完成項".into(),
+            status: "completed".into(),
+            priority: None,
+        },
+        crate::domain::TodoItem {
+            content: "進行中項".into(),
+            status: "in_progress".into(),
+            priority: Some("high".into()),
+        },
+        crate::domain::TodoItem {
+            content: "待辦項".into(),
+            status: "pending".into(),
+            priority: None,
+        },
+    ];
+    let s = format_todo_state(&todos);
+    assert!(s.contains("- [x] 完成項"), "{s}");
+    assert!(s.contains("- [~] 進行中項（高）"), "{s}");
+    assert!(s.contains("- [ ] 待辦項"), "{s}");
+    assert!(format_todo_state(&[]).contains("尚未建立"), "{}", format_todo_state(&[]));
+}
+
 /// 通道情境：email 事件的 task 注入來源／事件時間／回覆通道；人類訊息則為空。
 #[test]
 fn channel_context_line_covers_source_and_time() {

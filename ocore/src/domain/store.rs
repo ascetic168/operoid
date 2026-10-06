@@ -972,6 +972,7 @@ mod tests {
             employee_id: "steve".into(),
             notes: vec!["ran something".into()],
             last_artifact_id: Some("a1".into()),
+            todos: Vec::new(),
             updated_at: "t".into(),
         };
         s.put_memory(&mem).unwrap();
