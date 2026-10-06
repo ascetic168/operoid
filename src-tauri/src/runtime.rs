@@ -544,6 +544,7 @@ pub async fn agent_handoff_task<R: tauri::Runtime>(
         project_id,
         external_reply_to: None,
         external_source: None,
+        occurred_at: None,
         created_at: now_rfc3339(),
     })?;
     Ok(TaskIdResult { task_id })

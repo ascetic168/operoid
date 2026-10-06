@@ -96,6 +96,7 @@ pub async fn dispatch_event(
             project_id: None,
             external_reply_to: ev.reply_to.clone(),
             external_source: Some(ev.source.clone()),
+            occurred_at: ev.occurred_at.clone(),
             created_at: now.clone(),
         })?;
         state.wake(WakeSignal {

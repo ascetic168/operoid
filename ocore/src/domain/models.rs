@@ -280,6 +280,10 @@ pub struct Task {
     /// bridge 以此選擇通道與寄件身分。None → 不外發。
     #[serde(default)]
     pub external_source: Option<String>,
+    /// M1：事件在來源系統**發生**的時間（RFC3339；≠ Operoid 收到時間）。對話回合注入
+    /// 通道情境——「這封信是昨天寄的」這類員工判斷需要它。舊資料／人類訊息 → None。
+    #[serde(default)]
+    pub occurred_at: Option<String>,
     pub created_at: Timestamp,
 }
 

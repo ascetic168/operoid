@@ -757,6 +757,7 @@ mod tests {
             project_id: None,
             external_reply_to: None,
             external_source: None,
+            occurred_at: None,
             created_at: "t".into(),
         };
         s.put_task(&task).unwrap();

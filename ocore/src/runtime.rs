@@ -33,7 +33,7 @@ use crate::domain::{id_from_name, next_id, now_rfc3339, Artifact, ArtifactStatus
 #[cfg(test)]
 use crate::domain::{Project, ProjectStatus};
 
-use crate::domain::tools::{parse_json_value, Reasoner, ReasonerFuture, ToolOutput, ToolSpec};
+use crate::domain::tools::{parse_json_value, ChatStepFuture, Reasoner, ReasonerFuture, ToolOutput, ToolSpec};
 
 use crate::i18n::AppError;
 
@@ -119,6 +119,7 @@ pub async fn run_cycle(
         project_id: project_id.map(str::to_string),
         external_reply_to: None,
         external_source: None,
+        occurred_at: None,
         created_at: now_rfc3339(),
     };
     store.put_task(&task)?;
@@ -618,10 +619,6 @@ fn now_line() -> String {
     format!("{}（週{wd}）", now.format("%Y-%m-%d %H:%M"))
 }
 
-/// 對話回合 tool-loop 的步數上限（E12）：防 LLM 失控循環。簡單回覆 1～2 步即收斂
-/// （think→finish 或直接 finish）；複雜訊息可查多寄多＋順帶提案。用盡 → best-effort 視同 finish。
-const MAX_TURN_STEPS: u32 = 6;
-
 /// 對話系統 prompt：基礎 [`TURN_SYSTEM`] ＋ write 動作說明（allowlist 閘門）＋
 /// 已授權類別清單（Ch.20 §5——登記表有效的 Fenced/Owned 類別；員工看不到的類別
 /// 就聲稱不了，封閉白名單的廉價實現）。
@@ -660,13 +657,18 @@ const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外�
   判斷準則：查資料用 search（快、省）；需要跨頁綜合結論才 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
   回覆人類一個回合只需一次（send 或 finish 擇一，不要重複回覆同一對象）；\
   純通知、與你職責無關、或你無可補充——直接 finish 且不帶 text（不回覆）。";
-/// 處理一則人類／外部訊息（Inbox task）：**回合內 tool-loop**（E12 tool-choice）——員工每步
-
-/// 選一個動作（`think` 查知識／`send` 外發／`propose` 提案承諾／`finish` 結束），最多
-/// [`MAX_TURN_STEPS`] 步。所有外發都是員工的行動（經 [`SendTool`]）——v1 的「寫完 Out
-/// message 自動外發」已移除。「要不要回」「寄給誰」是內容判斷（Principle 10），由員工決定。
-/// 回傳最後一次 think 的 artifact_id（知識證據產出）。**不**標記 task 完成——由呼叫端
-/// （`run_inbox`）統一收尾。
+/// 處理一則人類／外部訊息（Inbox task）：**回合內 tool-loop**（E12 tool-choice；M1 重寫）。
+///
+/// 雙協議（由 [`Reasoner`] 表態）：
+/// - **native**（[`Reasoner::supports_native_tools`]）：完整多訊息歷史（員工身分卡＋通道
+///   情境＋近期對話）＋原生 function calling。工具錯誤以 tool 結果餵回，模型可自癒；
+///   純文字回應即最終回覆。provider 不支援（`llm::ToolsUnsupported`）→ 當場降級 legacy。
+/// - **legacy**（文字 JSON 協議）：維持 v1 行為——每步以扁平 prompt 重建情境（供測試 stub
+///   與不支援 tools 的 provider）。
+///
+/// 所有外發都是員工的行動（經 [`SendTool`]）——「要不要回」「寄給誰」是內容判斷
+/// （Principle 10），由員工決定。回傳最後一次 think 的 artifact_id（知識證據產出）。
+/// **不**標記 task 完成——由呼叫端（`run_inbox`）統一收尾。
 async fn run_conversational_turn(
     employee_id: &str,
     task: &Task,
@@ -688,23 +690,41 @@ async fn run_conversational_turn(
         employee_id,
     );
 
-    let mut artifact_id: Option<String> = None;
-    let mut proposed_commitment_id: Option<String> = None;
-    let mut sent_any = false;
-    let mut steps: Vec<String> = Vec::new(); // 已完成步驟的結果（進每步的 user prompt）
-
     // 同通道單一回覆保證：LLM 在 tool-loop 內容易對同一對象 send＋send＋finish 各寫一則
     // Out Message（使用者收到三則幾乎相同的回覆）。此為 Runtime 結構保證——同一目標
     // （`to`；缺省＝喚醒訊息的回覆通道）一回合只成功送出一則；**不同目標放行**（多對象
-    // 通知）、**失敗的 send 不計入**（保留重試與 finish 保底）。達成「不對同一個人重複
-    // 說話」，而非「一回合一則訊息」。
-    let default_target = task
-        .external_reply_to
-        .clone()
-        .unwrap_or_else(|| "chat".into());
-    let mut replied: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // 通知）、**失敗的 send 不計入**（保留重試與 finish 保底）。
+    let mut s = TurnSession {
+        employee_id,
+        workspace_id: &workspace_id,
+        task,
+        knowledge,
+        send_tool: &send_tool,
+        ctx,
+        store,
+        artifact_id: None,
+        proposed_commitment_id: None,
+        sent_any: false,
+        final_replied: false,
+        suppress_silent: false,
+        replied: std::collections::HashSet::new(),
+        default_target: task
+            .external_reply_to
+            .clone()
+            .unwrap_or_else(|| "chat".into()),
+    };
 
-    for _ in 0..MAX_TURN_STEPS {
+    let channel = channel_context_line(task);
+    let mut steps: Vec<String> = Vec::new();
+    let mut native = reasoner.supports_native_tools();
+    let tools = if native { native_tool_defs(ctx) } else { Vec::new() };
+    let mut history: Vec<llm::ChatMessage> = if native {
+        build_native_turn_history(&emp, task, ctx, &channel, store)?
+    } else {
+        Vec::new()
+    };
+
+    for _ in 0..ctx.turn_max_steps.max(1) {
         // W1 合作式停止：步間窺視（不消耗旗標——由外層 runner 消耗），請求停止時
         // 視同靜默提前結束回合（不外發、不回覆；task 由呼叫端照常收尾）。
         if let Some(c) = cancel {
@@ -713,290 +733,129 @@ async fn run_conversational_turn(
                 break;
             }
         }
-        let user = format!(
-            "現在時間：{now}。\n訊息：{}\n\n{}\n請決定下一步動作（只回 JSON）。",
-            task.input,
-            if steps.is_empty() {
-                "（尚未行動）".into()
-            } else {
-                format!("已完成步驟結果：\n{}", steps.join("\n"))
-            },
-            now = now_line(),
-        );
-        let action = match reasoner.reason(&turn_system_prompt(ctx), &user).await {
-            Ok(v) => v,
-            Err(e) => {
-                // Reasoner 失敗（如 LLM rate limit）：若已有 think 證據，退化以最後證據回覆；
-                // 否則不回覆——不讓對話回合硬失敗（沿用 v1 的退化精神）。
-                eprintln!("[runtime] 對話 Reasoner 失敗（提前結束回合）: {e}");
-                record_event(store, &workspace_id, employee_id, "turn_error", &format!("{e}"));
-                break;
-            }
-        };
-        let act = action
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("finish")
-            .to_string();
-        match act.as_str() {
-            // search：輕量檢索（gbrain query）——以 params.tool 指名 Toolset 底下的檢索工具。
-            "search" => {
-                let query = action
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(task.input.as_str());
-                let mut params = serde_json::Map::new();
-                params.insert("tool".into(), serde_json::json!("search"));
-                let output = knowledge
-                    .invoke(
-                        ToolInput {
-                            query: query.to_string(),
-                            anchor: None,
-                            params: Some(params),
-                        },
-                        ctx,
-                    )
-                    .await?;
-                let snippet: String = output.text.chars().take(1200).collect();
-                steps.push(format!("[search「{query}」] 結果（節錄）：{snippet}"));
-            }
-            "think" => {
-                let query = action
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(task.input.as_str());
-                let output = knowledge
-                    .invoke(
-                        ToolInput {
-                            query: query.to_string(),
-                            anchor: None,
-                            params: None,
-                        },
-                        ctx,
-                    )
-                    .await?;
-                artifact_id = Some(commit_artifact(
-                    store,
-                    &workspace_id,
-                    employee_id,
-                    query,
-                    &output.text,
-                    Some(&task.id),
-                    task.commitment_id.as_deref(),
-                    task.project_id.as_deref(),
-                )?);
-                let snippet: String = output.text.chars().take(1200).collect();
-                steps.push(format!("[think「{query}」] 證據（節錄）：{snippet}"));
-            }
-            // W3（D-H2/D-H3）：把完整產出寫成筆記檔——專屬產出目錄（不入圖譜）、
-            // allowlist 閘門（無權限回報員工，仿 SendTool 未啟用語意）。
-            "write" => {
-                if !ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
-                    steps.push("[write] 未啟用：此員工無 write-note 工具權限。".into());
-                    continue;
-                }
-                let mut params = serde_json::Map::new();
-                for key in ["filename", "title", "content"] {
-                    if let Some(v) = action.get(key).and_then(|v| v.as_str()) {
-                        params.insert(key.into(), serde_json::Value::String(v.to_string()));
+        if native {
+            // ── native 步：多訊息歷史＋原生 function calling ──
+            let turn = match reasoner.chat_step(&history, &tools).await {
+                Ok(t) => t,
+                Err(e) => {
+                    if e.downcast_ref::<llm::ToolsUnsupported>().is_some() {
+                        // provider 不支援 → 當場降級 legacy（本回合後續步走文字 JSON 協議）。
+                        eprintln!("[runtime] provider 不支援原生工具呼叫，降級文字 JSON 協議");
+                        native = false;
+                        history.clear();
+                        continue;
+                    }
+                    // 暫態失敗：單次重試（llm 層已有 HTTP 重試；此處防單步抖動中斷回合）。
+                    eprintln!("[runtime] 對話 native 步失敗（重試一次）: {e}");
+                    match reasoner.chat_step(&history, &tools).await {
+                        Ok(t) => t,
+                        Err(e2) => {
+                            eprintln!("[runtime] 對話 Reasoner 失敗（提前結束回合）: {e2}");
+                            record_event(
+                                store,
+                                &workspace_id,
+                                employee_id,
+                                "turn_error",
+                                &format!("{e2}"),
+                            );
+                            break;
+                        }
                     }
                 }
-                let title = action
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let content = action
-                    .get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let write_tool = crate::write_note::WriteNoteTool::new(
-                    ctx.employee_output_root.clone(),
-                    employee_id,
-                );
-                let out = write_tool
-                    .invoke(
-                        ToolInput {
-                            query: String::new(),
-                            anchor: None,
-                            params: Some(params),
-                        },
-                        ctx,
-                    )
-                    .await?;
-                if out.meta.get("outcome").and_then(|v| v.as_str()) == Some("written") {
-                    // 檔案是產出副本、Artifact 是 first-class 紀錄（provenance 完整）。
-                    let aid = commit_artifact(
-                        store,
-                        &workspace_id,
-                        employee_id,
-                        if title.is_empty() { "寫入筆記" } else { &title },
-                        &content,
-                        Some(&task.id),
-                        task.commitment_id.as_deref(),
-                        task.project_id.as_deref(),
-                    )?;
-                    artifact_id = Some(aid);
+            };
+            if turn.tool_calls.is_empty() {
+                // 純文字回應＝最終回覆（finish-with-text 的 native 等價）。
+                if let Some(text) = turn.content {
+                    if !text.trim().is_empty() {
+                        if s.replied.contains(&s.default_target) {
+                            s.suppress_silent = true; // 已回覆過：不再重複寫
+                        } else {
+                            s.write_final_reply(&text)?;
+                        }
+                    }
                 }
-                steps.push(format!("[write] {}", out.text));
+                break; // 空文字 → silent 語意。
             }
-            "send" => {
-                let text = action
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_default();
-                if text.trim().is_empty() {
-                    steps.push("[send] 失敗：text 不可為空。".into());
-                    continue;
-                }
-                // 同通道單一回覆：此目標本回合已成功送出 → 不再重複（見函式開頭註解）。
-                let target = action
-                    .get("to")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| default_target.clone());
-                if replied.contains(&target) {
-                    steps.push(format!(
-                        "[send] 已回覆過 {target}，同一回合不重複送出；如無其他對象請 finish。"
-                    ));
-                    continue;
-                }
-                let mut params = serde_json::Map::new();
-                params.insert("text".into(), serde_json::Value::String(text.clone()));
-                if let Some(to) = action.get("to").and_then(|v| v.as_str()) {
-                    params.insert("to".into(), serde_json::Value::String(to.into()));
-                }
-                let out = send_tool
-                    .invoke(
-                        ToolInput {
-                            query: String::new(),
-                            anchor: None,
-                            params: Some(params),
-                        },
-                        ctx,
-                    )
-                    .await?;
-                // 內部對話歷史如實記錄外發內容（Ch.16）＋事件（成功／失敗；skipped 不記）。
-                store.put_message(&Message {
-                    id: fresh_id("msg-out"),
-                    workspace_id: workspace_id.clone(),
-                    employee_id: employee_id.to_string(),
-                    direction: MessageDirection::Out,
-                    text: text.clone(),
-                    proposed_commitment_id: None,
-                    source_commitment_id: task.commitment_id.clone(),
-                    artifact_id: artifact_id.clone(),
-                    created_at: now_rfc3339(),
-                })?;
-                match out.meta.get("outcome").and_then(|v| v.as_str()) {
-                    Some("sent") => {
-                        sent_any = true;
-                        replied.insert(target);
-                        record_event(
-                            store,
-                            &workspace_id,
-                            employee_id,
-                            "outbound_sent",
-                            out.meta.get("to").and_then(|v| v.as_str()).unwrap_or("?"),
+            history.push(llm::ChatMessage::assistant(
+                turn.content.clone().unwrap_or_default(),
+                turn.tool_calls.clone(),
+            ));
+            // 逐步執行本步的全部工具呼叫（v1 順序執行）。finish 命中即結束——其餘呼叫
+            // 補佔位 tool 結果，保協議完整（每個 tool_call_id 都要有回應）。
+            let mut finish_now = false;
+            for tc in &turn.tool_calls {
+                let action = s.execute_tool_call(&tc.name, &tc.arguments).await;
+                match action {
+                    Some(TurnAction::Continue { note }) => {
+                        steps.push(note.clone());
+                        history.push(llm::ChatMessage::tool(&tc.id, note));
+                    }
+                    Some(TurnAction::Finish) => finish_now = true,
+                    // native 的未知工具：回錯誤 note 讓模型改用列出的工具（不中斷回合）。
+                    None => {
+                        let note = format!(
+                            "[{}] 不是可用的工具；請改用系統列出的工具。",
+                            tc.name
                         );
+                        steps.push(note.clone());
+                        history.push(llm::ChatMessage::tool(&tc.id, note));
                     }
-                    // skipped＝外發未啟用、error(no source)＝純內部聊天——兩者的 Out Message
-                    // 都已寫入歷史（人類看得到）→ 計入已回覆；唯 failed（bridge 真的沒送達）
-                    // 保留重試與 finish 保底。
-                    Some("skipped") | Some("error") => {
-                        replied.insert(target);
-                    }
-                    Some("failed") => record_event(
-                        store,
-                        &workspace_id,
-                        employee_id,
-                        "outbound_failed",
-                        &out.text,
-                    ),
-                    _ => {}
                 }
-                steps.push(format!("[send] {}", out.text));
-            }
-            "propose" => {
-                let title = action.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                let condition = action
-                    .get("condition")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let claimed = action.get("category").and_then(|v| v.as_str());
-                if title.is_empty() || condition.is_empty() {
-                    steps.push("[propose] 失敗：title 與 condition 皆必填。".into());
-                    continue;
-                }
-                // 分類查表（Ch.20 §5.4）：Auto → 自動啟用（記事件、全數可見）；
-                // Human → 現行 Proposed 路徑（gate_reason 記錄為何進人類通道）。
-                let now = now_rfc3339();
-                match crate::registry::classify_proposal(
-                    ctx.registry.as_deref(),
-                    title,
-                    condition,
-                    claimed,
-                    &now,
-                ) {
-                    crate::registry::GateDecision::Auto { category_id } => {
-                        let rate = ctx
-                            .registry
-                            .as_ref()
-                            .and_then(|r| r.category(&category_id))
-                            .map(|c| c.sampling_rate)
-                            .unwrap_or(1.0);
-                        create_fenced_commitment(
-                            store, &workspace_id, employee_id, title, condition,
-                            &category_id, rate,
-                        )?;
-                        steps.push(format!(
-                            "[propose] 已自動啟用承諾（類別 {category_id}）：{title}"
+                if finish_now {
+                    for rest in turn.tool_calls.iter().skip_while(|c| c.id != tc.id).skip(1) {
+                        history.push(llm::ChatMessage::tool(
+                            &rest.id,
+                            "（回合已結束，此呼叫未執行）",
                         ));
                     }
-                    crate::registry::GateDecision::Human { reason } => {
-                        let cid = create_proposed_commitment(
-                            store, &workspace_id, employee_id, title, condition, Some(reason),
-                        )?;
-                        proposed_commitment_id = Some(cid.clone());
-                        steps.push(format!("[propose] 已提案承諾（待核可）：{title}"));
-                    }
+                    break;
                 }
             }
-            _ => {
-                // finish（含未知 action 的 fail-safe）：有 text → 寫最終 Out Message。
-                // 同通道單一回覆：回覆通道已送出過（send 成功/skipped）→ 不再重複寫
-                // （此為使用者收到重複回覆的主要來源：send 後 finish 又帶 text）。
-                if replied.contains(&default_target) {
-                    return Ok(artifact_id);
+            compact_native_history(&mut history);
+            if finish_now {
+                break;
+            }
+        } else {
+            // ── legacy 步：扁平 prompt＋文字 JSON 協議（行為同 v1）──
+            let user = format!(
+                "現在時間：{now}。\n{channel}訊息：{}\n\n{}\n請決定下一步動作（只回 JSON）。",
+                task.input,
+                if steps.is_empty() {
+                    "（尚未行動）".into()
+                } else {
+                    format!("已完成步驟結果：\n{}", steps.join("\n"))
+                },
+                now = now_line(),
+            );
+            let action = match reasoner.reason(&turn_system_prompt(ctx), &user).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // Reasoner 失敗（如 LLM rate limit）：不讓對話回合硬失敗（沿用 v1 退化精神）。
+                    eprintln!("[runtime] 對話 Reasoner 失敗（提前結束回合）: {e}");
+                    record_event(store, &workspace_id, employee_id, "turn_error", &format!("{e}"));
+                    break;
                 }
-                if let Some(text) = action.get("text").and_then(|v| v.as_str()) {
-                    if !text.trim().is_empty() {
-                        store.put_message(&Message {
-                            id: fresh_id("msg-out"),
-                            workspace_id: workspace_id.clone(),
-                            employee_id: employee_id.to_string(),
-                            direction: MessageDirection::Out,
-                            text: text.to_string(),
-                            // 提案 id 掛在最終回覆（聊天頁核可鈕比對用，v1 相容）。
-                            proposed_commitment_id: proposed_commitment_id.clone(),
-                            source_commitment_id: task.commitment_id.clone(),
-                            artifact_id: artifact_id.clone(),
-                            created_at: now_rfc3339(),
-                        })?;
-                        record_event(store, &workspace_id, employee_id, "reply", "conversational turn");
-                        return Ok(artifact_id);
-                    }
+            };
+            let act = action
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("finish")
+                .to_string();
+            match s.execute_tool_call(&act, &action).await {
+                Some(TurnAction::Continue { note }) => steps.push(note),
+                Some(TurnAction::Finish) => break,
+                // legacy 的未知 action 維持 v1 fail-safe：視同 finish（含 text 處理）。
+                None => {
+                    s.finish_from_args(&action).await;
+                    break;
                 }
-                break; // finish 無 text（或空）→ silent 語意。
             }
         }
     }
 
-    // 回合結束（finish 無 text／步數用盡／Reasoner 中途失敗）：若全程未 send 也未回覆 → silent
-    // （員工判斷無需回應，kind=none 的等價物——「要不要回」是員工的內容判斷，Principle 10）。
-    if !sent_any {
+    // 回合結束收尾（語意同 v1）：全程未 send 且未回覆 → silent（「要不要回」是員工的
+    // 內容判斷，Principle 10）；已在 finish 寫過最終回覆者記過 reply 事件。
+    if !s.sent_any && !s.final_replied && !s.suppress_silent {
         record_event(
             store,
             &workspace_id,
@@ -1005,7 +864,571 @@ async fn run_conversational_turn(
             "依判斷不回覆（回合內未 send、無最終回覆）",
         );
     }
-    Ok(artifact_id)
+    Ok(s.artifact_id)
+}
+
+// ───────────────── 對話回合：雙協議共用的動作執行器（M1）─────────────────
+
+/// 一次對話回合的動作結果。
+enum TurnAction {
+    /// 繼續迴圈；`note` 進 legacy steps／native tool 結果。
+    Continue { note: String },
+    /// 結束回合。
+    Finish,
+}
+
+/// 一次對話回合的可變工作狀態——native／legacy 兩協議共用同一套動作執行
+/// （`execute_tool_call`），行為（artifact 提交、Message 記錄、事件、單一回覆保證）只有一份。
+struct TurnSession<'a> {
+    employee_id: &'a str,
+    workspace_id: &'a str,
+    task: &'a Task,
+    knowledge: &'a dyn Tool,
+    send_tool: &'a SendTool,
+    ctx: &'a ToolCtx,
+    store: &'a (dyn Store + Send + Sync),
+    /// 最後一次 think／write 的 artifact（知識證據；回合回傳值）。
+    artifact_id: Option<String>,
+    /// 本回合新提案、待核可的 commitment id（掛在最終回覆上，聊天頁核可鈕比對用）。
+    proposed_commitment_id: Option<String>,
+    sent_any: bool,
+    final_replied: bool,
+    /// finish 時發現預設通道已回覆過 → 抑制 silent 事件（語意同 v1 的提前 return）。
+    suppress_silent: bool,
+    /// 同通道單一回覆：已成功送出（或已入歷史）的目標集合。
+    replied: std::collections::HashSet<String>,
+    /// 預設回覆目標（喚醒訊息的回覆通道；無外部來源＝"chat"）。
+    default_target: String,
+}
+
+impl<'a> TurnSession<'a> {
+    /// 工具結果截斷（M1：1,200 → `tool_result_max_chars`，預設 8,000 字元）。
+    fn take(&self, text: &str) -> String {
+        text.chars().take(self.ctx.tool_result_max_chars).collect()
+    }
+
+    /// 寫最終回覆 Out Message（掛提案 id 與知識證據）＋ reply 事件。
+    fn write_final_reply(&mut self, text: &str) -> anyhow::Result<()> {
+        self.store.put_message(&Message {
+            id: fresh_id("msg-out"),
+            workspace_id: self.workspace_id.to_string(),
+            employee_id: self.employee_id.to_string(),
+            direction: MessageDirection::Out,
+            text: text.to_string(),
+            proposed_commitment_id: self.proposed_commitment_id.clone(),
+            source_commitment_id: self.task.commitment_id.clone(),
+            artifact_id: self.artifact_id.clone(),
+            created_at: now_rfc3339(),
+        })?;
+        record_event(
+            self.store,
+            self.workspace_id,
+            self.employee_id,
+            "reply",
+            "conversational turn",
+        );
+        self.final_replied = true;
+        Ok(())
+    }
+
+    /// finish 語意（v1 相容）：有 text 且未回覆過預設通道 → 寫最終回覆；已回覆過 → 抑制
+    /// silent（不再重複寫——使用者收到重複回覆的主因就是 send 後 finish 又帶 text）。
+    async fn finish_from_args(&mut self, args: &serde_json::Value) -> TurnAction {
+        let text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !text.is_empty() {
+            if self.replied.contains(&self.default_target) {
+                self.suppress_silent = true;
+            } else {
+                let _ = self.write_final_reply(&text);
+            }
+        }
+        TurnAction::Finish
+    }
+
+    /// 執行一個員工動作（legacy JSON action 或 native function 呼叫；兩協議共用）。
+    /// 回 `None`＝未知工具（呼叫端決定：native 回錯誤 note 續跑；legacy fail-safe 視同 finish）。
+    /// M1：工具執行失敗一律以錯誤 note 回給模型（繼續迴圈、模型可自癒），不再硬失敗整個回合。
+    async fn execute_tool_call(
+        &mut self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> Option<TurnAction> {
+        match name {
+            // search：輕量檢索（gbrain query）——以 params.tool 指名 Toolset 底下的檢索工具。
+            "search" | "gbrain_search" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(self.task.input.as_str());
+                let knowledge = self.knowledge;
+                let ctx = self.ctx;
+                let mut params = serde_json::Map::new();
+                params.insert("tool".into(), serde_json::json!("search"));
+                let output = match knowledge
+                    .invoke(
+                        ToolInput { query: query.to_string(), anchor: None, params: Some(params) },
+                        ctx,
+                    )
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Some(TurnAction::Continue {
+                            note: format!("[search] 失敗：{e}（請換個查詢，或改用其他行動）"),
+                        })
+                    }
+                };
+                let snippet = self.take(&output.text);
+                Some(TurnAction::Continue {
+                    note: format!("[search「{query}」] 結果（節錄）：{snippet}"),
+                })
+            }
+            "think" | "gbrain_think" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(self.task.input.as_str());
+                let knowledge = self.knowledge;
+                let ctx = self.ctx;
+                let output = match knowledge
+                    .invoke(
+                        ToolInput { query: query.to_string(), anchor: None, params: None },
+                        ctx,
+                    )
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Some(TurnAction::Continue {
+                            note: format!("[think] 失敗：{e}（請換個查詢，或改用其他行動）"),
+                        })
+                    }
+                };
+                let (store, ws, emp, task) =
+                    (self.store, self.workspace_id, self.employee_id, self.task);
+                match commit_artifact(
+                    store,
+                    ws,
+                    emp,
+                    query,
+                    &output.text,
+                    Some(&task.id),
+                    task.commitment_id.as_deref(),
+                    task.project_id.as_deref(),
+                ) {
+                    Ok(aid) => self.artifact_id = Some(aid),
+                    Err(e) => {
+                        return Some(TurnAction::Continue {
+                            note: format!("[think] artifact 提交失敗：{e}"),
+                        })
+                    }
+                }
+                let snippet = self.take(&output.text);
+                Some(TurnAction::Continue {
+                    note: format!("[think「{query}」] 證據（節錄）：{snippet}"),
+                })
+            }
+            // W3（D-H2/D-H3）：把完整產出寫成筆記檔——專屬產出目錄（不入圖譜）、
+            // allowlist 閘門（無權限回報員工，仿 SendTool 未啟用語意）。
+            "write" | "write_note" => {
+                if !self.ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
+                    return Some(TurnAction::Continue {
+                        note: "[write] 未啟用：此員工無 write-note 工具權限。".into(),
+                    });
+                }
+                let mut params = serde_json::Map::new();
+                for key in ["filename", "title", "content"] {
+                    if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
+                        params.insert(key.into(), serde_json::Value::String(v.to_string()));
+                    }
+                }
+                let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let write_tool = crate::write_note::WriteNoteTool::new(
+                    self.ctx.employee_output_root.clone(),
+                    self.employee_id,
+                );
+                let ctx = self.ctx;
+                let out = match write_tool
+                    .invoke(
+                        ToolInput { query: String::new(), anchor: None, params: Some(params) },
+                        ctx,
+                    )
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Some(TurnAction::Continue { note: format!("[write] 失敗：{e}") })
+                    }
+                };
+                if out.meta.get("outcome").and_then(|v| v.as_str()) == Some("written") {
+                    // 檔案是產出副本、Artifact 是 first-class 紀錄（provenance 完整）。
+                    let (store, ws, emp, task) =
+                        (self.store, self.workspace_id, self.employee_id, self.task);
+                    match commit_artifact(
+                        store,
+                        ws,
+                        emp,
+                        if title.is_empty() { "寫入筆記" } else { &title },
+                        &content,
+                        Some(&task.id),
+                        task.commitment_id.as_deref(),
+                        task.project_id.as_deref(),
+                    ) {
+                        Ok(aid) => self.artifact_id = Some(aid),
+                        Err(e) => {
+                            return Some(TurnAction::Continue {
+                                note: format!("[write] artifact 提交失敗：{e}"),
+                            })
+                        }
+                    }
+                }
+                Some(TurnAction::Continue { note: format!("[write] {}", out.text) })
+            }
+            "send" | "send_message" => {
+                let text = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    return Some(TurnAction::Continue {
+                        note: "[send] 失敗：text 不可為空。".into(),
+                    });
+                }
+                // 同通道單一回覆：此目標本回合已成功送出 → 不再重複（見 run_conversational_turn）。
+                let target = args
+                    .get("to")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| self.default_target.clone());
+                if self.replied.contains(&target) {
+                    return Some(TurnAction::Continue {
+                        note: format!(
+                            "[send] 已回覆過 {target}，同一回合不重複送出；如無其他對象請結束。"
+                        ),
+                    });
+                }
+                let mut params = serde_json::Map::new();
+                params.insert("text".into(), serde_json::Value::String(text.clone()));
+                if let Some(to) = args.get("to").and_then(|v| v.as_str()) {
+                    params.insert("to".into(), serde_json::Value::String(to.into()));
+                }
+                let send_tool = self.send_tool;
+                let ctx = self.ctx;
+                let out = match send_tool
+                    .invoke(
+                        ToolInput { query: String::new(), anchor: None, params: Some(params) },
+                        ctx,
+                    )
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return Some(TurnAction::Continue {
+                            note: format!("[send] 失敗：{e}（可重試，或改用其他行動）"),
+                        })
+                    }
+                };
+                // 內部對話歷史如實記錄外發內容（Ch.16）＋事件（成功／失敗；skipped 不記）。
+                let (store, ws, emp, task) =
+                    (self.store, self.workspace_id, self.employee_id, self.task);
+                if let Err(e) = store.put_message(&Message {
+                    id: fresh_id("msg-out"),
+                    workspace_id: ws.to_string(),
+                    employee_id: emp.to_string(),
+                    direction: MessageDirection::Out,
+                    text: text.clone(),
+                    proposed_commitment_id: None,
+                    source_commitment_id: task.commitment_id.clone(),
+                    artifact_id: self.artifact_id.clone(),
+                    created_at: now_rfc3339(),
+                }) {
+                    return Some(TurnAction::Continue {
+                        note: format!("[send] 對話歷史記錄失敗：{e}"),
+                    });
+                }
+                match out.meta.get("outcome").and_then(|v| v.as_str()) {
+                    Some("sent") => {
+                        self.sent_any = true;
+                        self.replied.insert(target.clone());
+                        record_event(
+                            store,
+                            ws,
+                            emp,
+                            "outbound_sent",
+                            out.meta.get("to").and_then(|v| v.as_str()).unwrap_or("?"),
+                        );
+                    }
+                    // skipped＝外發未啟用、error(no source)＝純內部聊天——兩者的 Out Message
+                    // 都已寫入歷史（人類看得到）→ 計入已回覆；唯 failed（bridge 真的沒送達）
+                    // 保留重試與 finish 保底。
+                    Some("skipped") | Some("error") => {
+                        self.replied.insert(target.clone());
+                    }
+                    Some("failed") => record_event(store, ws, emp, "outbound_failed", &out.text),
+                    _ => {}
+                }
+                Some(TurnAction::Continue { note: format!("[send] {}", out.text) })
+            }
+            "propose" | "propose_commitment" => {
+                let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let condition = args.get("condition").and_then(|v| v.as_str()).unwrap_or("");
+                let claimed = args.get("category").and_then(|v| v.as_str());
+                if title.is_empty() || condition.is_empty() {
+                    return Some(TurnAction::Continue {
+                        note: "[propose] 失敗：title 與 condition 皆必填。".into(),
+                    });
+                }
+                // 分類查表（Ch.20 §5.4）：Auto → 自動啟用（記事件、全數可見）；
+                // Human → 現行 Proposed 路徑（gate_reason 記錄為何進人類通道）。
+                let now = now_rfc3339();
+                let ctx = self.ctx;
+                let (store, ws, emp) = (self.store, self.workspace_id, self.employee_id);
+                match crate::registry::classify_proposal(ctx.registry.as_deref(), title, condition, claimed, &now) {
+                    crate::registry::GateDecision::Auto { category_id } => {
+                        let rate = ctx
+                            .registry
+                            .as_ref()
+                            .and_then(|r| r.category(&category_id))
+                            .map(|c| c.sampling_rate)
+                            .unwrap_or(1.0);
+                        match create_fenced_commitment(store, ws, emp, title, condition, &category_id, rate) {
+                            Ok(_) => Some(TurnAction::Continue {
+                                note: format!("[propose] 已自動啟用承諾（類別 {category_id}）：{title}"),
+                            }),
+                            Err(e) => Some(TurnAction::Continue {
+                                note: format!("[propose] 建立承諾失敗：{e}"),
+                            }),
+                        }
+                    }
+                    crate::registry::GateDecision::Human { reason } => {
+                        match create_proposed_commitment(store, ws, emp, title, condition, Some(reason)) {
+                            Ok(cid) => {
+                                self.proposed_commitment_id = Some(cid.clone());
+                                Some(TurnAction::Continue {
+                                    note: format!("[propose] 已提案承諾（待核可）：{title}"),
+                                })
+                            }
+                            Err(e) => Some(TurnAction::Continue {
+                                note: format!("[propose] 建立承諾失敗：{e}"),
+                            }),
+                        }
+                    }
+                }
+            }
+            "finish" => Some(self.finish_from_args(args).await),
+            _ => None,
+        }
+    }
+}
+
+/// 通道情境行（M1）：來源／事件時間／回覆通道——讓「BCC 副本降優先」「回信回同一 thread」
+/// 這類員工判斷有據（呼應統一事件 ingress 契約：bridge 持全文，Operoid 呈現脈絡）。
+/// 兩協議共用：native 進首則 user 訊息、legacy 進每步扁平 prompt。
+fn channel_context_line(task: &Task) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(src) = &task.external_source {
+        parts.push(format!("來源通道：{src}"));
+    }
+    if let Some(occ) = &task.occurred_at {
+        parts.push(format!("事件發生時間：{occ}"));
+    }
+    if task.external_reply_to.is_some() {
+        parts.push("回覆將送回原通道".into());
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("〔通道〕{}。\n", parts.join("；"))
+    }
+}
+
+/// native 對話的工具定義（allowlist 閘門）：單一真相源——system prompt 的能力說明由此
+/// 生成，員工看不到的工具就選不了（封閉白名單的廉價實現，Ch.20 §5）。
+fn native_tool_defs(ctx: &ToolCtx) -> Vec<llm::ToolDef> {
+    fn obj(name: &str, desc: &str, schema: serde_json::Value) -> llm::ToolDef {
+        llm::ToolDef { name: name.into(), description: desc.into(), parameters: schema }
+    }
+    let mut defs = vec![
+        obj(
+            "gbrain_search",
+            "快速檢索知識圖譜的相關頁面（無合成、省時；查資料／找原文時優先用）。",
+            serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "檢索語詞"}},
+                "required": ["query"]
+            }),
+        ),
+        obj(
+            "gbrain_think",
+            "對知識圖譜做多跳引用合成（需要綜合結論／依據才回答時用；較慢）。",
+            serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "要綜合的問題"}},
+                "required": ["query"]
+            }),
+        ),
+        obj(
+            "send_message",
+            "把訊息寄給外部對象（經 bridge；內部對話也會留紀錄）。",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "送達目標（可省＝回覆喚醒你的這則訊息）"},
+                    "text": {"type": "string", "description": "要外發的訊息全文"}
+                },
+                "required": ["text"]
+            }),
+        ),
+        obj(
+            "propose_commitment",
+            "提案一個長期承諾；屬已授權類別者可免核可自動啟用，其餘待人類核可。",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "承諾標題"},
+                    "condition": {"type": "string", "description": "完成條件"},
+                    "category": {"type": "string", "description": "已授權類別 id（可選）"}
+                },
+                "required": ["title", "condition"]
+            }),
+        ),
+        obj(
+            "finish",
+            "結束本回合。text 為給人類的最終回覆（省略＝不回覆）。直接以文字回應也可以——兩者擇一。",
+            serde_json::json!({
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "給人類的最終回覆（可省）"}}
+            }),
+        ),
+    ];
+    if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
+        defs.push(obj(
+            "write_note",
+            "把一份完整產出寫成筆記檔（落於你的專屬產出目錄，供人類審閱）。",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string"},
+                    "title": {"type": "string"},
+                    "content": {"type": "string", "description": "完整 markdown 全文"}
+                },
+                "required": ["filename", "content"]
+            }),
+        ));
+    }
+    defs
+}
+
+/// native 對話的 system prompt：員工身分卡（名稱／職務——v1 完全沒進 context）＋能力說明
+/// （由工具定義生成）＋已授權類別＋行為準則。
+fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
+    let role_line = match emp.role.as_deref() {
+        Some(r) if !r.trim().is_empty() => format!("\n你的職務：{r}"),
+        _ => String::new(),
+    };
+    let tool_lines: Vec<String> = native_tool_defs(ctx)
+        .iter()
+        .map(|t| format!("- {}: {}", t.name, t.description))
+        .collect();
+    let mut prompt = format!(
+        "你是「{name}」，Operoid 工作區的成員，正在處理一則人類或外部訊息。{role_line}\n\
+         現在時間：{now}\n\n\
+         ## 可用工具（以 function calling 呼叫）\n{tools}\n\n\
+         ## 行為準則\n\
+         - 每步可呼叫一或多個工具；結果會在下一則訊息回給你。工具回報錯誤時，換方法或換查詢，不要原樣重試。\n\
+         - 查資料用 gbrain_search（快、省）；需要跨頁綜合結論才 gbrain_think。\n\
+         - 回覆人類：直接以文字回應（不需呼叫工具），或呼叫 finish 帶 text。兩者擇一，同一對象一回合只回覆一次。\n\
+         - 通知其他對象用 send_message；值得長期追蹤的事用 propose_commitment 提案。\n\
+         - 純通知、與你職責無關、或你無可補充——呼叫 finish 且不帶 text（不回覆）。\n\
+         - 任務做完就結束，不要為了多做而多做。",
+        name = emp.name,
+        now = now_line(),
+        tools = tool_lines.join("\n"),
+    );
+    if let Some(reg) = &ctx.registry {
+        let now = now_rfc3339();
+        let active: Vec<String> = reg
+            .categories
+            .iter()
+            .filter(|c| crate::registry::category_auto_active(c, &now))
+            .map(|c| format!("「{}」（{}）", c.id, c.description))
+            .collect();
+        if !active.is_empty() {
+            prompt.push_str(&format!(
+                "\n\npropose_commitment 的 category 可填以下已授權類別之一：{}。\
+                 無適用類別則省略 category——提案將送人類核可。",
+                active.join("、")
+            ));
+        }
+    }
+    prompt
+}
+
+/// native 對話的初始歷史：system（身分卡）＋近期對話（近 10 則 In/Out 映射 user/assistant，
+/// 去掉與本則任務重複的喚醒訊息）＋本則任務（含通道情境）。員工自此記得之前的對話。
+fn build_native_turn_history(
+    emp: &Employee,
+    task: &Task,
+    ctx: &ToolCtx,
+    channel_line: &str,
+    store: &(dyn Store + Send + Sync),
+) -> anyhow::Result<Vec<llm::ChatMessage>> {
+    let mut msgs: Vec<Message> = store.list_messages_by_employee(&emp.id, 11)?;
+    msgs.reverse(); // store 回傳最新在前 → 反轉成時間序
+    // 喚醒訊息（In）與本則任務輸入相同 → 不進歷史（由本則 user 訊息承載）。
+    while msgs
+        .last()
+        .map(|m| m.direction == MessageDirection::In && m.text.trim() == task.input.trim())
+        .unwrap_or(false)
+    {
+        msgs.pop();
+    }
+    // msgs 已是時間序（最舊在前）——取最後 10 則即最近的對話。
+    let start = msgs.len().saturating_sub(10);
+    let recent: Vec<Message> = msgs[start..].to_vec();
+    let mut history = vec![llm::ChatMessage::system(native_turn_system_prompt(emp, ctx))];
+    for m in recent {
+        match m.direction {
+            MessageDirection::In => history.push(llm::ChatMessage::user(m.text)),
+            MessageDirection::Out => history.push(llm::ChatMessage::assistant(m.text, Vec::new())),
+        }
+    }
+    history.push(llm::ChatMessage::user(format!(
+        "{channel_line}現在時間：{now}。\n訊息：{input}",
+        now = now_line(),
+        input = task.input,
+    )));
+    Ok(history)
+}
+
+/// native 歷史的確定性壓縮：工具結果超過 12 則時，較舊者截到 1,200 字元（保留最後 3 則全文）。
+/// 純截斷、可預測、零額外 LLM 呼叫；完整內容仍可在 artifact／檔案中查得。
+fn compact_native_history(history: &mut [llm::ChatMessage]) {
+    const KEEP_FULL: usize = 3;
+    const SHORT: usize = 1_200;
+    let tool_idx: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == llm::ChatRole::Tool)
+        .map(|(i, _)| i)
+        .collect();
+    if tool_idx.len() <= KEEP_FULL + 9 {
+        return;
+    }
+    for &i in &tool_idx[..tool_idx.len() - KEEP_FULL] {
+        let m = &mut history[i];
+        if m.content.chars().count() > SHORT {
+            let trunc: String = m.content.chars().take(SHORT).collect();
+            m.content = format!("{trunc}…（較舊的工具結果已截斷；完整內容見 artifact）");
+        }
+    }
 }
 
 // ───────────────── 承諾驅動自主循環（Phase 6b）─────────────────
@@ -1016,11 +1439,12 @@ pub struct CycleBudget {
 }
 
 impl CycleBudget {
-    /// 一次喚醒 session 的預設預算（10 輪、5 分鐘）。
+    /// 一次喚醒 session 的預設預算（25 輪、15 分鐘；M1 前為 10 輪、5 分鐘——複雜承諾
+    /// 根本跑不完）。正式路徑以 `AppConfig::autonomy_max_cycles`／`autonomy_max_minutes` 覆寫。
     pub fn default_session() -> Self {
         Self {
-            max_cycles: 10,
-            max_duration: Duration::from_secs(300),
+            max_cycles: 25,
+            max_duration: Duration::from_secs(900),
         }
     }
 }
@@ -1063,7 +1487,9 @@ pub fn commitment_retry_backoff(retry_count: u32) -> Duration {
 
 /// W2（T2）：`run_autonomous` 結果對承諾重試欄位的更新——
 /// `Satisfied` 歸零；`Errored` 計數 +1 並排退避（達上限則停止排程＋記 `retry_exhausted`）；
-/// `Stalled`／`Cancelled` 不動（非錯誤）。由 `run_commitments_for_employee` 每承諾收尾時呼叫。
+/// M1：`Stalled` 也排退避（較 Errored 短：退避值減半）——卡住的承諾自動醒來續跑，
+/// 「不斷重複直到解決」；連續卡住達上限同樣記 `retry_exhausted` 待人類。
+/// `Cancelled` 不動（人為）。由 `run_commitments_for_employee` 每承諾收尾時呼叫。
 pub fn apply_retry_after_outcome(
     store: &SqliteStore,
     employee_id: &str,
@@ -1107,7 +1533,45 @@ pub fn apply_retry_after_outcome(
                 store.put_commitment(&com)?;
             }
         }
-        _ => {} // Stalled（非錯誤）／Cancelled（人為）——不動重試欄位。
+        // M1：Stalled 也排退避——scheduler 的到期喚醒（commitment_wake_due）會自動再跑。
+        // 退避 = Errored 值減半（5min·2^n，上限 2h）；耗盡同樣停止自動重排待人類。
+        AutonomousOutcome::Stalled { reason, .. } => {
+            com.retry_count += 1;
+            if com.retry_count >= MAX_COMMITMENT_RETRIES {
+                com.next_retry_at = None; // 耗盡：不再自動重排
+                store.put_commitment(&com)?;
+                let ws = com.workspace_id.clone();
+                record_event(
+                    store,
+                    &ws,
+                    employee_id,
+                    "retry_exhausted",
+                    format!(
+                        "承諾「{}」連續卡住 {} 次，停止自動重試（待人類處理）",
+                        com.title, com.retry_count
+                    ),
+                );
+            } else {
+                let next = chrono::Utc::now()
+                    + chrono::Duration::seconds(
+                        (commitment_retry_backoff(com.retry_count).as_secs() / 2) as i64,
+                    );
+                com.next_retry_at = Some(next.to_rfc3339());
+                store.put_commitment(&com)?;
+                let ws = com.workspace_id.clone();
+                record_event(
+                    store,
+                    &ws,
+                    employee_id,
+                    "stalled_retry",
+                    format!(
+                        "承諾「{}」本輪卡住（{reason}），已排第 {} 次自動重試",
+                        com.title, com.retry_count
+                    ),
+                );
+            }
+        }
+        _ => {} // Cancelled（人為）——不動重試欄位。
     }
     Ok(matches!(outcome, AutonomousOutcome::Errored { .. }))
 }
@@ -1151,7 +1615,7 @@ fn freeze_category_on_exhaustion(db_path: &std::path::Path, store: &dyn Store, c
 
 /// PLAN 重複偵測上限：連續 `MAX_REPEAT` 次相同 next_query 才判 Stalled（給 LLM 換角度的機會，
 /// 而非一次重複就放棄）。首次重複時不 ACT（不浪費查詢），留 note 重新 PLAN。
-const MAX_REPEAT: u32 = 2;
+const MAX_REPEAT: u32 = 3;
 
 /// 貧瘠檢索（barren retrieval）判定閾值：gbrain think 輸出去掉標題行與頁尾後，主體非空白字元
 /// 少於此數視為「未取回實質內容」。真實 synthesis 動輒數百字；空檢索主體為 0～3 字元（僅 `---`）。
@@ -1159,7 +1623,7 @@ const MAX_REPEAT: u32 = 2;
 const BARREN_MIN_CHARS: usize = 30;
 
 /// 連續貧瘠檢索上限：超過即判 Stalled（知識庫確實缺相關內容時，避免無意義反覆重試）。
-const MAX_BARREN: u32 = 3;
+const MAX_BARREN: u32 = 4;
 
 const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與目前進度，決定下一個該採取的具體行動。只回 JSON 物件，不附加其他文字。";
 
@@ -1350,8 +1814,8 @@ async fn run_autonomous_inner(
         // PLAN：reasoner 決定下一步。給近期 artifact 摘要（與 EVAL 對稱——消除「PLAN 瞎子」：
         // 原本 PLAN 只看文字 notes、看不到成果內容 → 該停時不停）＋進度 notes，讓 LLM 能判斷
         // 「成果是否已足夠」而非盲目繼續查。
-        let recent: Vec<String> = memory.notes.iter().rev().take(5).cloned().collect();
-        let summaries = recent_artifact_summaries(store, &artifact_ids, 3, 400)?;
+        let recent: Vec<String> = memory.notes.iter().rev().take(12).cloned().collect();
+        let summaries = recent_artifact_summaries(store, &artifact_ids, 6, 2_000)?;
         // R4：圍欄執行——每輪即時判定（類別可能被連坐凍結／重畫）。
         let send_allowed = autonomous_send_allowed(ctx, commitment.category_id.as_deref());
         let plan_tail: &str = if send_allowed {
@@ -1835,7 +2299,7 @@ async fn evaluate_done(
     artifact_ids: &[String],
     store: &(dyn Store + Send + Sync),
 ) -> anyhow::Result<(bool, String)> {
-    let summaries = recent_artifact_summaries(store, artifact_ids, 3, 400)?;
+    let summaries = recent_artifact_summaries(store, artifact_ids, 6, 2_000)?;
     let eval_user = format!(
         "完成條件：{cond}\n本次產出的成果（近期）：\n{arts}\n\
          判斷完成條件是否已滿足。只回 JSON：{{\"done\": true 或 false, \"rationale\": \"...\"}}。",
@@ -2249,6 +2713,8 @@ pub fn build_tool_ctx(
             access,
             knowledge,
             registry,
+            turn_max_steps: cfg.turn_max_steps,
+            tool_result_max_chars: cfg.tool_result_max_chars,
         },
     ))
 }
@@ -2284,9 +2750,13 @@ pub fn load_registry_for_runs(
 /// 以 LLM（Employee Brain 的推理層）實作的 [`Reasoner`]：包 [`llm::complete`]，回結構化 JSON。
 /// 與 [`GbrainThinkTool`]（知識檢索）成對——推理 vs 檢索（Principle 1：知識≠工作者）。
 ///
+/// M1 雙協議：`reason`（文字 JSON）＋`chat_step`（原生 function calling，[`llm::chat`]）。
+/// 協議由設定 `llm_protocol` 決定（None=auto）；auto 模式下 provider 回不支援即 session 內
+/// 永久降級文字 JSON（`native_downgraded`——同一 process 內不再重付 4xx 的代價）。
+///
 /// `permits` 為全域並發節流（Phase 7c）：N 個員工同時喚醒時，`reason` 會先 `acquire().await`
-/// 排隊等 permit（預設 4），避免瞬間 N 個並發 LLM 呼叫打爆 rate limit。涵蓋全部 3 個 reasoner
-/// 呼叫點（對話 `:421`／PLAN `:607`／EVAL `:773`），因為都走此 `reason` → `llm::complete`。
+/// 排隊等 permit（預設 4），避免瞬間 N 個並發 LLM 呼叫打爆 rate limit。涵蓋全部 reasoner
+/// 呼叫點（對話兩協議／PLAN／EVAL）。
 pub struct LlmReasoner {
     endpoint: gbrain_config::LlmEndpoint,
     cfg: app_config::AppConfig,
@@ -2294,6 +2764,8 @@ pub struct LlmReasoner {
     /// W2 lite 成本記錄：每次 reason 完成 best-effort 寫一則 Event（kind `llm`，
     /// detail 含 model＋tokens）。`llm.rs` 回傳 usage、這裡落庫——失敗不影響推理。
     usage_log: Option<UsageLog>,
+    /// M1：native 協議被 provider 拒絕後的 session 內降級旗標（auto 模式才會翻）。
+    native_downgraded: std::sync::atomic::AtomicBool,
 }
 
 /// usage 事件落庫所需的定位資訊。
@@ -2314,6 +2786,7 @@ impl LlmReasoner {
             cfg,
             permits,
             usage_log: None,
+            native_downgraded: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -2331,6 +2804,28 @@ impl LlmReasoner {
         });
         self
     }
+
+    /// W2：token 用量記錄（best-effort——落庫失敗只 eprintln，不影響推理結果）。
+    fn log_usage(&self, usage: &Option<llm::Usage>) {
+        if let (Some(log), Some(u)) = (&self.usage_log, usage) {
+            let detail = serde_json::json!({
+                "model": self.endpoint.model,
+                "prompt_tokens": u.prompt_tokens,
+                "completion_tokens": u.completion_tokens,
+                "total_tokens": u.total_tokens,
+            })
+            .to_string();
+            if let Ok(store) = SqliteStore::open(&log.db_path) {
+                record_event(
+                    &store,
+                    &log.workspace_id,
+                    &log.employee_id,
+                    "llm",
+                    detail,
+                );
+            }
+        }
+    }
 }
 
 impl Reasoner for LlmReasoner {
@@ -2340,26 +2835,40 @@ impl Reasoner for LlmReasoner {
             // 並發節流：permit 滿則在此自動排隊等待；完成後隨 `_permit` drop 自動歸還。
             let _permit = permits.acquire().await.expect("llm semaphore closed");
             let res = llm::complete(&self.endpoint, &self.cfg.llm_sampling(), system, user).await?;
-            // W2：token 用量記錄（best-effort——落庫失敗只 eprintln，不影響推理結果）。
-            if let (Some(log), Some(u)) = (&self.usage_log, &res.usage) {
-                let detail = serde_json::json!({
-                    "model": self.endpoint.model,
-                    "prompt_tokens": u.prompt_tokens,
-                    "completion_tokens": u.completion_tokens,
-                    "total_tokens": u.total_tokens,
-                })
-                .to_string();
-                if let Ok(store) = SqliteStore::open(&log.db_path) {
-                    record_event(
-                        &store,
-                        &log.workspace_id,
-                        &log.employee_id,
-                        "llm",
-                        detail,
-                    );
+            self.log_usage(&res.usage);
+            parse_json_value(&res.content)
+        })
+    }
+
+    fn supports_native_tools(&self) -> bool {
+        match self.cfg.llm_protocol.as_deref() {
+            Some("json") => false,
+            Some("native") => true,
+            _ => !self.native_downgraded.load(std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    fn chat_step<'a>(
+        &'a self,
+        messages: &'a [llm::ChatMessage],
+        tools: &'a [llm::ToolDef],
+    ) -> ChatStepFuture<'a> {
+        let permits = Arc::clone(&self.permits);
+        Box::pin(async move {
+            let _permit = permits.acquire().await.expect("llm semaphore closed");
+            let res = llm::chat(&self.endpoint, &self.cfg.llm_sampling(), messages, tools).await;
+            // auto 模式：provider 不支援原生工具 → session 內永久降級文字 JSON 協議。
+            if let Err(e) = &res {
+                if e.downcast_ref::<llm::ToolsUnsupported>().is_some()
+                    && self.cfg.llm_protocol.is_none()
+                {
+                    self.native_downgraded
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }
-            parse_json_value(&res.content)
+            let turn = res?;
+            self.log_usage(&turn.usage);
+            Ok(turn)
         })
     }
 }
@@ -2677,6 +3186,8 @@ mod tests {
                 std::env::temp_dir(),
             ),
             registry: None,
+            turn_max_steps: 40,
+            tool_result_max_chars: 8_000,
         }
     }
 
@@ -2750,6 +3261,7 @@ mod tests {
                     project_id: None,
                     external_reply_to: None,
                     external_source: None,
+                    occurred_at: None,
                     created_at: "t".into(),
                 })
                 .unwrap();
@@ -2805,6 +3317,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -2850,6 +3363,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -2890,6 +3404,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -2977,6 +3492,7 @@ mod tests {
                     project_id: None,
                     external_reply_to: Some(reply_to.into()),
                     external_source: Some("email".into()),
+                    occurred_at: None,
                     created_at: "t".into(),
                 })
                 .unwrap();
@@ -3029,6 +3545,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: Some("email:msg-X".into()),
                 external_source: Some("email".into()),
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3068,6 +3585,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: Some("email:bulk-99".into()),
                 external_source: Some("email".into()),
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3156,6 +3674,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: Some("email:msg-A".into()),
                 external_source: Some("email".into()),
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3200,6 +3719,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3264,6 +3784,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3319,6 +3840,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3570,6 +4092,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3621,6 +4144,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3734,6 +4258,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: Some("email:msg-A".into()),
                 external_source: Some("email".into()),
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -3930,6 +4455,7 @@ mod tests {
                     project_id: None,
                     external_reply_to: None,
                     external_source: None,
+                    occurred_at: None,
                     created_at: "t".into(),
                 })
                 .unwrap();
@@ -4077,6 +4603,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -4230,6 +4757,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -4273,6 +4801,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -4512,6 +5041,7 @@ mod tests {
             r#"{"next_query": "q1", "rationale": "1"}"#,
             r#"{"next_query": "q2", "rationale": "2"}"#,
             r#"{"next_query": "q3", "rationale": "3"}"#,
+            r#"{"next_query": "q4", "rationale": "4"}"#,
         ]);
         let budget = CycleBudget { max_cycles: 8, max_duration: Duration::from_secs(10) };
         let outcome = run_autonomous(&emp_id, "c1", &budget, &knowledge, &reasoner, &ctx(), &store, &outbound_disabled())
@@ -4523,7 +5053,7 @@ mod tests {
             }
             other => panic!("應 Stalled，實為 {other:?}"),
         }
-        assert_eq!(knowledge.call_count(), 3, "應 ACT 三次（MAX_BARREN）才止損");
+        assert_eq!(knowledge.call_count(), 4, "應 ACT 四次（MAX_BARREN）才止損");
         assert!(store.list_artifacts("ws").unwrap().is_empty(), "貧瘠產出不應入庫");
         assert_eq!(
             store.get_commitment("c1").unwrap().unwrap().status,
@@ -4537,7 +5067,7 @@ mod tests {
             .iter()
             .filter(|e| e.kind == "barren")
             .count();
-        assert_eq!(barren_events, 3, "每次貧瘠檢索應記一筆 barren 事件");
+        assert_eq!(barren_events, 4, "每次貧瘠檢索應記一筆 barren 事件");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4620,11 +5150,12 @@ mod tests {
         let rich = "# 查詢\n\n## 會議總覽\n這是一份完整的會議摘要，詳列決議、與會者與行動項目，內容充分。\n\n---\nModel: zhipu:glm-5.2 | Pages: 21 | Graph: 0 | Citations: 0";
         let knowledge = StubTool::new(rich);
         // cycle1：PLAN q1 → ACT（入庫 Draft）→ EVAL false。
-        // cycle2：PLAN q1（重複 1）→ 不 ACT、換角度。
-        // cycle3：PLAN q1（重複 2 ≥ MAX_REPEAT）→ Stalled「規劃重複」。
+        // cycle2～3：PLAN q1（重複 1～2）→ 不 ACT、換角度。
+        // cycle4：PLAN q1（重複 3 ≥ MAX_REPEAT）→ Stalled「規劃重複」。
         let reasoner = StubReasoner::new(vec![
             r#"{"next_query": "q1", "rationale": "1"}"#,
             r#"{"done": false, "rationale": "尚未滿足"}"#,
+            r#"{"next_query": "q1", "rationale": "再試"}"#,
             r#"{"next_query": "q1", "rationale": "再試"}"#,
             r#"{"next_query": "q1", "rationale": "再試"}"#,
         ]);
@@ -4687,6 +5218,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: "t".into(),
             })
             .unwrap();
@@ -4838,6 +5370,8 @@ mod tests {
             access: crate::knowledge::identity::test_default(),
             knowledge: None,
             registry: None,
+            turn_max_steps: 40,
+            tool_result_max_chars: 8_000,
         };
         let res = run_cycle(
             &emp_id,
@@ -4940,6 +5474,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: now_rfc3339(),
             })
             .unwrap();
@@ -4957,6 +5492,8 @@ mod tests {
             access: crate::knowledge::identity::test_default(),
             knowledge: None,
             registry: None,
+            turn_max_steps: 40,
+            tool_result_max_chars: 8_000,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -5414,6 +5951,8 @@ mod tests {
             access: crate::knowledge::identity::test_default(),
             knowledge: None,
             registry: None,
+            turn_max_steps: 40,
+            tool_result_max_chars: 8_000,
         };
 
         let dir = test_dir();
@@ -5682,6 +6221,7 @@ mod tests {
                 project_id: None,
                 external_reply_to: None,
                 external_source: None,
+                occurred_at: None,
                 created_at: now_rfc3339(),
             })
             .unwrap();
@@ -5750,6 +6290,8 @@ mod tests {
             access: crate::knowledge::identity::test_default(),
             knowledge: None,
             registry: None,
+            turn_max_steps: 40,
+            tool_result_max_chars: 8_000,
         };
 
         let dir = test_dir();
@@ -5925,7 +6467,11 @@ pub async fn run_commitments_for_employee(
     )
     .await;
     let commitments = store.list_active_commitments_by_owner(employee_id)?;
-    let budget = CycleBudget::default_session();
+    // M1：自主 session 預算由設定驅動（預設 25 輪／15 分鐘）。
+    let budget = CycleBudget {
+        max_cycles: cfg.autonomy_max_cycles,
+        max_duration: Duration::from_secs(u64::from(cfg.autonomy_max_minutes) * 60),
+    };
     for com in commitments {
         match run_autonomous_with_stop(
             employee_id,
@@ -6622,6 +7168,7 @@ pub fn send_message_core(
         project_id: None,
         external_reply_to: None,
         external_source: None,
+        occurred_at: None,
         created_at: now,
     })?;
     // 推喚醒信號（best-effort；即便 channel 滿，下次 30s tick 也會掃到這個 Assigned task）。
@@ -6782,6 +7329,7 @@ pub fn archive_commitment_core(
     com.updated_at = now_rfc3339();
     store.put_commitment(&com)?;
     Ok(())
+
 }
 
 /// 人類取消：活躍 task（Created/Assigned/InProgress）→ Cancelled（軟刪除）。
@@ -6831,6 +7379,7 @@ pub fn recover_stale_runs(store: &SqliteStore) -> Result<usize, AppError> {
         eprintln!("[recover] task {}：InProgress→Assigned", t.id);
     }
     Ok(recovered)
+
 }
 
 #[cfg(test)]
@@ -6872,6 +7421,7 @@ mod recovery_tests {
             project_id: None,
             external_reply_to: None,
             external_source: None,
+            occurred_at: None,
             created_at: now_rfc3339(),
         })
         .unwrap();
@@ -6884,3 +7434,7 @@ mod recovery_tests {
         let _ = std::fs::remove_file(&db);
     }
 }
+
+#[cfg(test)]
+#[path = "m1_turn_tests.rs"]
+mod m1_turn_tests;

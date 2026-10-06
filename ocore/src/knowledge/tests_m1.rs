@@ -129,6 +129,8 @@ pub(crate) fn tool_ctx() -> ToolCtx {
         access: ctx_operator(),
         knowledge: None,
         registry: None,
+        turn_max_steps: 40,
+        tool_result_max_chars: 8_000,
     }
 }
 

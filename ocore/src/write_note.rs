@@ -183,6 +183,8 @@ mod tests {
             knowledge: None,
             registry: None,
             allowed_tools: Default::default(),
+            turn_max_steps: 40,
+            tool_result_max_chars: 8_000,
         }
     }
     fn dir() -> std::path::PathBuf {

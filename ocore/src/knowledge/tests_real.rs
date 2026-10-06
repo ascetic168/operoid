@@ -99,6 +99,8 @@ async fn real_m1_milestone_two_contexts() {
         registry: None,
         access,
         knowledge: Some(std::sync::Arc::clone(&svc)),
+        turn_max_steps: 40,
+        tool_result_max_chars: 8_000,
     };
     let ctx_op = mk_ctx(crate::knowledge::identity::operator_access_context(
         crate::runtime::AGENT_WS,
@@ -302,6 +304,8 @@ async fn real_g5_fanout_scaling() {
         registry: None,
         access: access.clone(),
         knowledge: Some(std::sync::Arc::clone(&svc)),
+        turn_max_steps: 40,
+        tool_result_max_chars: 8_000,
     };
     async fn timed(svc: &KnowledgeService, ctx: &ToolCtx) -> (f64, crate::domain::tools::ToolOutput) {
         let t0 = Instant::now();

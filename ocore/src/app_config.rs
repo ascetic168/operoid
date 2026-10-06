@@ -100,6 +100,24 @@ pub struct AppConfig {
     /// LLM 結構化的最大輸出 token。
     #[serde(default = "default_max_tokens")]
     pub llm_max_tokens: u32,
+    /// M1：對話回合 tool-loop 的步數保險絲（原 6——複雜任務跑不完就被迫收尾）。
+    /// 這是失控防護，不是工作預算：正常回合在數步內自然收斂（模型停止呼叫工具即結束）。
+    #[serde(default = "default_turn_max_steps")]
+    pub turn_max_steps: u32,
+    /// M1：工具結果餵回 LLM 的字元上限（原 1,200——模型看不見自己前幾步的成果）。
+    #[serde(default = "default_tool_result_chars")]
+    pub tool_result_max_chars: usize,
+    /// M1：自主 session 的 cycle 預算（原 10）。
+    #[serde(default = "default_autonomy_cycles")]
+    pub autonomy_max_cycles: u32,
+    /// M1：自主 session 的時間預算（分鐘；原 5）。
+    #[serde(default = "default_autonomy_minutes")]
+    pub autonomy_max_minutes: u32,
+    /// M1：對話回合的工具協議。`None`（預設）＝auto——先試原生 function calling，
+    /// provider 不支援（400＋tools 字樣）即 session 內降級文字 JSON 協議；
+    /// `Some("json")`＝強制文字 JSON 協議；`Some("native")`＝強制原生（不支援即錯）。
+    #[serde(default)]
+    pub llm_protocol: Option<String>,
     /// 介面語言覆寫（None = 依系統語言自動偵測；Some = 使用者手動釘選）。
     #[serde(default)]
     pub locale: Option<String>,
@@ -197,6 +215,18 @@ fn default_server_port() -> u16 {
 }
 fn default_max_tokens() -> u32 {
     4096
+}
+fn default_turn_max_steps() -> u32 {
+    40
+}
+fn default_tool_result_chars() -> usize {
+    8_000
+}
+fn default_autonomy_cycles() -> u32 {
+    25
+}
+fn default_autonomy_minutes() -> u32 {
+    15
 }
 
 /// 由 home 路徑推導穩定 id（內部用，不必吻合 gbrain slug 規則）。
@@ -320,6 +350,11 @@ impl Default for AppConfig {
             claude_code_handoff_enabled: true,
             llm_temperature: default_temp(),
             llm_max_tokens: default_max_tokens(),
+            turn_max_steps: default_turn_max_steps(),
+            tool_result_max_chars: default_tool_result_chars(),
+            autonomy_max_cycles: default_autonomy_cycles(),
+            autonomy_max_minutes: default_autonomy_minutes(),
+            llm_protocol: None,
             locale: None,
             recent_claude_cwds: Vec::new(),
             claude_terminal: None,

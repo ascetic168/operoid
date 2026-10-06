@@ -111,6 +111,7 @@ mod tests {
             project_id: project_id.map(|p| p.to_string()),
             external_reply_to: None,
             external_source: None,
+            occurred_at: None,
             created_at: "2026-10-02T00:00:00Z".into(),
         })
         .unwrap();
@@ -183,6 +184,7 @@ mod tests {
             project_id: Some("ghost".into()),
             external_reply_to: None,
             external_source: None,
+            occurred_at: None,
             created_at: "2026-10-02T00:00:00Z".into(),
         })
         .unwrap();
