@@ -96,12 +96,31 @@ async function confirmClear() {
 }
 
 let pollFailures = 0;
+
+// ── 捲動：黏底偵測 ──
+// 輪詢每 1.5s 刷新一次；若使用者上捲閱讀歷史，自動捲底會把視角拖走。
+// 故只有「使用者本來就在底部附近」（黏底）才跟隨新訊息捲底；送出訊息時強制回底。
+const stickToBottom = ref(true);
+
+function onScroll() {
+  const el = scrollEl.value;
+  if (!el) return;
+  stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+}
+
+function scrollToBottom(force = false) {
+  const el = scrollEl.value;
+  if (!el) return;
+  if (force) stickToBottom.value = true;
+  if (stickToBottom.value) el.scrollTop = el.scrollHeight;
+}
+
 async function poll() {
   try {
     data.value = await agentWatch(props.id);
     pollFailures = 0;
     await nextTick();
-    if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight;
+    scrollToBottom();
   } catch {
     // 唯讀觀察：靜默重試；連續失敗才提示使用者（不阻斷操作）。
     pollFailures += 1;
@@ -117,6 +136,7 @@ async function send() {
     await agentSendMessage(props.id, text, null);
     input.value = "";
     await poll();
+    scrollToBottom(true);
   } catch (e) {
     error.value = formatError(e);
   } finally {
@@ -171,7 +191,7 @@ function stateColor(s: string | undefined): string {
     </div>
 
     <!-- 對話捲動區 -->
-    <div ref="scrollEl" class="min-h-0 flex-1 overflow-y-auto p-4">
+    <div ref="scrollEl" class="min-h-0 flex-1 overflow-y-auto p-4" @scroll.passive="onScroll">
       <div
         v-if="thread.length === 0"
         class="py-10 text-center text-sm text-muted-foreground"
