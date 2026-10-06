@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, Trash2, Pencil, Loader2, Boxes, X } from "lucide-vue-next";
 import { useAgentStore } from "@/stores/agent";
@@ -32,14 +32,21 @@ const addOpen = ref(false);
 const addName = ref("");
 const addBrain = ref("");
 const addRole = ref("");
-const addWriteNote = ref(false);
+// 工具 allowlist（W3 閘門）：write-note＋M2 桌面工具。預設全關——人類逐一授權。
+const addTools = reactive<Record<string, boolean>>({
+  "write-note": false,
+  "read-file": false,
+  "write-file": false,
+  "edit-file": false,
+  "run-command": false,
+});
 const addBusy = ref(false);
 const addError = ref<string | null>(null);
 
 function openAdd() {
   addName.value = "";
   addRole.value = "";
-  addWriteNote.value = false;
+  Object.keys(addTools).forEach((k) => (addTools[k] = false));
   addBrain.value = brains.activeId ?? brains.brains[0]?.id ?? "";
   addError.value = null;
   addOpen.value = true;
@@ -53,7 +60,14 @@ async function submitAdd() {
       addName.value.trim(),
       addBrain.value,
       addRole.value.trim() || null,
-      addWriteNote.value ? ["write-note"] : null,
+      Object.entries(addTools)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join(",")
+        ? Object.entries(addTools)
+            .filter(([, v]) => v)
+            .map(([k]) => k)
+        : null,
     );
     addOpen.value = false;
   } catch (e) {
@@ -229,10 +243,29 @@ async function confirmDelete() {
               class="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
             />
           </label>
-          <label class="flex items-center gap-2 text-xs">
-            <input v-model="addWriteNote" type="checkbox" class="accent-primary" />
-            {{ t("templates.toolsWriteNote") }}
-          </label>
+          <div class="flex flex-col gap-1 text-xs">
+            <span class="font-medium">{{ t("templates.toolsLabel") }}</span>
+            <label class="flex items-center gap-2">
+              <input v-model="addTools['write-note']" type="checkbox" class="accent-primary" />
+              {{ t("templates.toolsWriteNote") }}
+            </label>
+            <label class="flex items-center gap-2">
+              <input v-model="addTools['read-file']" type="checkbox" class="accent-primary" />
+              {{ t("templates.toolsReadFile") }}
+            </label>
+            <label class="flex items-center gap-2">
+              <input v-model="addTools['write-file']" type="checkbox" class="accent-primary" />
+              {{ t("templates.toolsWriteFile") }}
+            </label>
+            <label class="flex items-center gap-2">
+              <input v-model="addTools['edit-file']" type="checkbox" class="accent-primary" />
+              {{ t("templates.toolsEditFile") }}
+            </label>
+            <label class="flex items-center gap-2">
+              <input v-model="addTools['run-command']" type="checkbox" class="accent-primary" />
+              {{ t("templates.toolsRunCommand") }}
+            </label>
+          </div>
           <p v-if="addError" class="text-xs text-destructive">{{ addError }}</p>
         </div>
         <div class="mt-5 flex justify-end gap-2">

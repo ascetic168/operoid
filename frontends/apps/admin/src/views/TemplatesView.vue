@@ -148,7 +148,7 @@ async function remove(row: TemplateRow): Promise<void> {
         <label for="trole">{{ t('templates.role') }}</label>
         <input id="trole" v-model="tRole" />
         <label for="ttools">{{ t('templates.tools') }}</label>
-        <input id="ttools" v-model="tTools" placeholder="write-note, send-message" />
+        <input id="ttools" v-model="tTools" placeholder="write-note, read-file, write-file, edit-file, run-command" />
         <p style="margin-top: 0.9rem">
           <button class="primary" :disabled="!tName.trim()" data-test="tpl-create" @click="create">
             {{ t('templates.create') }}
