@@ -782,6 +782,8 @@ async fn api_op_run(
                 registry: None,
                 knowledge: None,
                 access,
+                turn_max_steps: cfg.0.turn_max_steps,
+                tool_result_max_chars: cfg.0.tool_result_max_chars,
             };
             let q = b.arg.clone().unwrap_or_default();
             let res = match svc.retrieve(&tctx.access, kind, &q, None, 10, &tctx).await {
@@ -929,6 +931,8 @@ async fn api_knowledge_ask(
         registry: None,
         knowledge: None,
         access,
+        turn_max_steps: cfg.0.turn_max_steps,
+        tool_result_max_chars: cfg.0.tool_result_max_chars,
     };
     let svc = ocore::knowledge::service::KnowledgeService::new(&state.db_path);
     match svc.retrieve(&tctx.access, kind, &b.arg, None, 10, &tctx).await {

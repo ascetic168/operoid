@@ -708,6 +708,7 @@ async fn run_conversational_turn(
         final_replied: false,
         suppress_silent: false,
         replied: std::collections::HashSet::new(),
+        file_state: Default::default(),
         default_target: task
             .external_reply_to
             .clone()
@@ -717,7 +718,7 @@ async fn run_conversational_turn(
     let channel = channel_context_line(task);
     let mut steps: Vec<String> = Vec::new();
     let mut native = reasoner.supports_native_tools();
-    let tools = if native { native_tool_defs(ctx) } else { Vec::new() };
+    let tools = if native { crate::tools::contract::turn_tool_defs(ctx) } else { Vec::new() };
     let mut history: Vec<llm::ChatMessage> = if native {
         build_native_turn_history(&emp, task, ctx, &channel, store)?
     } else {
@@ -897,6 +898,8 @@ struct TurnSession<'a> {
     suppress_silent: bool,
     /// 同通道單一回覆：已成功送出（或已入歷史）的目標集合。
     replied: std::collections::HashSet<String>,
+    /// M2：本回合的檔案讀取狀態（edit 的 read-before-edit／staleness 依據）。
+    file_state: crate::tools::workspace::FileState,
     /// 預設回覆目標（喚醒訊息的回覆通道；無外部來源＝"chat"）。
     default_target: String,
 }
@@ -1222,6 +1225,64 @@ impl<'a> TurnSession<'a> {
                     }
                 }
             }
+            // ── 桌面工具（M2）：allowlist 硬閘（native 註冊已閘；legacy 顯式動作也攔）──
+            "read_file" => {
+                if !self.ctx.allowed_tools.contains(crate::tools::contract::TOOL_READ_FILE) {
+                    return Some(TurnAction::Continue {
+                        note: "[read_file] 未啟用：此員工無 read-file 工具權限。".into(),
+                    });
+                }
+                let root = crate::tools::workspace::workspace_root(
+                    &self.ctx.employee_output_root,
+                    self.employee_id,
+                );
+                let note = crate::tools::fs_tools::read_file(&root, args, &mut self.file_state)
+                    .unwrap_or_else(|e| format!("[read_file] 失敗：{e}"));
+                Some(TurnAction::Continue { note })
+            }
+            "write_file" => {
+                if !self.ctx.allowed_tools.contains(crate::tools::contract::TOOL_WRITE_FILE) {
+                    return Some(TurnAction::Continue {
+                        note: "[write_file] 未啟用：此員工無 write-file 工具權限。".into(),
+                    });
+                }
+                let root = crate::tools::workspace::workspace_root(
+                    &self.ctx.employee_output_root,
+                    self.employee_id,
+                );
+                let note = crate::tools::fs_tools::write_file(&root, args, &mut self.file_state)
+                    .unwrap_or_else(|e| format!("[write_file] 失敗：{e}"));
+                Some(TurnAction::Continue { note })
+            }
+            "edit_file" => {
+                if !self.ctx.allowed_tools.contains(crate::tools::contract::TOOL_EDIT_FILE) {
+                    return Some(TurnAction::Continue {
+                        note: "[edit_file] 未啟用：此員工無 edit-file 工具權限。".into(),
+                    });
+                }
+                let root = crate::tools::workspace::workspace_root(
+                    &self.ctx.employee_output_root,
+                    self.employee_id,
+                );
+                let note = crate::tools::fs_tools::edit_file(&root, args, &mut self.file_state)
+                    .unwrap_or_else(|e| format!("[edit_file] 失敗：{e}"));
+                Some(TurnAction::Continue { note })
+            }
+            "run_command" => {
+                if !self.ctx.allowed_tools.contains(crate::tools::contract::TOOL_RUN_COMMAND) {
+                    return Some(TurnAction::Continue {
+                        note: "[run_command] 未啟用：此員工無 run-command 工具權限。".into(),
+                    });
+                }
+                let root = crate::tools::workspace::workspace_root(
+                    &self.ctx.employee_output_root,
+                    self.employee_id,
+                );
+                let note = crate::tools::shell::run_command(&root, args)
+                    .await
+                    .unwrap_or_else(|e| format!("[run_command] 失敗：{e}"));
+                Some(TurnAction::Continue { note })
+            }
             "finish" => Some(self.finish_from_args(args).await),
             _ => None,
         }
@@ -1249,83 +1310,6 @@ fn channel_context_line(task: &Task) -> String {
     }
 }
 
-/// native 對話的工具定義（allowlist 閘門）：單一真相源——system prompt 的能力說明由此
-/// 生成，員工看不到的工具就選不了（封閉白名單的廉價實現，Ch.20 §5）。
-fn native_tool_defs(ctx: &ToolCtx) -> Vec<llm::ToolDef> {
-    fn obj(name: &str, desc: &str, schema: serde_json::Value) -> llm::ToolDef {
-        llm::ToolDef { name: name.into(), description: desc.into(), parameters: schema }
-    }
-    let mut defs = vec![
-        obj(
-            "gbrain_search",
-            "快速檢索知識圖譜的相關頁面（無合成、省時；查資料／找原文時優先用）。",
-            serde_json::json!({
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "檢索語詞"}},
-                "required": ["query"]
-            }),
-        ),
-        obj(
-            "gbrain_think",
-            "對知識圖譜做多跳引用合成（需要綜合結論／依據才回答時用；較慢）。",
-            serde_json::json!({
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "要綜合的問題"}},
-                "required": ["query"]
-            }),
-        ),
-        obj(
-            "send_message",
-            "把訊息寄給外部對象（經 bridge；內部對話也會留紀錄）。",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "to": {"type": "string", "description": "送達目標（可省＝回覆喚醒你的這則訊息）"},
-                    "text": {"type": "string", "description": "要外發的訊息全文"}
-                },
-                "required": ["text"]
-            }),
-        ),
-        obj(
-            "propose_commitment",
-            "提案一個長期承諾；屬已授權類別者可免核可自動啟用，其餘待人類核可。",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "承諾標題"},
-                    "condition": {"type": "string", "description": "完成條件"},
-                    "category": {"type": "string", "description": "已授權類別 id（可選）"}
-                },
-                "required": ["title", "condition"]
-            }),
-        ),
-        obj(
-            "finish",
-            "結束本回合。text 為給人類的最終回覆（省略＝不回覆）。直接以文字回應也可以——兩者擇一。",
-            serde_json::json!({
-                "type": "object",
-                "properties": {"text": {"type": "string", "description": "給人類的最終回覆（可省）"}}
-            }),
-        ),
-    ];
-    if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
-        defs.push(obj(
-            "write_note",
-            "把一份完整產出寫成筆記檔（落於你的專屬產出目錄，供人類審閱）。",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "filename": {"type": "string"},
-                    "title": {"type": "string"},
-                    "content": {"type": "string", "description": "完整 markdown 全文"}
-                },
-                "required": ["filename", "content"]
-            }),
-        ));
-    }
-    defs
-}
-
 /// native 對話的 system prompt：員工身分卡（名稱／職務——v1 完全沒進 context）＋能力說明
 /// （由工具定義生成）＋已授權類別＋行為準則。
 fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
@@ -1333,7 +1317,7 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
         Some(r) if !r.trim().is_empty() => format!("\n你的職務：{r}"),
         _ => String::new(),
     };
-    let tool_lines: Vec<String> = native_tool_defs(ctx)
+    let tool_lines: Vec<String> = crate::tools::contract::turn_tool_defs(ctx)
         .iter()
         .map(|t| format!("- {}: {}", t.name, t.description))
         .collect();
