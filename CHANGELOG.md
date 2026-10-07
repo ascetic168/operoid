@@ -13,7 +13,7 @@
 
 ---
 
-## [Unreleased]
+## [v0.4.4] - 2026-10-07
 
 ### Enterprise user-tier factory with scoped conversion targets
 
