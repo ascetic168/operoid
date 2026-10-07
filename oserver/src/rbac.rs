@@ -53,6 +53,7 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("GET", Some("/api/inbox"))
         | ("GET", Some("/api/events"))
         | ("GET", Some("/api/employees/{id}/watch"))
+        | ("GET", Some("/api/artifacts/{id}"))
         | ("POST", Some("/api/commitments")) => Req::Authenticated,
         // 自身會話面（登出／refresh／改自身密碼——所有已認證角色）
         ("POST", Some("/api/auth/logout"))

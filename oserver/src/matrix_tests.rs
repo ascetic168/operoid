@@ -76,6 +76,7 @@ const INVENTORY: &[(&str, &str)] = &[
     ("GET", "/api/employees"),
     ("GET", "/api/templates"),
     ("GET", "/api/employees/{id}/watch"),
+    ("GET", "/api/artifacts/{id}"),
     ("GET", "/api/inbox"),
     ("GET", "/api/events"),
     ("GET", "/api/registry"),
@@ -340,6 +341,19 @@ async fn get(app: &axum::Router, path: &str, token: Option<&str>) -> StatusCode 
     app.clone().oneshot(b.body(Body::empty()).unwrap()).await.unwrap().status()
 }
 
+/// F3 測試 helper：帳號登入取 token（密碼須先於帳號建立迴圈中改過）。
+async fn login_user(app: &axum::Router, name: &str, pw: &str) -> String {
+    let (status, body) = post_json(
+        app,
+        "/api/auth/login",
+        None,
+        serde_json::json!({"login_name": name, "password": pw}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["token"].as_str().unwrap().to_string()
+}
+
 /// R2 登入 e2e：建號 → 首登（must_change_password）→ 除改密外全擋 → 改密 →
 /// user 權限生效（可讀 state、擋 admin 面）→ 停用 → token 失效。
 #[tokio::test]
@@ -418,6 +432,132 @@ async fn login_flow_end_to_end() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "停用帳號登入 → 403 accountDisabled");
 
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// F3（對話表現力）：artifact 端點的「限自身」細化——owner user 可讀、他人 user 403、
+/// manager/admin 可讀、不存在 404。資料面用真 SQLite 種子（員工歸屬 + artifact）。
+#[tokio::test]
+async fn artifact_access_control_end_to_end() {
+    let dir = temp_dir("artifact");
+    let db = dir.join("e2e.db");
+    {
+        let store = ocore::domain::SqliteStore::open(&db).unwrap();
+        use ocore::domain::Store;
+        store
+            .put_workspace(&ocore::domain::Workspace {
+                id: "ws-default".into(),
+                name: "WS".into(),
+                description: None,
+                status: ocore::domain::WorkspaceStatus::Active,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        store
+            .put_employee(&ocore::domain::Employee {
+                id: "emp-alice".into(),
+                workspace_id: "ws-default".into(),
+                name: "瀚青".into(),
+                brain: ocore::domain::BrainRef { brain_id: "__default__".into() },
+                role: None,
+                template_id: None,
+                state: ocore::domain::EmployeeState::Sleeping,
+                archived: false,
+                tools: None,
+                created_at: "t".into(),
+                owner_principal: Some("principal-alice".into()),
+            })
+            .unwrap();
+        store
+            .put_artifact(&ocore::domain::Artifact {
+                id: "art-1".into(),
+                workspace_id: "ws-default".into(),
+                title: "良率報告".into(),
+                artifact_type: "report".into(),
+                content: "……".into(),
+                produced_by: "emp-alice".into(),
+                source_task_id: None,
+                source_commitment_id: None,
+                revised_from_id: None,
+                project_id: None,
+                version: 1,
+                status: ocore::domain::ArtifactStatus::Committed,
+                created_at: "t".into(),
+            })
+            .unwrap();
+    }
+    let app = real_router(&dir);
+    // 建兩個 user 帳號：alice（員工歸屬人）與 mallory（他人）。
+    for (name, temp_pw) in [
+        ("alice", "alice-temp-password-1"),
+        ("mallory", "mallory-temp-password-1"),
+    ] {
+        let (status, body) = post_json(
+            &app,
+            "/api/accounts",
+            Some("master-token"),
+            serde_json::json!({"login_name": name, "roles": ["user"], "temp_password": temp_pw}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = post_json(
+            &app,
+            "/api/auth/login",
+            None,
+            serde_json::json!({"login_name": name, "password": temp_pw}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, _) = post_json(
+            &app,
+            "/api/auth/password",
+            Some(&body["token"].as_str().unwrap().to_string()),
+            serde_json::json!({"old_password": temp_pw, "new_password": format!("{name}-new-password-42")}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let alice = login_user(&app, "alice", "alice-new-password-42").await;
+    let mallory = login_user(&app, "mallory", "mallory-new-password-42").await;
+
+    // owner user → 200 且含 content。
+    let mut b = Request::builder()
+        .method(Method::GET)
+        .uri("/api/artifacts/art-1")
+        .header("authorization", format!("Bearer {alice}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(b).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["id"], "art-1");
+    assert_eq!(v["content"], "……");
+    // 他人 user → 403。
+    b = Request::builder()
+        .method(Method::GET)
+        .uri("/api/artifacts/art-1")
+        .header("authorization", format!("Bearer {mallory}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.clone().oneshot(b).await.unwrap().status(), StatusCode::FORBIDDEN);
+    // 管理面放行：master token（operator＝admin 語意）→ 200。
+    // （MatrixAuth 的 mgr 固定身份只掛在 matrix router；real_router 用 PrincipalTokenProvider。）
+    b = Request::builder()
+        .method(Method::GET)
+        .uri("/api/artifacts/art-1")
+        .header("authorization", "Bearer master-token")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.clone().oneshot(b).await.unwrap().status(), StatusCode::OK);
+    // 不存在 → 404。
+    b = Request::builder()
+        .method(Method::GET)
+        .uri("/api/artifacts/art-nope")
+        .header("authorization", format!("Bearer {alice}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.oneshot(b).await.unwrap().status(), StatusCode::NOT_FOUND);
     std::fs::remove_dir_all(&dir).ok();
 }
 

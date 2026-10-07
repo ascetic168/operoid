@@ -50,7 +50,7 @@ pub(crate) fn err_response(e: &AppError) -> Response {
     let body = serde_json::to_value(e).unwrap_or_else(|_| json!({"code": "server.internal"}));
     let status = match e.code.as_str() {
         "agent_os.employeeNotFound" | "agent_os.templateNotFound" | "agent_os.commitmentNotFound"
-        | "agent_os.taskNotFound" => StatusCode::NOT_FOUND,
+        | "agent_os.taskNotFound" | "agent_os.artifactNotFound" => StatusCode::NOT_FOUND,
         "agent_os.employeeBusy" => StatusCode::CONFLICT, // busy-lock 快速回絕（API 契約）
         "agent_os.employeeNotRunning" | "agent_os.employeeArchived" => StatusCode::CONFLICT,
         "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
@@ -152,6 +152,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/employees", get(api_employees))
         .route("/api/templates", get(api_templates))
         .route("/api/employees/{id}/watch", get(api_watch))
+        .route("/api/artifacts/{id}", get(api_artifact))
         .route("/api/inbox", get(api_inbox))
         .route("/api/events", get(api_events))
         .route("/api/registry", get(api_registry))
@@ -249,6 +250,36 @@ async fn api_watch(
             }
         }
         watch_payload(&st.cfg, &store, &id)
+    })
+    .await;
+    finish(res)
+}
+
+/// 單一 artifact（含完整 content）——聊天頁 artifact 卡在 watch 近 10 筆之外的 fallback 載入。
+/// 「限自身」：artifact 無 owner 欄，以 `produced_by`（員工）的 `owner_principal` 判定；
+/// manager/admin 不限（rbac::can_access_employee 語意一致）。
+async fn api_artifact(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let identity = require_identity(&state, &headers, identity);
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        check_enabled(&st)?;
+        let store = open_store(&st)?;
+        let art = store
+            .get_artifact(&id)?
+            .ok_or_else(|| AppError::new("agent_os.artifactNotFound").p("id", &id))?;
+        if let Some(ident) = &identity {
+            if let Some(emp) = store.get_employee(&art.produced_by)? {
+                if !crate::rbac::can_access_employee(ident, emp.owner_principal.as_deref()) {
+                    return Err(AppError::new("auth.forbidden"));
+                }
+            }
+        }
+        Ok(serde_json::to_value(&art).unwrap_or(serde_json::Value::Null))
     })
     .await;
     finish(res)
