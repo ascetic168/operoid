@@ -13,6 +13,47 @@
 
 ---
 
+## [v0.4.3] - 2026-10-07
+
+### 員工桌面工具（M1–M3）——員工從「建議」到「動手」
+
+- **M1 agent loop 改造**：原生 function calling（使用 provider 原生工具呼叫協議；
+  provider 不支援時自動降級既有文字 JSON 協議）、多訊息歷史（員工身分卡＋近端對話
+  In/Out 上下文）、通道情境注入（email/IM 來源與回覆通道進 prompt）、Stalled
+  單次抖動自動重試。
+- **M2 員工桌面工具**：ToolContract 工具層＋工作區沙箱——`read_file`／`write_file`／
+  `edit_file`／`run_command` 四個桌面工具，Employee 可在自己的沙箱工作區裡讀寫檔案、
+  執行指令（read 後才能 edit；路徑限制在工作區內）。
+- **M2.8 模板工具授權 UI**：員工模板的允許工具清單進入 UI——write-note＋四個桌面
+  工具核取方塊（三語 i18n），部署時隨模板生效。
+- **M3 todo 規劃工具**：`update_todos` 落庫（進度清單跨回合存活）、對話回合每 10 步
+  週期提醒注入、自主循環 PLAN/EVAL 恆帶進度清單（對抗長任務的上下文漂移）。
+
+### 對話表現力——員工的工作過程從黑盒變可見
+
+- **tool_call 過程事件**：對話回合的每個工具呼叫落一筆事件（工具名／參數摘要／狀態／
+  耗時／結果摘要，超長截斷），自動流進 watch API、事件流與 SSE；watch payload 的
+  events 上限 20→60 筆（足夠還原完整回合）。
+- **聊天頁表現力**（桌面＋user 網頁）：員工回覆以 Markdown 渲染（marked→DOMPurify
+  消毒，表格／程式碼／清單）；工具過程摺疊列插在最後一則提問之後（逐步顯示、點開看
+  參數，送出訊息自動展開）；working 狀態的「處理中…」指示；訊息內的 artifact 從只顯示
+  id 改為可展開內容卡；黏底偵測（上捲閱讀歷史不被輪詢拖回底部）。
+- **經理人對話頁**：manager 前端新增 `/chat/:id`（Inbox「聊天」連結原為死連結）——
+  經理人可看員工對話與工作過程、也可直接傳訊；user 網頁訊息排序修正（最新在前未反轉）。
+- **知識查詢 Markdown 化**：共用 `MarkdownText` 元件（@front/ui／桌面各一）——
+  gbrain 的 Markdown 輸出與 `[[wikilink]]`／`[dir/slug]` 引用標記同時正確渲染；
+  user/manager 聊天頁改用共用元件（marked/dompurify 依賴集中 @front/ui）。
+- **三語 i18n** 同步（chat 區新增鍵）。
+
+### Artifact API 與事件保留（M-A／M-B）
+
+- **`GET /api/artifacts/{id}`**：單一 artifact 讀取端點（RBAC Authenticated＋「限自身」
+  以 produced_by → 員工 owner_principal 判定，matrix 測試加列＋權限 e2e）；三端聊天頁
+  的 artifact 卡對 watch 近 10 筆之外的舊產出 fallback 載入（桌面走同一 HTTP 端點）。
+- **events 保留政策**：細粒度事件（`tool_call`/`llm`/`retrieval`/`plan`/`eval`）保留
+  30 天、每日由 scheduler 日界臂自動清理（rowid 窗漸進消化）；里程碑事件
+  （reply/turn_error/artifact/outbound…）永久保留；清除 >0 筆時記 `events_pruned`。
+
 ## [v0.4.2] - 2026-10-05
 
 ### obridge 併入企業封裝＋admin 表單式郵件橋接設定

@@ -3345,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "ocore"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3437,7 +3437,7 @@ dependencies = [
 
 [[package]]
 name = "operoid"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -3487,7 +3487,7 @@ dependencies = [
 
 [[package]]
 name = "oserver"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "axum",
