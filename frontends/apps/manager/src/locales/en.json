@@ -71,6 +71,21 @@
   "events": {
     "empty": "No events yet"
   },
+  "chat": {
+    "input": "Type a message…",
+    "send": "Send",
+    "commitments": "Commitments",
+    "proposals": "Employee proposals",
+    "empty": "No messages yet — say hello",
+    "back": "← Inbox",
+    "forbidden": "You cannot view this employee.",
+    "commitTitle": "Commitment title",
+    "commitCond": "Completion condition",
+    "commitSubmit": "Create",
+    "proposed": "with proposal",
+    "processing": "Working…",
+    "traceCount": "{n} tool call(s)"
+  },
   "operations": {
     "title": "Operations console",
     "desc": "Query and maintain the knowledge brain directly; ask/query/think are filtered by the signed-in principal's knowledge scopes.",

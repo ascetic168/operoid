@@ -267,7 +267,7 @@ onBeforeUnmount(() => {
 <template>
   <div>
     <div class="head">
-      <router-link class="back" to="/">{{ t('chat.back') }}</router-link>
+      <router-link class="back" to="/inbox">{{ t('chat.back') }}</router-link>
       <h1>{{ empName }}</h1>
       <code class="state">{{ empState }}</code>
       <span v-if="w?.llm_model" class="muted model">{{ w.llm_model }}</span>
@@ -406,7 +406,7 @@ onBeforeUnmount(() => {
   height: 26rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;
   padding: 0.5rem;
 }
-.msg { display: flex; flex-direction: column; flex: none; }
+.msg { display: flex; flex-direction: column; }
 .msg.mine { align-items: flex-end; }
 .bubble {
   max-width: 78%; padding: 0.5rem 0.8rem; border-radius: 0.9rem;
@@ -417,9 +417,9 @@ onBeforeUnmount(() => {
 .txt { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .bubble .muted { margin: 0.2rem 0 0; font-size: 0.75rem; }
 
-/* 工具過程列（flex: none——column flex 下避免被壓縮裁切） */
+/* 工具過程列 */
 .trace {
-  width: 100%; flex: none; border: 1px solid var(--border); border-radius: 0.6rem;
+  width: 100%; border: 1px solid var(--border); border-radius: 0.6rem;
   background: var(--surface); overflow: hidden;
 }
 .tracehead {

@@ -71,6 +71,21 @@
   "events": {
     "empty": "目前没有事件"
   },
+  "chat": {
+    "input": "输入讯息…",
+    "send": "送出",
+    "commitments": "承诺",
+    "proposals": "员工提案",
+    "empty": "尚无讯息——说点什么吧",
+    "back": "← 收件匣",
+    "forbidden": "无权检视此员工。",
+    "commitTitle": "交办标题",
+    "commitCond": "完成条件",
+    "commitSubmit": "送出",
+    "proposed": "附带提案",
+    "processing": "处理中…",
+    "traceCount": "{n} 个工具调用"
+  },
   "operations": {
     "title": "运营主控台",
     "desc": "直接对知识脑下查询与维运操作；ask／query／think 依登录者的知识范围过滤。",

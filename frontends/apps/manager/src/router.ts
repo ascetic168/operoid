@@ -37,6 +37,13 @@ export const router = createRouter({
       component: () => import('./views/EventsView.vue'),
       meta: { auth: true, role: 'manager' as 'admin' | 'manager' | 'user' },
     },
+    {
+      // 經理人與員工的對話頁（watch／messages 對 manager 已放行——handler 內 can_access_employee）
+      path: '/chat/:id',
+      name: 'chat',
+      component: () => import('./views/ChatView.vue'),
+      meta: { auth: true, role: 'manager' as 'admin' | 'manager' | 'user' },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

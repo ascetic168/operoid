@@ -79,7 +79,9 @@
     "commitTitle": "交办标题",
     "commitCond": "完成条件",
     "commitSubmit": "送出",
-    "proposed": "附带提案"
+    "proposed": "附带提案",
+    "processing": "处理中…",
+    "traceCount": "{n} 个工具调用"
   },
   "inbox": {
     "proposals": "待核可提案",

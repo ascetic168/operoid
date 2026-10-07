@@ -71,6 +71,21 @@
   "events": {
     "empty": "目前沒有事件"
   },
+  "chat": {
+    "input": "輸入訊息…",
+    "send": "送出",
+    "commitments": "承諾",
+    "proposals": "員工提案",
+    "empty": "尚無訊息——說點什麼吧",
+    "back": "← 收件匣",
+    "forbidden": "無權檢視此員工。",
+    "commitTitle": "交辦標題",
+    "commitCond": "完成條件",
+    "commitSubmit": "送出",
+    "proposed": "附帶提案",
+    "processing": "處理中…",
+    "traceCount": "{n} 個工具呼叫"
+  },
   "operations": {
     "title": "營運主控台",
     "desc": "直接對知識腦下查詢與維運操作；ask／query／think 依登入者的知識範圍過濾。",

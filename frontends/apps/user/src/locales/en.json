@@ -79,7 +79,9 @@
     "commitTitle": "Commitment title",
     "commitCond": "Completion condition",
     "commitSubmit": "Create",
-    "proposed": "with proposal"
+    "proposed": "with proposal",
+    "processing": "Working…",
+    "traceCount": "{n} tool call(s)"
   },
   "inbox": {
     "proposals": "Pending proposals",

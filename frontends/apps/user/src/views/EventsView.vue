@@ -20,6 +20,19 @@ const offline = ref(false)
 const error = ref('')
 let close: (() => void) | null = null
 
+/** tool_call 事件的人類可讀摘要（detail 為 JSON 契約 v1；其餘 kind 維持原 detail）。 */
+function fmtDetail(e: EventRow): string {
+  if (e.kind !== 'tool_call') return e.detail
+  try {
+    const d = JSON.parse(e.detail) as { tool?: string; args?: string; status?: string; ms?: number }
+    if (!d || typeof d.tool !== 'string') return e.detail
+    const args = (d.args ?? '').slice(0, 80)
+    return `${d.tool}(${args}) · ${d.status ?? ''} · ${d.ms ?? '?'}ms`
+  } catch {
+    return e.detail
+  }
+}
+
 async function load(): Promise<void> {
   try {
     events.value = await api.get<EventRow[]>('/api/events?limit=80')
@@ -63,7 +76,7 @@ onBeforeUnmount(() => {
             <td class="time">{{ e.created_at.slice(11, 19) }}</td>
             <td class="who">{{ e.employee_name }}</td>
             <td class="kind"><code>{{ e.kind }}</code></td>
-            <td class="detail">{{ e.detail }}</td>
+            <td class="detail">{{ fmtDetail(e) }}</td>
           </tr>
         </tbody>
       </table>
