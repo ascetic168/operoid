@@ -74,6 +74,17 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("POST", Some("/api/employees/{id}/messages"))
         | ("DELETE", Some("/api/employees/{id}/messages")) => Req::User,
 
+        // 使用者級工廠（個人版 GUI「工廠」頁的企業對應）：類型清單／上傳暫存／轉換／
+        // 覆蓋寫入／撰寫器／自動分類。寫入面由 handler 的寫入端天花板（C13c D-C13i）細化；
+        // extract-companies（批次公司重建）屬維運批次，不在工廠 UI 面——留 Admin fail-closed。
+        ("GET", Some("/api/factories/types"))
+        | ("POST", Some("/api/factories/upload"))
+        | ("POST", Some("/api/factories/upload/cleanup"))
+        | ("POST", Some("/api/factories/run"))
+        | ("POST", Some("/api/factories/write-pages"))
+        | ("POST", Some("/api/factories/save-authored"))
+        | ("POST", Some("/api/factories/classify")) => Req::User,
+
         // 使用者級知識檢索（C12a：身份出自 token 鏈，policy 依序過濾——僅 ask/query/think；
         // 維運／診斷 ops 留在 Req::Manager 的 /api/operations）
         ("POST", Some("/api/knowledge/ask")) => Req::User,
@@ -82,7 +93,6 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         ("GET", Some("/api/registry"))
         | ("POST", Some("/api/operations"))
         | ("GET", Some("/api/operations/{id}"))
-        | ("GET", Some("/api/factories/types"))
         | ("GET", Some("/api/knowledge/overview"))
         | ("POST", Some("/api/knowledge/grants"))
         | ("POST", Some("/api/knowledge/grants/{id}/revoke"))
@@ -92,8 +102,8 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("POST", Some("/api/commitments/{id}/review")) => Req::Manager,
 
         // 其餘全部 → Admin（fail-closed：templates CRUD、employees 封存/硬刪、registry 寫、
-        // tasks cancel、brains/gbrain/prereq、factories 寫、knowledge policy/scopes/principals/tokens、
-        // accounts 管理、config、operoid.toml 相關……未列即 Admin）
+        // tasks cancel、brains/gbrain/prereq、factories extract-companies、knowledge
+        // policy/scopes/principals/tokens、accounts 管理、config、operoid.toml 相關……未列即 Admin）
         _ => Req::Admin,
     }
 }

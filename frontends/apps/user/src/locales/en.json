@@ -57,7 +57,8 @@
     "home": "My employees",
     "ask": "Knowledge Q&A",
     "inbox": "Inbox",
-    "events": "Events"
+    "events": "Events",
+    "factories": "Factories"
   },
   "ask": {
     "title": "Knowledge Q&A",
@@ -94,5 +95,198 @@
   },
   "events": {
     "empty": "No events yet"
+  },
+  "factories": {
+    "title": "Factories — drop / click / create",
+    "desc": "Drop or click a drop zone to pick files and auto-convert+write; press + to author a compliant page in the editor.",
+    "accept": "Accepts:",
+    "output": "Output →",
+    "dropHint": "Drop files, or click to choose",
+    "dropActive": "Release to convert and write",
+    "addTooltip": "New {title}",
+    "empty": "Drop files, click a drop zone, or press + on a factory to create.",
+    "converting": "Converting and writing (LLM structuring may take a few seconds)…",
+    "previewN": "Preview #",
+    "pageEditable": "(editable, then overwrite)",
+    "overwrite": "Overwrite this page",
+    "filesProcessed": "Processed files (click to preview)",
+    "pagesN": "{n} page(s)",
+    "backToList": "Back to list",
+    "overwrittenN": "Overwrote {n} file(s)",
+    "editorTitle": "New {factory} page (compliant template)",
+    "editorWritten": "Written:",
+    "editorEnriched": "LLM added {n} wikilink(s) (linked names/companies shown above)",
+    "editorNotEnriched": "LLM disabled; names not auto-linked (saved as-is)",
+    "editorFallback": "; empty title used a default filename — fill in title and re-save",
+    "editorHint": "On save: the LLM turns names you write into [[dir/name]] and uses the title: value as the filename.",
+    "editorSaveNew": "Name & write",
+    "editorSaveOverwrite": "Overwrite",
+    "editorSave": "Save ({mode})",
+    "editorEnriching": "LLM enriching…",
+    "defs": {
+      "people": {
+        "title": "people factory",
+        "accept": "CSV (Google Contacts)",
+        "target": "people/"
+      },
+      "companies": {
+        "title": "companies factory",
+        "accept": "txt / md / pdf",
+        "target": "companies/"
+      },
+      "meeting": {
+        "title": "meeting factory",
+        "accept": "txt / md / pdf",
+        "target": "meetings/"
+      },
+      "projects": {
+        "title": "projects factory",
+        "accept": "txt / md / pdf",
+        "target": "projects/"
+      },
+      "concepts": {
+        "title": "concepts factory",
+        "accept": "txt / md / pdf",
+        "target": "concepts/"
+      },
+      "inbox": {
+        "title": "inbox (quick note)",
+        "accept": "txt / md",
+        "target": "inbox/ (gbrain capture)",
+        "noGraph": "not in graph",
+        "noGraphHint": "inbox uses gbrain capture as notes; it's outside the knowledge-graph link whitelist (DIR_PATTERN), so it forms no edges with other pages."
+      },
+      "auto": {
+        "title": "Auto (drop it, I'll sort it)",
+        "accept": "csv / txt / md / pdf",
+        "target": "auto-dispatch → per-type directory",
+        "hint": "Drop any file, or click to choose"
+      },
+      "person": {
+        "title": "person",
+        "target": "person/"
+      },
+      "company": {
+        "title": "company",
+        "target": "company/"
+      },
+      "media": {
+        "title": "media",
+        "target": "media/"
+      },
+      "tweet": {
+        "title": "tweet",
+        "target": "tweet/"
+      },
+      "social-digest": {
+        "title": "social-digest",
+        "target": "social-digest/"
+      },
+      "analysis": {
+        "title": "analysis",
+        "target": "analysis/"
+      },
+      "atom": {
+        "title": "atom",
+        "target": "atom/"
+      },
+      "concept": {
+        "title": "concept",
+        "target": "concept/"
+      },
+      "source": {
+        "title": "source",
+        "target": "source/"
+      },
+      "deal": {
+        "title": "deal",
+        "target": "deal/"
+      },
+      "email": {
+        "title": "email",
+        "target": "email/"
+      },
+      "slack": {
+        "title": "slack",
+        "target": "slack/"
+      },
+      "writing": {
+        "title": "writing",
+        "target": "writing/"
+      },
+      "project": {
+        "title": "project",
+        "target": "project/"
+      },
+      "note": {
+        "title": "note (quick capture)",
+        "target": "note/ (gbrain capture)",
+        "noGraph": "no graph",
+        "noGraphHint": "notes go through gbrain capture and are not in the graph link whitelist (DIR_PATTERN), so they don't form edges."
+      }
+    },
+    "classify": {
+      "confirmTitle": "Confirm file classification",
+      "confirmHint": "These files could not be classified automatically — pick a factory for each:",
+      "confirmRun": "Confirm & convert",
+      "autoSummary": "Auto-classified: {n} page(s) written",
+      "autoSummarySkipped": "Auto-classified: {n} page(s) written ({skipped} unsupported file(s) skipped)"
+    },
+    "templates": {
+      "people": "---\ntype: person\ntitle: ''\ntags: [people, contact]\n---\n\n# \n\nAffiliation: Acme Corp, Title .\n\nEmail:\n- \n\nPhone:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "companies": "---\ntype: company\ntitle: ''\ntags: [companies, contact]\n---\n\n# \n\nAbout: .\n\nMembers: Jane Doe, John Smith, Alex Lee, Mary Chen\n",
+      "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\nDate: YYYY-MM-DD\nLocation:\n\nAttendees: Jane Doe, John Smith, Alex Lee, Mary Chen\n\nDiscussion:\n- \n\nDecisions:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\nGoal: .\n\nOwner:\n\nMilestones:\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\nDefinition: .\n\nKey points:\n- \n",
+      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n",
+      "person": "---\ntype: person\ntitle: ''\ntags: [person, contact]\n---\n\n# \n\nWorks at , title .\n\nEmail:\n- \n\nPhone:\n- \n",
+      "company": "---\ntype: company\ntitle: ''\ntags: [company, contact]\n---\n\n# \n\nSummary: .\n",
+      "concept": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\nDefinition: .\n\nKey points:\n- \n",
+      "project": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\nGoal: .\n\nMilestones:\n- \n"
+    },
+    "packLabel": "Schema pack: {pack}",
+    "v2Hint": "Current schema pack is {pack} (v1, 6 factories) — ask a system administrator to upgrade to gbrain-base-v2 (15 types).",
+    "v2HintLink": "Open settings",
+    "editor": {
+      "targetLevel": "Level",
+      "targetCircle": "Circle (dept/project)",
+      "targetHint": "Defaults to the company layer; picking a department/project or a higher level auto-provisions the matching scope and source (author needs the matching clearance).",
+      "scopeSource": "Provisioned and graphed: scope {scope} (source {source})"
+    },
+    "nothingUploaded": "No files to convert — all were skipped (unsupported extension or size limit).",
+    "noSyncHint": "Converted pages are written to the enterprise knowledge source (synced by the system); authored notes with a circle × level target are provisioned and graphed immediately on save.",
+    "close": "Close",
+    "targetBar": "Conversion target",
+    "targetHintConvert": "Defaults to the enterprise default source (synced by the system); picking a department/project or a higher level auto-provisions the matching scope and source and graphs the pages right after conversion (author needs the matching clearance).",
+    "targetCaptureNote": "The capture pipeline does not write to any repository — a conversion target does not apply to this type."
+  },
+  "factory": {
+    "csvOnly": "people factory only accepts .csv: {file}",
+    "fileError": "{file}: {detail}",
+    "peopleSummary": "CSV rows: {rows}　merged groups: {merged}　people pages written: {written}",
+    "writtenN": "Wrote {n} {factory} page(s)",
+    "inboxCaptured": "Captured {n} note(s) to inbox/",
+    "unknown": "Unknown factory: {factory}",
+    "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",
+    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}",
+    "uploadFailed": "Upload failed: {detail}",
+    "unsupportedExt": "Unsupported file extension",
+    "tooLarge": "File too large (25MB max)",
+    "tooManyFiles": "Too many files (50 max)",
+    "stagingInvalid": "Invalid staging batch id"
+  },
+  "llm": {
+    "noApiKey": "LLM provider {provider} is missing its API key (set env var {envKey} and retry)"
+  },
+  "knowledge": {
+    "grantFailed": "Grant operation failed: {detail}",
+    "principalFailed": "Principal operation failed: {detail}",
+    "policySaveFailed": "Policy save failed: {detail}",
+    "scopeFailed": "Scope operation failed: {detail}",
+    "writeAboveClearance": "Write rejected — classification {level} exceeds your clearance {clearance} (scope {scope})",
+    "writeFailed": "Write failed: {detail}"
+  },
+  "auth": {
+    "forbidden": "You do not have permission for this action"
   }
 }

@@ -86,20 +86,7 @@ async function safeBody(resp: Response): Promise<ApiErrorBody | null> {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
-  let resp: Response
-  try {
-    resp = await fetch(baseUrl + path, {
-      method,
-      headers: {
-        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
-        ...(auth && token ? { authorization: 'Bearer ' + token } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    })
-  } catch {
-    throw new OfflineError()
-  }
+async function handle<T>(resp: Response): Promise<T> {
   if (resp.status === 401) {
     const had = token !== null
     clearSession()
@@ -118,6 +105,38 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
   const ct = resp.headers.get('content-type') ?? ''
   if (!ct.includes('application/json')) return undefined as T
   return (await resp.json()) as T
+}
+
+async function request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
+  let resp: Response
+  try {
+    resp = await fetch(baseUrl + path, {
+      method,
+      headers: {
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(auth && token ? { authorization: 'Bearer ' + token } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    throw new OfflineError()
+  }
+  return handle<T>(resp)
+}
+
+/** multipart 檔案上傳（工廠暫存）——瀏覽器自帶 boundary；401/403 契約與 request 一致。 */
+export async function upload<T>(path: string, form: FormData): Promise<T> {
+  let resp: Response
+  try {
+    resp = await fetch(baseUrl + path, {
+      method: 'POST',
+      headers: token ? { authorization: 'Bearer ' + token } : {},
+      body: form,
+    })
+  } catch {
+    throw new OfflineError()
+  }
+  return handle<T>(resp)
 }
 
 export const api = {
@@ -149,6 +168,7 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
+  upload: <T>(path: string, form: FormData) => upload<T>(path, form),
 }
 
 export interface StreamEvent {

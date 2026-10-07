@@ -57,7 +57,8 @@
     "home": "我的员工",
     "ask": "知识查询",
     "inbox": "收件匣",
-    "events": "事件流"
+    "events": "事件流",
+    "factories": "工厂"
   },
   "ask": {
     "title": "知识查询",
@@ -94,5 +95,198 @@
   },
   "events": {
     "empty": "目前没有事件"
+  },
+  "factories": {
+    "title": "工厂 — 拖放 / 点选 / 新增",
+    "desc": "拖放或点拖放区选档即自动转换并写入；按 + 直接在编辑器以合规 template 新增。",
+    "accept": "接受：",
+    "output": "输出 →",
+    "dropHint": "拖放，或点此选择文件",
+    "dropActive": "放开即转换并写入",
+    "addTooltip": "新增 {title}",
+    "empty": "拖放、点拖放区选档，或按工厂右上 + 新增。",
+    "converting": "转换并写入中（LLM 结构化可能需数秒）…",
+    "previewN": "预览第",
+    "pageEditable": "页（可编辑后覆盖）",
+    "overwrite": "覆盖此页",
+    "filesProcessed": "处理的文件（点选预览）",
+    "pagesN": "{n} 页",
+    "backToList": "返回清单",
+    "overwrittenN": "已覆盖写入 {n} 个文件",
+    "editorTitle": "新增 {factory} 页（合规 template）",
+    "editorWritten": "已写入：",
+    "editorEnriched": "LLM 已补 {n} 个 wikilink（可见上方已链接的人名/公司名）",
+    "editorNotEnriched": "LLM 未启用，人名未自动链接（原文照存）",
+    "editorFallback": "；title 为空用默认档名，请填 title 重存",
+    "editorHint": "存档时：LLM 会把你写的人名/公司名补成 [[dir/名字]]，并以 title: 内容作为档名。",
+    "editorSaveNew": "取名写入",
+    "editorSaveOverwrite": "覆盖",
+    "editorSave": "保存（{mode}）",
+    "editorEnriching": "LLM 补全中…",
+    "defs": {
+      "people": {
+        "title": "people 工厂",
+        "accept": "CSV（Google 通讯录）",
+        "target": "people/"
+      },
+      "companies": {
+        "title": "companies 工厂",
+        "accept": "txt / md / pdf",
+        "target": "companies/"
+      },
+      "meeting": {
+        "title": "meeting 工厂",
+        "accept": "txt / md / pdf",
+        "target": "meetings/"
+      },
+      "projects": {
+        "title": "projects 工厂",
+        "accept": "txt / md / pdf",
+        "target": "projects/"
+      },
+      "concepts": {
+        "title": "concepts 工厂",
+        "accept": "txt / md / pdf",
+        "target": "concepts/"
+      },
+      "inbox": {
+        "title": "inbox（速记）",
+        "accept": "txt / md",
+        "target": "inbox/（gbrain capture）",
+        "noGraph": "不进图谱",
+        "noGraphHint": "inbox 走 gbrain capture 当 note 速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。"
+      },
+      "auto": {
+        "title": "自动（丢进来我帮你分）",
+        "accept": "csv / txt / md / pdf",
+        "target": "依判断分派 → 各类型目录",
+        "hint": "拖放任何文件，或点此选择"
+      },
+      "person": {
+        "title": "person 人物",
+        "target": "person/"
+      },
+      "company": {
+        "title": "company 公司",
+        "target": "company/"
+      },
+      "media": {
+        "title": "media 媒体",
+        "target": "media/"
+      },
+      "tweet": {
+        "title": "tweet 推文",
+        "target": "tweet/"
+      },
+      "social-digest": {
+        "title": "social-digest 社群摘要",
+        "target": "social-digest/"
+      },
+      "analysis": {
+        "title": "analysis 分析",
+        "target": "analysis/"
+      },
+      "atom": {
+        "title": "atom 知识原子",
+        "target": "atom/"
+      },
+      "concept": {
+        "title": "concept 概念",
+        "target": "concept/"
+      },
+      "source": {
+        "title": "source 来源",
+        "target": "source/"
+      },
+      "deal": {
+        "title": "deal 商机",
+        "target": "deal/"
+      },
+      "email": {
+        "title": "email 邮件",
+        "target": "email/"
+      },
+      "slack": {
+        "title": "slack 对话",
+        "target": "slack/"
+      },
+      "writing": {
+        "title": "writing 写作",
+        "target": "writing/"
+      },
+      "project": {
+        "title": "project 项目",
+        "target": "project/"
+      },
+      "note": {
+        "title": "note 速记",
+        "target": "note/（gbrain capture）",
+        "noGraph": "不进图谱",
+        "noGraphHint": "note 走 gbrain capture 当速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。"
+      }
+    },
+    "classify": {
+      "confirmTitle": "确认文件分类",
+      "confirmHint": "以下文件无法自动判定，请选择归入的工厂：",
+      "confirmRun": "确认并转换",
+      "autoSummary": "自动分类完成：已写入 {n} 个页",
+      "autoSummarySkipped": "自动分类完成：已写入 {n} 个页（略过 {skipped} 个不支持的文件）"
+    },
+    "templates": {
+      "people": "---\ntype: person\ntitle: ''\ntags: [people, contact]\n---\n\n# \n\n任职于 晶瀚半导体，职称 。\n\nEmail：\n- \n\nPhone：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "companies": "---\ntype: company\ntitle: ''\ntags: [companies, contact]\n---\n\n# \n\n简介：。\n\n成员：赵建宏、陈志远、林家豪、王淑芬\n",
+      "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\n日期：YYYY-MM-DD\n地点：\n\n与会者：赵建宏、陈志远、林家豪、王淑芬\n\n讨论：\n- \n\n决议：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目标：。\n\n负责人：\n\n里程碑：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定义：。\n\n要点：\n- \n",
+      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n",
+      "person": "---\ntype: person\ntitle: ''\ntags: [person, contact]\n---\n\n# \n\n任职于 ，职称 。\n\nEmail：\n- \n\nPhone：\n- \n",
+      "company": "---\ntype: company\ntitle: ''\ntags: [company, contact]\n---\n\n# \n\n简介：。\n",
+      "concept": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定义：。\n\n要点：\n- \n",
+      "project": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目标：。\n\n里程碑：\n- \n"
+    },
+    "packLabel": "Schema pack：{pack}",
+    "v2Hint": "当前 schema pack 为 {pack}（v1，6 工厂）——请联系系统管理者升级到 gbrain-base-v2（15 型）。",
+    "v2HintLink": "前往设置",
+    "editor": {
+      "targetLevel": "保密等级",
+      "targetCircle": "圈子（部门／项目）",
+      "targetHint": "默认写入公司层；指定部门／项目或更高保密等级时，系统自动创建对应范围与来源（作者需具备该等级 clearance）。",
+      "scopeSource": "已自动供给范围并入图：scope {scope}（source {source}）"
+    },
+    "nothingUploaded": "没有可转换的文件——全部被略过（不支持的副档名或超出大小限制）。",
+    "noSyncHint": "转换的页已写入企业知识库来源（同步由系统管理）；「+ 新增」撰写并指定圈子×等级时，存档即自动供给范围并立即入图。",
+    "close": "关闭",
+    "targetBar": "转换写入目标",
+    "targetHintConvert": "默认写入企业默认来源（同步由系统管理）；指定部门／项目或更高保密等级时，系统自动创建对应范围与来源、转换完成立即入图（需具备该等级 clearance）。",
+    "targetCaptureNote": "速记（capture）管线不落盘——写入目标对此类型不适用。"
+  },
+  "factory": {
+    "csvOnly": "people 工厂只接受 .csv：{file}",
+    "fileError": "{file}：{detail}",
+    "peopleSummary": "CSV 列：{rows}　合并群组：{merged}　已写入 people 页：{written}",
+    "writtenN": "已写入 {factory} 页：{n}",
+    "inboxCaptured": "已 capture {n} 笔到 inbox/",
+    "unknown": "未知工厂：{factory}",
+    "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",
+    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}",
+    "uploadFailed": "上传失败：{detail}",
+    "unsupportedExt": "不支持的副档名",
+    "tooLarge": "文件过大（上限 25MB）",
+    "tooManyFiles": "文件过多（上限 50 个）",
+    "stagingInvalid": "暂存批次 id 不合法"
+  },
+  "llm": {
+    "noApiKey": "LLM provider {provider} 缺 API key（设环境变量 {envKey} 后重试）"
+  },
+  "knowledge": {
+    "grantFailed": "grant 操作失败：{detail}",
+    "principalFailed": "principal 操作失败：{detail}",
+    "policySaveFailed": "政策保存失败：{detail}",
+    "scopeFailed": "范围操作失败：{detail}",
+    "writeAboveClearance": "写入被拒——保密等级 {level} 超过你的 clearance {clearance}（范围 {scope}）",
+    "writeFailed": "写入失败：{detail}"
+  },
+  "auth": {
+    "forbidden": "没有权限执行此操作"
   }
 }

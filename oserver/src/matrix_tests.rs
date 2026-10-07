@@ -131,6 +131,8 @@ const INVENTORY: &[(&str, &str)] = &[
     ("POST", "/api/operations"),
     ("GET", "/api/operations/{id}"),
     ("GET", "/api/factories/types"),
+    ("POST", "/api/factories/upload"),
+    ("POST", "/api/factories/upload/cleanup"),
     ("POST", "/api/factories/run"),
     ("POST", "/api/factories/write-pages"),
     ("POST", "/api/factories/extract-companies"),

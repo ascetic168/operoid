@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path as AxPath, Query, State};
+use axum::extract::{Multipart, Path as AxPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
@@ -58,13 +58,19 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/operations/{id}", get(api_op_snapshot))
         // 使用者級知識檢索（Req::User；僅 ask/query/think——同步回應，不進 op registry）
         .route("/api/knowledge/ask", post(api_knowledge_ask))
-        // 工廠
+        // 工廠（使用者級——RBAC Req::User；寫入面由 handler 寫入端天花板細化）
         .route("/api/factories/types", get(api_factory_types))
         .route("/api/factories/run", post(api_factory_run))
         .route("/api/factories/write-pages", post(api_factory_write_pages))
         .route("/api/factories/extract-companies", post(api_extract_companies))
         .route("/api/factories/save-authored", post(api_factory_save_authored))
         .route("/api/factories/classify", post(api_factory_classify))
+        // 瀏覽器前端無本機路徑——檔案先上傳暫存，再以回傳路徑交 run/classify
+        .route(
+            "/api/factories/upload",
+            post(api_factory_upload).layer(axum::extract::DefaultBodyLimit::max(UPLOAD_BODY_LIMIT)),
+        )
+        .route("/api/factories/upload/cleanup", post(api_factory_upload_cleanup))
         // 前置檢查
         .route("/api/prereq", get(api_prereq))
         .layer(crate::routes::cors_layer())
@@ -984,6 +990,8 @@ struct FactoryRunBody {
     factory: String,
     paths: Vec<String>,
     target_repo: Option<String>,
+    /// C13c：轉換寫入目標（圈子×等級）——缺省＝企業預設來源（target_repo 流）。
+    target: Option<AuthoredTarget>,
 }
 
 async fn api_factory_run(
@@ -991,24 +999,81 @@ async fn api_factory_run(
     headers: HeaderMap,
     body: Json<FactoryRunBody>,
 ) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
+    // C13c（D-C13i）：run 是寫入路徑（pages 落盤 repo）——作者身份出自 token 鏈。
+    // 無 target：寫入端天花板按有效 repo（target_repo 缺省＝cfg.notes_repo_path）裁定；
+    // 有 target：供給目錄路徑（run_to_scope_core 內建等級天花板）。capture 管線不落盤
+    // repo（gbrain capture）→ 兩者皆不適用，target 靜默忽略；未知工廠交 run_core 回錯。
+    let Some(owner) = require_identity(&state, &headers, None).map(|i| i.name) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
+    };
     let st = state.clone();
     let b = body.0;
     // run_core 含 LLM 子行程——非 SQLite，直接 async。
     let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
-        run_core(&cfg, &b.factory, &b.paths, b.target_repo.as_deref()).await
+        let (pack, _) = ocore::factory_types::active_pack(&cfg);
+        let writes_repo = pack.spec(&b.factory).map(|s| !s.is_capture()).unwrap_or(false);
+        let scoped = writes_repo && b.target.is_some();
+        if !writes_repo {
+            let preview = run_core(&cfg, &b.factory, &b.paths, None).await?;
+            return serde_json::to_value(preview)
+                .map_err(|e| AppError::new("server.internal").p("detail", e.to_string()));
+        }
+        if scoped {
+            let t = b.target.expect("scoped ⇒ target");
+            let store = ocore::domain::SqliteStore::open(&st.db_path)?;
+            let (kind, circle, level) = parse_authored_target(&t)?;
+            let (preview, target) = ocore::factories::run_to_scope_core(
+                &cfg, &store, &b.factory, &b.paths, kind, &circle, level, &owner,
+            )
+            .await?;
+            let mut v = serde_json::to_value(preview)
+                .unwrap_or_else(|_| serde_json::Value::Null);
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("scope".into(), json!(target.scope_id));
+                obj.insert("source".into(), json!(target.source_id));
+            }
+            return Ok::<_, AppError>(v);
+        }
+        // 預設來源流：天花板按有效 repo。
+        let repo = b.target_repo.clone().unwrap_or_else(|| cfg.notes_repo_path.clone());
+        {
+            let store = ocore::domain::SqliteStore::open(&st.db_path)?;
+            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
+        }
+        let preview = run_core(&cfg, &b.factory, &b.paths, Some(&repo)).await?;
+        serde_json::to_value(preview).map_err(|e| AppError::new("server.internal").p("detail", e.to_string()))
     })
     .await;
     finish(res)
+}
+
+/// C13c target 解析（save-authored／run／write-pages 共用）：kind 字串→CircleKind、
+/// level 字串→SecurityLevel；circle 空 → "company"。
+fn parse_authored_target(
+    t: &AuthoredTarget,
+) -> Result<(ocore::knowledge::provision::CircleKind, String, ocore::knowledge::types::SecurityLevel), AppError> {
+    let kind = match t.kind.as_str() {
+        "department" => ocore::knowledge::provision::CircleKind::Department,
+        "project" => ocore::knowledge::provision::CircleKind::Project,
+        _ => ocore::knowledge::provision::CircleKind::Company,
+    };
+    let level = serde_json::from_value::<ocore::knowledge::types::SecurityLevel>(json!(t.level))
+        .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
+    let circle = if t.circle.trim().is_empty() { "company".into() } else { t.circle.trim().to_string() };
+    Ok((kind, circle, level))
 }
 
 #[derive(Deserialize)]
 struct WritePagesBody {
     pages: Vec<WritePage>,
     target_repo: Option<String>,
+    /// C13c：覆蓋寫回轉換時的同一圈子×等級供給目錄——缺省＝企業預設來源。
+    target: Option<AuthoredTarget>,
 }
 
 async fn api_factory_write_pages(
@@ -1016,7 +1081,8 @@ async fn api_factory_write_pages(
     headers: HeaderMap,
     body: Json<WritePagesBody>,
 ) -> Response {
-    // C13c（D-C13i）：批次路徑同樣受寫入端天花板管制。
+    // C13c（D-C13i）：批次路徑受寫入端天花板管制——無 target 按有效 repo（缺省＝
+    // 預設 notes repo）；有 target 走供給目錄（內建等級天花板，冪等回轉換時的 scope）。
     let Some(owner) = require_identity(&state, &headers, None).map(|i| i.name) else {
         return (
             StatusCode::UNAUTHORIZED,
@@ -1028,20 +1094,30 @@ async fn api_factory_write_pages(
     let b = body.0;
     let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
-        if let Some(repo) = b.target_repo.as_deref() {
+        if let Some(t) = &b.target {
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
-            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, repo).await?;
+            let (kind, circle, level) = parse_authored_target(t)?;
+            let (result, _) = ocore::factories::write_pages_to_scope_core(
+                &cfg, &store, &b.pages, kind, &circle, level, &owner,
+            )
+            .await?;
+            if let Some(as_) = &st.agent_state {
+                ocore::factories::emit_factory_events(as_, &cfg, &b.pages);
+            }
+            return Ok::<_, AppError>(result);
         }
-        let cfg = cfg;
-        let notes = std::path::PathBuf::from(
-            b.target_repo.unwrap_or_else(|| cfg.notes_repo_path.clone()),
-        );
+        let repo = b.target_repo.clone().unwrap_or_else(|| cfg.notes_repo_path.clone());
+        {
+            let store = ocore::domain::SqliteStore::open(&st.db_path)?;
+            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
+        }
+        let notes = std::path::PathBuf::from(&repo);
         let result = write_pages_core(&notes, &b.pages);
         // 事件 emit（AppState 有則 emit）
         if let Some(as_) = &st.agent_state {
             ocore::factories::emit_factory_events(as_, &cfg, &b.pages);
         }
-        Ok::<_, AppError>(result)
+        Ok(result)
     })
     .await;
     finish(res)
@@ -1108,24 +1184,18 @@ async fn api_factory_save_authored(
     let agent_state = st.agent_state.clone();
     let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
-        // C13c（D-C13i）：寫入端天花板——所選來源（targetRepo）的等級 ≤ 作者 clearance。
-        if let Some(repo) = b.target_repo.as_deref() {
+        // C13c（D-C13i）：寫入端天花板——所選來源（targetRepo）的等級 ≤ 作者 clearance；
+        // target_repo 缺省＝預設 notes repo，同樣受管。指定 target（圈子×等級）時落點是
+        // 供給目錄而非此 repo——由 authored_to_scope_core 內建的等級天花板裁定，不重複檢。
+        if b.target.is_none() {
+            let repo = b.target_repo.clone().unwrap_or_else(|| cfg.notes_repo_path.clone());
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
-            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, repo).await?;
+            ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
         }
         match &b.target {
             Some(t) => {
                 let store = ocore::domain::SqliteStore::open(&st.db_path)?;
-                let kind = match t.kind.as_str() {
-                    "department" => ocore::knowledge::provision::CircleKind::Department,
-                    "project" => ocore::knowledge::provision::CircleKind::Project,
-                    _ => ocore::knowledge::provision::CircleKind::Company,
-                };
-                let level = serde_json::from_value::<ocore::knowledge::types::SecurityLevel>(
-                    serde_json::json!(t.level),
-                )
-                .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
-                let circle = if t.circle.trim().is_empty() { "company" } else { t.circle.trim() };
+                let (kind, circle, level) = parse_authored_target(t)?;
                 let (res, target) = ocore::factories::authored_to_scope_core(
                     &cfg,
                     agent_state.as_ref(),
@@ -1134,7 +1204,7 @@ async fn api_factory_save_authored(
                     &b.markdown,
                     b.existing_slug.as_deref(),
                     kind,
-                    circle,
+                    &circle,
                     level,
                     &owner,
                 )
@@ -1204,6 +1274,223 @@ async fn api_factory_classify(
         out.push(classify_one(std::path::Path::new(p), &cfg, endpoint.as_ref()).await);
     }
     ok_json(serde_json::to_value(&out).unwrap_or_default())
+}
+
+// ── 工廠上傳暫存（企業模式）──────────────────────────────────────────
+// 個人版 GUI 交本機路徑給 run/classify；企業前端在瀏覽器裡——檔案先 multipart 上傳到
+// OS temp 下的暫存區（每身份一層＋每批次隨機 id 一層），以回傳的伺服器路徑交後續端點。
+// 生命週期：前端流程結束呼叫 cleanup；逾時由上傳時的隨手清道夫掃掉（24h）。
+
+/// 上傳 route 的 body 上限（整批；axum 預設 2MB 裝不下 PDF 批次）。
+const UPLOAD_BODY_LIMIT: usize = 64 * 1024 * 1024;
+/// 單檔上限（超過整檔拒收）與單批檔數上限。
+const UPLOAD_MAX_FILE_BYTES: usize = 25 * 1024 * 1024;
+const UPLOAD_MAX_FILES: usize = 50;
+/// 暫存目錄壽命（清道夫掃描門檻）。
+const STAGING_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+fn staging_root() -> std::path::PathBuf {
+    std::env::temp_dir().join("operoid-factory-uploads")
+}
+
+/// 暫存批次 id（CSPRNG hex——與 SSE 短票同源；同時是 cleanup 的路由鍵）。
+fn new_staging_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::getrandom(&mut b).expect("OS 熵源不可用");
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// 檔名消毒：取 basename、白名單字元（英數．._-），其餘→`_`；空／點開頭→前綴 file。
+fn sanitize_file_name(raw: &str) -> String {
+    let base = std::path::Path::new(raw)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let cleaned: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches('.').to_string();
+    if cleaned.is_empty() || cleaned.starts_with('.') {
+        format!("file{cleaned}")
+    } else {
+        cleaned
+    }
+}
+
+/// 目前身分包支援的副檔名（各管線 extensions 聯集，小寫）——上傳白名單。
+fn supported_extensions(cfg: &AppConfig) -> Vec<String> {
+    let (pack, _) = ocore::factory_types::active_pack(cfg);
+    let mut exts: Vec<String> = pack
+        .types
+        .iter()
+        .flat_map(|t| t.pipeline.extensions())
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
+    exts.sort();
+    exts.dedup();
+    exts
+}
+
+/// 隨手清道夫：上傳時順手掃掉逾時暫存目錄（best-effort，失敗不擋上傳）。
+fn staging_sweep() {
+    let Ok(owners) = std::fs::read_dir(staging_root()) else {
+        return;
+    };
+    for owner in owners.flatten() {
+        let Ok(batches) = std::fs::read_dir(owner.path()) else {
+            continue;
+        };
+        for batch in batches.flatten() {
+            let stale = batch
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t.elapsed().unwrap_or_default() >= STAGING_TTL)
+                .unwrap_or(false);
+            if stale {
+                std::fs::remove_dir_all(batch.path()).ok();
+            }
+        }
+    }
+}
+
+async fn api_factory_upload(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    mut mp: Multipart,
+) -> Response {
+    let Some(identity) = require_identity(&state, &headers, None) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
+    };
+    let st = state.clone();
+    let owner = sanitize_file_name(&identity.name);
+    // 暫存目錄＋白名單在 blocking 域備妥（設定檔讀取沿既有紀律）。
+    let prepared = tokio::task::spawn_blocking(move || -> Result<(std::path::PathBuf, String, Vec<String>), AppError> {
+        let cfg = load_cfg(&st)?;
+        let exts = supported_extensions(&cfg);
+        staging_sweep();
+        let staging = new_staging_id();
+        let dir = staging_root().join(owner).join(&staging);
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AppError::new("factory.uploadFailed").p("detail", e.to_string()))?;
+        Ok((dir, staging, exts))
+    })
+    .await;
+    let (dir, staging, exts) = match prepared {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return err_response(&e),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"code": "server.internal", "detail": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+
+    let mut saved: Vec<String> = Vec::new();
+    let mut skipped: Vec<serde_json::Value> = Vec::new();
+    loop {
+        match mp.next_field().await {
+            Ok(Some(field)) => {
+                // 非檔案欄位（無 filename）略過——契約只收 files。
+                let Some(raw_name) = field.file_name().map(str::to_owned) else {
+                    continue;
+                };
+                if saved.len() + skipped.len() >= UPLOAD_MAX_FILES {
+                    skipped.push(json!({"name": raw_name, "reason": "factory.tooManyFiles"}));
+                    continue;
+                }
+                let name = sanitize_file_name(&raw_name);
+                let ext_ok = name
+                    .rsplit('.')
+                    .next()
+                    .map(|e| exts.iter().any(|x| x == &e.to_ascii_lowercase()))
+                    .unwrap_or(false);
+                if !ext_ok {
+                    skipped.push(json!({"name": raw_name, "reason": "factory.unsupportedExt"}));
+                    continue;
+                }
+                let bytes = match field.bytes().await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        skipped.push(json!({"name": raw_name, "reason": "factory.uploadFailed",
+                            "detail": e.to_string()}));
+                        continue;
+                    }
+                };
+                if bytes.len() > UPLOAD_MAX_FILE_BYTES {
+                    skipped.push(json!({"name": raw_name, "reason": "factory.tooLarge"}));
+                    continue;
+                }
+                let path = dir.join(&name);
+                // 同批同名 → 序號前綴並存（001-name.ext）。
+                let path = if path.exists() {
+                    dir.join(format!("{:03}-{}", saved.len() + skipped.len(), name))
+                } else {
+                    path
+                };
+                match std::fs::write(&path, &bytes) {
+                    Ok(()) => saved.push(path.to_string_lossy().into_owned()),
+                    Err(e) => skipped.push(json!({"name": raw_name, "reason": "factory.uploadFailed",
+                        "detail": e.to_string()})),
+                }
+            }
+            Ok(None) => break,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"code": "factory.uploadFailed", "params": {"detail": e.to_string()}})),
+                )
+                    .into_response()
+            }
+        }
+    }
+    ok_json(json!({ "paths": saved, "staging": staging, "skipped": skipped }))
+}
+
+#[derive(Deserialize)]
+struct UploadCleanupBody {
+    staging: String,
+}
+
+async fn api_factory_upload_cleanup(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<UploadCleanupBody>,
+) -> Response {
+    let Some(identity) = require_identity(&state, &headers, None) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response()
+    };
+    // staging id 只可能是 CSPRNG hex——格式不符直接 400（防路徑探測）。
+    if body.staging.len() != 32 || !body.staging.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": "factory.stagingInvalid"})),
+        )
+            .into_response()
+    }
+    let dir = staging_root()
+        .join(sanitize_file_name(&identity.name))
+        .join(&body.staging);
+    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dir).ok())
+        .await
+        .ok();
+    ok_json(json!({ "ok": true }))
 }
 
 // ── 前置檢查 ─────────────────────────────────────────────────────────

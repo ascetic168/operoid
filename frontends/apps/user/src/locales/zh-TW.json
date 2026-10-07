@@ -57,7 +57,8 @@
     "home": "我的員工",
     "ask": "知識查詢",
     "inbox": "收件匣",
-    "events": "事件流"
+    "events": "事件流",
+    "factories": "工廠"
   },
   "ask": {
     "title": "知識查詢",
@@ -94,5 +95,198 @@
   },
   "events": {
     "empty": "目前沒有事件"
+  },
+  "factories": {
+    "title": "工廠 — 拖放 / 點選 / 新增",
+    "desc": "拖放或點拖放區選檔即自動轉換並寫入；按 + 直接在編輯器以合規 template 新增。",
+    "accept": "接受：",
+    "output": "輸出 →",
+    "dropHint": "拖放，或點此選擇檔案",
+    "dropActive": "放開即轉換並寫入",
+    "addTooltip": "新增 {title}",
+    "empty": "拖放、點拖放區選檔，或按工廠右上 + 新增。",
+    "converting": "轉換並寫入中（LLM 結構化可能需數秒）…",
+    "previewN": "預覽第",
+    "pageEditable": "頁（可編輯後覆蓋）",
+    "overwrite": "覆蓋此頁",
+    "filesProcessed": "處理的檔案（點選預覽）",
+    "pagesN": "{n} 頁",
+    "backToList": "返回清單",
+    "overwrittenN": "已覆蓋寫入 {n} 個檔案",
+    "editorTitle": "新增 {factory} 頁（合規 template）",
+    "editorWritten": "已寫入：",
+    "editorEnriched": "LLM 已補 {n} 個 wikilink（可見上方已連結的人名/公司名）",
+    "editorNotEnriched": "LLM 未啟用，人名未自動連結（原文照存）",
+    "editorFallback": "；title 為空用預設檔名，請填 title 重存",
+    "editorHint": "存檔時：LLM 會把你寫的人名/公司名補成 [[dir/名字]]，並以 title: 內容作為檔名。",
+    "editorSaveNew": "取名寫入",
+    "editorSaveOverwrite": "覆蓋",
+    "editorSave": "儲存（{mode}）",
+    "editorEnriching": "LLM 補全中…",
+    "defs": {
+      "people": {
+        "title": "people 工廠",
+        "accept": "CSV（Google Contacts）",
+        "target": "people/"
+      },
+      "companies": {
+        "title": "companies 工廠",
+        "accept": "txt / md / pdf",
+        "target": "companies/"
+      },
+      "meeting": {
+        "title": "meeting 工廠",
+        "accept": "txt / md / pdf",
+        "target": "meetings/"
+      },
+      "projects": {
+        "title": "projects 工廠",
+        "accept": "txt / md / pdf",
+        "target": "projects/"
+      },
+      "concepts": {
+        "title": "concepts 工廠",
+        "accept": "txt / md / pdf",
+        "target": "concepts/"
+      },
+      "inbox": {
+        "title": "inbox（速記）",
+        "accept": "txt / md",
+        "target": "inbox/（gbrain capture）",
+        "noGraph": "不進圖譜",
+        "noGraphHint": "inbox 走 gbrain capture 當 note 速記，不在知識圖譜的連結白名單（DIR_PATTERN）內，故不與其他頁成邊。"
+      },
+      "auto": {
+        "title": "自動（丟進來我幫你分）",
+        "accept": "csv / txt / md / pdf",
+        "target": "依判斷分派 → 各類型目錄",
+        "hint": "拖放任何檔案，或點此選擇"
+      },
+      "person": {
+        "title": "person 人物",
+        "target": "person/"
+      },
+      "company": {
+        "title": "company 公司",
+        "target": "company/"
+      },
+      "media": {
+        "title": "media 媒體",
+        "target": "media/"
+      },
+      "tweet": {
+        "title": "tweet 推文",
+        "target": "tweet/"
+      },
+      "social-digest": {
+        "title": "social-digest 社群摘要",
+        "target": "social-digest/"
+      },
+      "analysis": {
+        "title": "analysis 分析",
+        "target": "analysis/"
+      },
+      "atom": {
+        "title": "atom 知識原子",
+        "target": "atom/"
+      },
+      "concept": {
+        "title": "concept 概念",
+        "target": "concept/"
+      },
+      "source": {
+        "title": "source 來源",
+        "target": "source/"
+      },
+      "deal": {
+        "title": "deal 商機",
+        "target": "deal/"
+      },
+      "email": {
+        "title": "email 郵件",
+        "target": "email/"
+      },
+      "slack": {
+        "title": "slack 對話",
+        "target": "slack/"
+      },
+      "writing": {
+        "title": "writing 寫作",
+        "target": "writing/"
+      },
+      "project": {
+        "title": "project 專案",
+        "target": "project/"
+      },
+      "note": {
+        "title": "note 速記",
+        "target": "note/（gbrain capture）",
+        "noGraph": "不進圖譜",
+        "noGraphHint": "note 走 gbrain capture 當速記，不在知識圖譜的連結白名單（DIR_PATTERN）內，故不與其他頁成邊。"
+      }
+    },
+    "classify": {
+      "confirmTitle": "確認檔案分類",
+      "confirmHint": "以下檔案無法自動判定，請選擇歸入的工廠：",
+      "confirmRun": "確認並轉換",
+      "autoSummary": "自動分類完成：已寫入 {n} 個頁",
+      "autoSummarySkipped": "自動分類完成：已寫入 {n} 個頁（略過 {skipped} 個不支援的檔案）"
+    },
+    "templates": {
+      "people": "---\ntype: person\ntitle: ''\ntags: [people, contact]\n---\n\n# \n\n任職於 晶瀚半導體，職稱 。\n\nEmail：\n- \n\nPhone：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "companies": "---\ntype: company\ntitle: ''\ntags: [companies, contact]\n---\n\n# \n\n簡介：。\n\n成員：趙建宏、陳志遠、林家豪、王淑芬\n",
+      "meeting": "---\ntype: meeting\ntitle: ''\ntags: [meeting]\n---\n\n# \n\n日期：YYYY-MM-DD\n地點：\n\n與會者：趙建宏、陳志遠、林家豪、王淑芬\n\n討論：\n- \n\n決議：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "projects": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目標：。\n\n負責人：\n\n里程碑：\n- \n\n<!-- timeline -->\n### YYYY-MM-DD — \n",
+      "concepts": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定義：。\n\n要點：\n- \n",
+      "inbox": "---\ntype: note\ntitle: ''\ntags: [note]\n---\n\n# \n\n",
+      "person": "---\ntype: person\ntitle: ''\ntags: [person, contact]\n---\n\n# \n\n任職於 ，職稱 。\n\nEmail：\n- \n\nPhone：\n- \n",
+      "company": "---\ntype: company\ntitle: ''\ntags: [company, contact]\n---\n\n# \n\n簡介：。\n",
+      "concept": "---\ntype: concept\ntitle: ''\ntags: [concept]\n---\n\n# \n\n定義：。\n\n要點：\n- \n",
+      "project": "---\ntype: project\ntitle: ''\ntags: [project]\n---\n\n# \n\n目標：。\n\n里程碑：\n- \n"
+    },
+    "packLabel": "Schema pack：{pack}",
+    "v2Hint": "目前 schema pack 為 {pack}（v1，6 工廠）——請聯絡系統管理者升級到 gbrain-base-v2（15 型）。",
+    "v2HintLink": "前往設定",
+    "editor": {
+      "targetLevel": "保密等級",
+      "targetCircle": "圈子（部門／專案）",
+      "targetHint": "預設寫入公司層；指定部門／專案或更高保密等級時，系統自動建立對應範圍與來源（作者需具備該等級 clearance）。",
+      "scopeSource": "已自動供給範圍並入圖：scope {scope}（source {source}）"
+    },
+    "nothingUploaded": "沒有可轉換的檔案——全部被略過（不支援的副檔名或超出大小限制）。",
+    "noSyncHint": "轉換的頁已寫入企業知識庫來源（同步由系統管理）；「+ 新增」撰寫並指定圈子×等級時，存檔即自動供給範圍並立即入圖。",
+    "close": "關閉",
+    "targetBar": "轉換寫入目標",
+    "targetHintConvert": "預設寫入企業預設來源（同步由系統管理）；指定部門／專案或更高保密等級時，系統自動建立對應範圍與來源、轉換完成立即入圖（需具備該等級 clearance）。",
+    "targetCaptureNote": "速記（capture）管線不落盤——寫入目標對此類型不適用。"
+  },
+  "factory": {
+    "csvOnly": "people 工廠只接受 .csv：{file}",
+    "fileError": "{file}：{detail}",
+    "peopleSummary": "CSV 列：{rows}　合併群組：{merged}　已寫入 people 頁：{written}",
+    "writtenN": "已寫入 {factory} 頁：{n}",
+    "inboxCaptured": "已 capture {n} 筆到 inbox/",
+    "unknown": "未知工廠：{factory}",
+    "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",
+    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}",
+    "uploadFailed": "上傳失敗：{detail}",
+    "unsupportedExt": "不支援的副檔名",
+    "tooLarge": "檔案過大（上限 25MB）",
+    "tooManyFiles": "檔案過多（上限 50 個）",
+    "stagingInvalid": "暫存批次 id 不合法"
+  },
+  "llm": {
+    "noApiKey": "LLM provider {provider} 缺 API key（設環境變數 {envKey} 後重試）"
+  },
+  "knowledge": {
+    "grantFailed": "grant 操作失敗：{detail}",
+    "principalFailed": "principal 操作失敗：{detail}",
+    "policySaveFailed": "政策儲存失敗：{detail}",
+    "scopeFailed": "範圍操作失敗：{detail}",
+    "writeAboveClearance": "寫入被拒——保密等級 {level} 超過你的 clearance {clearance}（範圍 {scope}）",
+    "writeFailed": "寫入失敗：{detail}"
+  },
+  "auth": {
+    "forbidden": "沒有權限執行這個操作"
   }
 }

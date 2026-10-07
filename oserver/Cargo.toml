@@ -8,7 +8,8 @@ license = "MIT"
 
 [dependencies]
 ocore = { path = "../ocore" }
-axum = "0.8"
+# multipart：工廠檔案上傳暫存（企業模式——瀏覽器前端無本機路徑可交 run/classify）。
+axum = { version = "0.8", features = ["multipart"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tokio = { version = "1", features = ["full"] }

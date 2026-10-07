@@ -57,7 +57,9 @@ pub(crate) fn err_response(e: &AppError) -> Response {
         "agent_os.invalidTransition" => StatusCode::CONFLICT,
         // R2：認證／授權語意（401 未認證、403 無權、429 鎖定、400 政策不合）
         "auth.unauthorized" | "auth.invalidCredentials" => StatusCode::UNAUTHORIZED,
-        "auth.forbidden" | "auth.accountDisabled" | "auth.mustChangePassword" => StatusCode::FORBIDDEN,
+        "auth.forbidden" | "auth.accountDisabled" | "auth.mustChangePassword"
+        // C13c（D-C13i）：寫入端天花板——超出 clearance 是授權裁定，非內部錯誤
+        | "knowledge.writeAboveClearance" => StatusCode::FORBIDDEN,
         "auth.accountLocked" => StatusCode::TOO_MANY_REQUESTS,
         "auth.weakPassword" | "auth.accountCreateFailed" | "auth.noSession" => StatusCode::BAD_REQUEST,
         // obridge 管理（企業模式）：驗證失敗／未啟用／非代管模式 → 400；重複啟動 → 409；exe 缺 → 404

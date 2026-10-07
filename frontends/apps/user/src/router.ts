@@ -26,6 +26,12 @@ export const router = createRouter({
       meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
     },
     {
+      path: '/factories',
+      name: 'factories',
+      component: () => import('./views/FactoriesView.vue'),
+      meta: { auth: true, role: 'user' as 'admin' | 'manager' | 'user' },
+    },
+    {
       path: '/events',
       name: 'events',
       component: () => import('./views/EventsView.vue'),

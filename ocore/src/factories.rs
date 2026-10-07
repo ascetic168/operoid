@@ -606,26 +606,17 @@ pub fn extract_companies_core(
     })
 }
 
-/// C13c（Q12 兌現，D-C13g/i）：撰寫器文章寫入**指定圈子×等級**——
-/// ①寫入端天花板：作者 clearance ≥ 目標等級（與 I9 對稱，D-C13i）；
-/// ②自動供給 scope/source（慣例命名＋冪等）；
-/// ③enriched 內容寫進供給目錄（save_authored_core 的 target_repo 重定向）＋git commit；
-/// ④`sync --source` 立即入圖（免等事件匯流排的全腦同步）。
-/// 回傳（撰寫結果, 寫入目標）。
-pub async fn authored_to_scope_core(
-    cfg: &AppConfig,
-    state: Option<&AppState>,
+/// C13c（D-C13i）共用步驟①②：寫入端天花板（作者 clearance ≥ 目標等級，未賦＝Internal）
+/// ＋自動供給 scope/source（慣例命名＋冪等）。回傳寫入目標。
+async fn scope_target_checked(
     store: &crate::domain::SqliteStore,
-    factory: &str,
-    markdown: &str,
-    existing_slug: Option<&str>,
+    cfg: &AppConfig,
     kind: crate::knowledge::provision::CircleKind,
     circle: &str,
     level: crate::knowledge::types::SecurityLevel,
     owner_principal: &str,
-) -> Result<(AuthoredResult, crate::knowledge::provision::WriteTarget), AppError> {
+) -> Result<crate::knowledge::provision::WriteTarget, AppError> {
     use crate::domain::Store as _;
-    // ① 寫入端天花板（D-C13i）：未賦 clearance＝Internal。
     let owner = store
         .get_principal(owner_principal)
         .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?
@@ -636,26 +627,16 @@ pub async fn authored_to_scope_core(
             .p("level", format!("{level:?}").to_lowercase())
             .p("clearance", format!("{clearance:?}").to_lowercase()));
     }
+    crate::knowledge::provision::resolve_write_target(store, cfg, kind, circle, level, owner_principal)
+        .await
+        .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))
+}
 
-    // ② 自動供給（冪等）：既有 scope 直接回、無則建 source+scope+owner 規則。
-    let target = crate::knowledge::provision::resolve_write_target(
-        store, cfg, kind, circle, level, owner_principal,
-    )
-    .await
-    .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
-
-    // ③ enriched 內容寫進供給目錄（wikilink 補全等既有流程重用）。
-    let res = save_authored_core(
-        cfg,
-        state,
-        factory,
-        markdown,
-        existing_slug,
-        Some(target.dir.to_string_lossy().as_ref()),
-    )
-    .await?;
-
-    // ④ commit＋逐 source 立即入圖。
+/// C13c 共用步驟④：git commit＋`sync --source` 立即入圖（免等事件匯流排的全腦同步）。
+async fn commit_and_sync_scope(
+    cfg: &AppConfig,
+    target: &crate::knowledge::provision::WriteTarget,
+) -> Result<(), AppError> {
     crate::knowledge::provision::commit_dir(&target.dir)
         .map_err(|e| AppError::new("knowledge.writeFailed").p("detail", e.to_string()))?;
     let exe = cfg.gbrain_exe_path.clone();
@@ -671,5 +652,71 @@ pub async fn authored_to_scope_core(
         return Err(AppError::new("knowledge.writeFailed")
             .p("detail", format!("sync {} 失敗：{}", target.source_id, err.trim())));
     }
+    Ok(())
+}
+
+/// C13c（Q12 兌現，D-C13g/i）：撰寫器文章寫入**指定圈子×等級**——
+/// ①寫入端天花板 ②自動供給 scope/source ③enriched 內容寫進供給目錄
+/// （save_authored_core 的 target_repo 重定向）＋git commit ④sync 立即入圖。
+/// 回傳（撰寫結果, 寫入目標）。
+pub async fn authored_to_scope_core(
+    cfg: &AppConfig,
+    state: Option<&AppState>,
+    store: &crate::domain::SqliteStore,
+    factory: &str,
+    markdown: &str,
+    existing_slug: Option<&str>,
+    kind: crate::knowledge::provision::CircleKind,
+    circle: &str,
+    level: crate::knowledge::types::SecurityLevel,
+    owner_principal: &str,
+) -> Result<(AuthoredResult, crate::knowledge::provision::WriteTarget), AppError> {
+    let target = scope_target_checked(store, cfg, kind, circle, level, owner_principal).await?;
+    let res = save_authored_core(
+        cfg,
+        state,
+        factory,
+        markdown,
+        existing_slug,
+        Some(target.dir.to_string_lossy().as_ref()),
+    )
+    .await?;
+    commit_and_sync_scope(cfg, &target).await?;
+    Ok((res, target))
+}
+
+/// 工廠批次轉換寫入**指定圈子×等級**（企業版 user 級工廠頁的轉換目標）——
+/// 與 [`authored_to_scope_core`] 同一供給與入圖序列，寫入端換成 `run_core`
+/// （各工廠管線寫進供給目錄的 `<type>/<slug>.md`）。回傳（轉換預覽, 寫入目標）。
+pub async fn run_to_scope_core(
+    cfg: &AppConfig,
+    store: &crate::domain::SqliteStore,
+    factory: &str,
+    paths: &[String],
+    kind: crate::knowledge::provision::CircleKind,
+    circle: &str,
+    level: crate::knowledge::types::SecurityLevel,
+    owner_principal: &str,
+) -> Result<(PreviewResult, crate::knowledge::provision::WriteTarget), AppError> {
+    let target = scope_target_checked(store, cfg, kind, circle, level, owner_principal).await?;
+    let preview = run_core(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref())).await?;
+    commit_and_sync_scope(cfg, &target).await?;
+    Ok((preview, target))
+}
+
+/// 覆蓋寫入（預覽後編輯過的頁）寫回**指定圈子×等級**的供給目錄——與轉換同一目標時
+/// 冪等回既有 scope，頁面覆蓋原地。回傳（覆寫結果, 寫入目標）。
+pub async fn write_pages_to_scope_core(
+    cfg: &AppConfig,
+    store: &crate::domain::SqliteStore,
+    pages: &[WritePage],
+    kind: crate::knowledge::provision::CircleKind,
+    circle: &str,
+    level: crate::knowledge::types::SecurityLevel,
+    owner_principal: &str,
+) -> Result<(WriteResult, crate::knowledge::provision::WriteTarget), AppError> {
+    let target = scope_target_checked(store, cfg, kind, circle, level, owner_principal).await?;
+    let res = write_pages_core(&target.dir, pages);
+    commit_and_sync_scope(cfg, &target).await?;
     Ok((res, target))
 }

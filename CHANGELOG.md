@@ -13,6 +13,39 @@
 
 ---
 
+## [Unreleased]
+
+### Enterprise user-tier factory with scoped conversion targets
+
+- **Factory page for the enterprise user app**: ports the personal-edition
+  factory (drop files → convert → preview → edit → overwrite) to the web UI
+  user tier — schema-pack type chips, multi-file result list, per-page
+  preview/edit/overwrite, auto-classify with a low-confidence confirm
+  dialog, and the C13c authoring dialog. Three-language i18n included.
+- **File upload staging**: new `POST /api/factories/upload` (multipart) and
+  `POST /api/factories/upload/cleanup` — browser frontends have no local
+  paths to hand to `run`/`classify`, so files land in an OS-temp staging
+  area (per-principal directory + CSPRNG batch id, extension whitelist,
+  25 MB/file, 50 files/batch, 64 MB body cap, 24-hour sweeper).
+- **RBAC**: factory endpoints (types, upload, upload/cleanup, run,
+  write-pages, save-authored, classify) open from Admin/Manager to
+  `Req::User`; `extract-companies` stays admin-only (maintenance batch).
+  Permission-matrix inventory updated.
+- **Write ceiling on every factory write path (C13c, D-C13i)**: `run`,
+  `write-pages`, and `save-authored` now enforce
+  `enforce_write_ceiling` even when no explicit source is selected
+  (defaulting to the configured notes repo).
+- **Scoped conversion targets**: `run` and `write-pages` accept an optional
+  `target` (circle × level, same shape as `save-authored`). New
+  `run_to_scope_core` / `write_pages_to_scope_core` in ocore (provisioning
+  and immediate per-source sync refactored out of `authored_to_scope_core`)
+  auto-provision the matching scope/source and graph the pages right after
+  conversion; the UI conversion-target bar applies to drop conversion and
+  auto-classify, and overwrite pins to the target frozen at run time.
+  Capture-pipeline types ignore the target.
+- **Error mapping**: `knowledge.writeAboveClearance` now maps to HTTP 403
+  (authorization verdict) instead of 500.
+
 ## [v0.4.3] - 2026-10-07
 
 ### 員工桌面工具（M1–M3）——員工從「建議」到「動手」
