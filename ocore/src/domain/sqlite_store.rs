@@ -606,6 +606,41 @@ impl Store for SqliteStore {
         }
         Ok(out)
     }
+    fn prune_events(
+        &self,
+        prunable_kinds: &[&str],
+        cutoff_created_at: &str,
+        max_scan: usize,
+    ) -> Result<usize> {
+        let conn = self.lock()?;
+        // rowid ≈ 插入序 ≈ 時間序：只掃最舊 max_scan 筆（窗寬由呼叫端節制，避免全表掃描）。
+        let mut stmt = conn
+            .prepare("SELECT rowid, data FROM events ORDER BY rowid ASC LIMIT ?1")
+            .map_err(|e| anyhow!("prepare: {e}"))?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map(params![max_scan as i64], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|e| anyhow!("query: {e}"))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| anyhow!("row: {e}"))?;
+        let mut deleted = 0usize;
+        for (rid, data) in rows {
+            let ev: Event = match decode(&data) {
+                Ok(ev) => ev,
+                Err(_) => continue, // 壞列不擋清理（跳過）
+            };
+            if !prunable_kinds.iter().any(|k| *k == ev.kind) {
+                continue; // 里程碑事件永久保留
+            }
+            if ev.created_at.as_str() < cutoff_created_at {
+                deleted += conn
+                    .execute("DELETE FROM events WHERE rowid = ?1", params![rid])
+                    .map_err(|e| anyhow!("delete: {e}"))?;
+            }
+        }
+        Ok(deleted)
+    }
 
     // ── Phase 7b：對話訊息（最新在前 via rowid DESC）──
 
@@ -810,6 +845,63 @@ mod tests {
         };
         s.put_memory(&mem).unwrap();
         assert_eq!(s.get_memory("e1").unwrap(), Some(mem));
+    }
+
+    /// F2：prune_events 的 kinds 白名單與 cutoff 語意——只刪「可清理 kind 且過期」者。
+    #[test]
+    fn prune_events_respects_kinds_and_cutoff() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        let ev = |id: &str, kind: &str, at: &str| Event {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            employee_id: "e1".into(),
+            kind: kind.into(),
+            detail: String::new(),
+            created_at: at.into(),
+        };
+        // 時序插入：舊 tool_call、舊 reply（里程碑）、舊 retrieval、未過期 tool_call。
+        s.put_event(&ev("e1", "tool_call", "2026-08-01T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("e2", "reply", "2026-08-02T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("e3", "retrieval", "2026-08-03T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("e4", "tool_call", "2026-10-01T00:00:00+00:00")).unwrap();
+        let cutoff = "2026-09-07T00:00:00+00:00";
+        let n = s.prune_events(&["tool_call", "retrieval"], cutoff, 100).unwrap();
+        assert_eq!(n, 2, "舊 tool_call＋舊 retrieval 應刪：{n}");
+        let left: Vec<String> = s
+            .list_recent_events(10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert!(left.contains(&"e2".to_string()), "里程碑事件永久保留：{left:?}");
+        assert!(left.contains(&"e4".to_string()), "未過期細粒度事件保留：{left:?}");
+    }
+
+    /// F2：rowid 窗漸進消化——窗寬 2 每次只刪最舊 2 筆，多次執行收斂。
+    #[test]
+    fn prune_events_window_progressive() {
+        let s = SqliteStore::open_in_memory().unwrap();
+        let ev = |id: &str, kind: &str, at: &str| Event {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            employee_id: "e1".into(),
+            kind: kind.into(),
+            detail: String::new(),
+            created_at: at.into(),
+        };
+        for (i, id) in ["l1", "l2", "l3"].iter().enumerate() {
+            s.put_event(&ev(
+                id,
+                "llm",
+                &format!("2026-08-0{}T00:00:00+00:00", i + 1),
+            ))
+            .unwrap();
+        }
+        let cutoff = "2026-09-07T00:00:00+00:00";
+        assert_eq!(s.prune_events(&["llm"], cutoff, 2).unwrap(), 2);
+        assert_eq!(s.prune_events(&["llm"], cutoff, 2).unwrap(), 1, "殘餘由下次消化");
+        assert_eq!(s.prune_events(&["llm"], cutoff, 2).unwrap(), 0, "清完歸零");
+        assert!(s.list_recent_events(10).unwrap().is_empty());
     }
 
     #[test]

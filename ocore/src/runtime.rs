@@ -245,6 +245,35 @@ fn record_tool_call_event(
     });
 }
 
+// ── F2（對話表現力）：events 保留政策 ──
+// 里程碑事件（wake/reply/turn_error/silent/artifact/outbound_*/proposed/…）永久保留——
+// 它們是治理面與審計的載體；只清「過程觀測」性質的細粒度事件。比照 C9 receipts：
+// 常數（不設定化）＋scheduler 日界臂每日一次。
+
+/// 細粒度過程事件的保留天數。
+pub const EVENT_RETENTION_DAYS_FINE: i64 = 30;
+/// 可清理（細粒度、無治理價值）的事件 kinds。
+pub const PRUNABLE_EVENT_KINDS: &[&str] = &["tool_call", "llm", "retrieval", "plan", "eval"];
+/// 每次清理掃描的最舊事件筆數（rowid 窗；窗外者由後續每日執行漸進消化）。
+pub const EVENT_PRUNE_MAX_SCAN: usize = 500;
+
+/// events 每日清理（scheduler 日界臂呼叫）：刪除超過保留期的細粒度事件；>0 筆時記 `events_pruned`。
+pub fn prune_events_daily(store: &dyn Store) -> anyhow::Result<usize> {
+    let cutoff =
+        (chrono::Utc::now() - chrono::Duration::days(EVENT_RETENTION_DAYS_FINE)).to_rfc3339();
+    let n = store.prune_events(PRUNABLE_EVENT_KINDS, &cutoff, EVENT_PRUNE_MAX_SCAN)?;
+    if n > 0 {
+        record_event(
+            store,
+            AGENT_WS,
+            "registry",
+            "events_pruned",
+            format!("清除 {n} 筆 {EVENT_RETENTION_DAYS_FINE} 天前的細粒度事件"),
+        );
+    }
+    Ok(n)
+}
+
 /// 建立員工主動提案的承諾（Proposed），或重用既有的同標題待核可提案（去重）。
 /// 供 `run_inbox` 使用；回傳 commitment id（供 Out Message 帶上，讓聊天頁顯示核可鈕）。
 /// `gate_reason`：為何進人類通道（`classify_proposal` 的機讀原因；核可卡顯示用）。

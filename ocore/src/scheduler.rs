@@ -71,6 +71,8 @@ pub async fn scheduler_loop(
                     scan_registry_budget(&db_path);
                     // C9（D-C9d）：receipts 保留策略——每日清一次（90 天前）。
                     prune_receipts_daily(&db_path);
+                    // F2（對話表現力）：events 保留策略——每日清一次（細粒度事件 30 天前）。
+                    prune_events_daily(&db_path);
                     last_day = Some(today);
                 }
                 let this_month = chrono::Utc::now().format("%Y-%m").to_string();
@@ -313,6 +315,17 @@ fn prune_receipts_daily(db_path: &std::path::Path) {
             }
         }
         Err(e) => eprintln!("[scheduler] prune_receipts 開庫失敗：{e}"),
+    }
+}
+
+/// F2（對話表現力）：events 保留策略——每日清一次超過保留期的細粒度事件（>0 筆時記事件）。
+fn prune_events_daily(db_path: &std::path::Path) {
+    match SqliteStore::open(db_path) {
+        Ok(store) => match crate::runtime::prune_events_daily(&store) {
+            Ok(n) if n > 0 => eprintln!("[scheduler] events pruned: {n}"),
+            _ => {}
+        },
+        Err(e) => eprintln!("[scheduler] prune_events 開庫失敗：{e}"),
     }
 }
 

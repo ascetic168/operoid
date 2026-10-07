@@ -164,6 +164,16 @@ pub trait Store: Send + Sync {
     fn list_events_by_employee(&self, employee_id: &str, limit: usize) -> Result<Vec<Event>>;
     /// 列出跨所有員工的近期事件（最新在前，最多 `limit` 則；動詞軌活動流用）。
     fn list_recent_events(&self, limit: usize) -> Result<Vec<Event>>;
+    /// F2（對話表現力）：events 保留政策——以插入序（rowid／Vec 序，≈時間序）掃最舊
+    /// `max_scan` 筆，刪除「kind ∈ `prunable_kinds` 且 `created_at < cutoff`」者，回傳刪除數。
+    /// created_at 以 RFC3339 字串序比較（同產生器格式一致；跨精度邊界容差 ≤1 秒，對保留期無感）。
+    /// 窗外未掃到的由後續呼叫漸進消化（呼叫端節制窗寬，避免全表掃描）。
+    fn prune_events(
+        &self,
+        prunable_kinds: &[&str],
+        cutoff_created_at: &str,
+        max_scan: usize,
+    ) -> Result<usize>;
 
     // ── Phase 7b：對話訊息（Message，Ch.16）──
 
@@ -419,6 +429,32 @@ impl Store for JsonStore {
         events.reverse(); // Vec 末尾為最新 → 反轉成最新在前
         events.truncate(limit);
         Ok(events)
+    }
+    fn prune_events(
+        &self,
+        prunable_kinds: &[&str],
+        cutoff_created_at: &str,
+        max_scan: usize,
+    ) -> Result<usize> {
+        // Vec 順序＝插入序（最舊在最前）：只檢查最舊 max_scan 筆。
+        let all = self.read::<Event>("events.json")?;
+        let window = all.len().min(max_scan);
+        let mut deleted = 0usize;
+        let mut kept: Vec<Event> = Vec::new();
+        for (i, ev) in all.into_iter().enumerate() {
+            let prune = i < window
+                && prunable_kinds.iter().any(|k| *k == ev.kind)
+                && ev.created_at.as_str() < cutoff_created_at;
+            if prune {
+                deleted += 1;
+            } else {
+                kept.push(ev);
+            }
+        }
+        if deleted > 0 {
+            write_vec(&self.path("events.json"), &kept)?;
+        }
+        Ok(deleted)
     }
 
     fn put_principal(&self, principal: &crate::knowledge::types::Principal) -> Result<()> {
@@ -924,6 +960,94 @@ mod tests {
         assert_eq!(next_id("steve", &existing), "steve-3");
         assert_eq!(next_id("mary", &existing), "mary");
         assert_eq!(next_id("steve-2", &existing), "steve-2-2");
+    }
+
+    /// F2：JsonStore 的 prune_events 與 SqliteStore 同語意（kinds 白名單＋cutoff＋rowid 窗）。
+    #[test]
+    fn json_prune_events_respects_kinds_cutoff_and_window() {
+        let dir = std::env::temp_dir().join(format!(
+            "operoid-json-prune-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = JsonStore::new(&dir);
+        let ev = |id: &str, kind: &str, at: &str| Event {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            employee_id: "e1".into(),
+            kind: kind.into(),
+            detail: String::new(),
+            created_at: at.into(),
+        };
+        s.put_event(&ev("e1", "tool_call", "2026-08-01T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("e2", "reply", "2026-08-02T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("e3", "retrieval", "2026-08-03T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("e4", "tool_call", "2026-10-01T00:00:00+00:00")).unwrap();
+        let cutoff = "2026-09-07T00:00:00+00:00";
+        assert_eq!(s.prune_events(&["tool_call", "retrieval"], cutoff, 100).unwrap(), 2);
+        let left: Vec<String> = s
+            .list_recent_events(10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert!(left.contains(&"e2".to_string()) && left.contains(&"e4".to_string()), "{left:?}");
+        // 窗寬 1：只掃最舊一筆（e2，里程碑）→ 不刪。
+        s.put_event(&ev("e5", "llm", "2026-08-04T00:00:00+00:00")).unwrap();
+        assert_eq!(s.prune_events(&["llm"], cutoff, 1).unwrap(), 0);
+        assert_eq!(s.prune_events(&["llm"], cutoff, 100).unwrap(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// F2：每日清理政策（runtime::prune_events_daily）——刪過期細粒度事件＋記 `events_pruned`。
+    #[test]
+    fn daily_prune_deletes_expired_fine_grained_and_records() {
+        let dir = std::env::temp_dir().join(format!(
+            "operoid-daily-prune-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = JsonStore::new(&dir);
+        let ev = |id: &str, kind: &str, at: &str| Event {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            employee_id: "e1".into(),
+            kind: kind.into(),
+            detail: String::new(),
+            created_at: at.into(),
+        };
+        // 2026-08-01 早於任何「現在−30 天」的 cutoff（測試運行日 ≥ 2026-08-31）。
+        s.put_event(&ev("old-tool", "tool_call", "2026-08-01T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("old-reply", "reply", "2026-08-02T00:00:00+00:00")).unwrap();
+        s.put_event(&ev("fresh-tool", "tool_call", "2099-01-01T00:00:00+00:00")).unwrap();
+        let n = crate::runtime::prune_events_daily(&s).unwrap();
+        assert_eq!(n, 1, "只刪過期的細粒度事件：{n}");
+        let left: Vec<String> = s
+            .list_recent_events(10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert!(left.contains(&"old-reply".to_string()), "里程碑留存：{left:?}");
+        assert!(left.contains(&"fresh-tool".to_string()), "未過期留存：{left:?}");
+        let kinds: Vec<String> = s
+            .list_events_by_employee("registry", 10) // 系統級事件以虛擬主體 "registry" 歸屬
+            .unwrap()
+            .into_iter()
+            .map(|e| e.kind)
+            .collect();
+        assert!(kinds.contains(&"events_pruned".to_string()), "清理 >0 筆時記事件：{kinds:?}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
