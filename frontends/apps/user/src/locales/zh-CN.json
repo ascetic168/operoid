@@ -81,7 +81,8 @@
     "commitSubmit": "送出",
     "proposed": "附带提案",
     "processing": "处理中…",
-    "traceCount": "{n} 个工具调用"
+    "traceCount": "{n} 个工具调用",
+    "artifactLoadFailed": "加载产出内容失败——请稍后再试"
   },
   "inbox": {
     "proposals": "待核可提案",

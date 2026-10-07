@@ -84,7 +84,8 @@
     "commitSubmit": "Create",
     "proposed": "with proposal",
     "processing": "Working…",
-    "traceCount": "{n} tool call(s)"
+    "traceCount": "{n} tool call(s)",
+    "artifactLoadFailed": "Failed to load artifact content — try again later"
   },
   "operations": {
     "title": "Operations console",

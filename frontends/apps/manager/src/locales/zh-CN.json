@@ -84,7 +84,8 @@
     "commitSubmit": "送出",
     "proposed": "附带提案",
     "processing": "处理中…",
-    "traceCount": "{n} 个工具调用"
+    "traceCount": "{n} 个工具调用",
+    "artifactLoadFailed": "加载产出内容失败——请稍后再试"
   },
   "operations": {
     "title": "运营主控台",

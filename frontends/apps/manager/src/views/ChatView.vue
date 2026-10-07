@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ApiError, api } from '@front/api-client'
-import { ErrorBox } from '@front/ui'
+import { ErrorBox, MarkdownText } from '@front/ui'
 import { useI18n } from 'vue-i18n'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -64,12 +62,6 @@ const proposals = computed(() => w.value?.proposals ?? [])
 // ── 對話串：訊息（最新在前 → 反轉成時序）＋插入的「工具過程列」 ──
 type ChatMessage = NonNullable<WatchPayload['messages'][number]>
 type ThreadItem = { kind: 'msg'; msg: ChatMessage } | { kind: 'trace' }
-
-/** Markdown 渲染（員工回覆）：marked → DOMPurify 消毒。聊天語境下單一換行視為斷行。 */
-marked.setOptions({ gfm: true, breaks: true })
-function renderMd(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text) as string)
-}
 
 /** tool_call 事件 detail（契約 v1：v/step/tool/args/status/ms/note；ocore record_tool_call_event）。 */
 interface ToolCallStep {
@@ -138,12 +130,26 @@ const thread = computed<ThreadItem[]>(() => {
   return items
 })
 
-// ── Artifact 展開（watch payload 已帶完整內容，免新增 API）──
-function artifactOf(id: string) {
-  return (w.value?.artifacts ?? []).find((a) => a.id === id) ?? null
-}
+// ── Artifact 展開：watch 只帶近 10 筆——更舊的展開時 fallback 載 API（F3）──
 const openArtifacts = ref<Set<string>>(new Set())
-function toggleArtifact(id: string) {
+function artifactOf(id: string) {
+  return (
+    loadedArtifacts.value[id] ??
+    (w.value?.artifacts ?? []).find((a) => a.id === id) ??
+    null
+  )
+}
+const loadedArtifacts = ref<Record<string, { title: string; content: string }>>({})
+const artifactErrors = ref<Record<string, boolean>>({})
+async function toggleArtifact(id: string): Promise<void> {
+  if (!openArtifacts.value.has(id) && !artifactOf(id) && !artifactErrors.value[id]) {
+    try {
+      loadedArtifacts.value[id] = await api.get('/api/artifacts/' + encodeURIComponent(id))
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return
+      artifactErrors.value[id] = true
+    }
+  }
   const next = new Set(openArtifacts.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
@@ -314,26 +320,28 @@ onBeforeUnmount(() => {
             <!-- 訊息氣泡 -->
             <div v-else class="msg" :class="item.msg.direction === 'in' ? 'mine' : 'theirs'">
               <div class="bubble">
-                <!-- 員工回覆：Markdown（marked→DOMPurify 消毒後 v-html） -->
-                <!-- eslint-disable-next-line vue/no-v-html —— 內容經 DOMPurify 消毒 -->
-                <div
+                <!-- 員工回覆：Markdown（共用元件內部 marked→DOMPurify 消毒） -->
+                <MarkdownText
                   v-if="item.msg.direction === 'out'"
-                  class="txt chat-md"
-                  v-html="renderMd(item.msg.text)"
-                ></div>
+                  :text="item.msg.text"
+                />
                 <p v-else class="txt">{{ item.msg.text }}</p>
                 <p v-if="item.msg.proposed_commitment_id" class="muted">📎 {{ t('chat.proposed') }}</p>
               </div>
-              <!-- Artifact 展開卡（watch payload 已含 content） -->
+              <!-- Artifact 展開卡：watch 近 10 筆內直接顯示，更舊的 fallback 載 API -->
               <div v-if="item.msg.artifact_id" class="artwrap">
                 <button class="arttoggle" type="button" @click="toggleArtifact(item.msg.artifact_id)">
                   📦 {{ artifactOf(item.msg.artifact_id)?.title ?? item.msg.artifact_id }}
                   {{ openArtifacts.has(item.msg.artifact_id) ? '▾' : '▸' }}
                 </button>
                 <pre
-                  v-if="openArtifacts.has(item.msg.artifact_id)"
+                  v-if="openArtifacts.has(item.msg.artifact_id) && artifactOf(item.msg.artifact_id)"
                   class="artcontent"
                 >{{ artifactOf(item.msg.artifact_id)?.content ?? '' }}</pre>
+                <p
+                  v-else-if="openArtifacts.has(item.msg.artifact_id) && artifactErrors[item.msg.artifact_id]"
+                  class="muted arterror"
+                >{{ t('chat.artifactLoadFailed') }}</p>
               </div>
             </div>
           </template>
@@ -406,7 +414,7 @@ onBeforeUnmount(() => {
   height: 26rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;
   padding: 0.5rem;
 }
-.msg { display: flex; flex-direction: column; }
+.msg { display: flex; flex-direction: column; flex: none; }
 .msg.mine { align-items: flex-end; }
 .bubble {
   max-width: 78%; padding: 0.5rem 0.8rem; border-radius: 0.9rem;
@@ -417,9 +425,9 @@ onBeforeUnmount(() => {
 .txt { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .bubble .muted { margin: 0.2rem 0 0; font-size: 0.75rem; }
 
-/* 工具過程列 */
+/* 工具過程列（flex: none——column flex 下避免被壓縮裁切） */
 .trace {
-  width: 100%; border: 1px solid var(--border); border-radius: 0.6rem;
+  width: 100%; flex: none; border: 1px solid var(--border); border-radius: 0.6rem;
   background: var(--surface); overflow: hidden;
 }
 .tracehead {
@@ -463,6 +471,7 @@ onBeforeUnmount(() => {
   background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem;
   max-height: 15rem; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
 }
+.arterror { margin: 0.25rem 0 0; font-size: 0.75rem; color: var(--danger); }
 
 .send { display: flex; gap: 0.5rem; margin-top: 0.7rem; }
 .sendbtn { width: auto; padding: 0.55rem 1.2rem; }
@@ -483,29 +492,3 @@ onBeforeUnmount(() => {
 @media (max-width: 52rem) { .layout { grid-template-columns: 1fr; } }
 </style>
 
-<style>
-/* 對話 Markdown 渲染：v-html 內容不吃 scoped 屬性 → 全域樣式但以 .chat-md 命名空間隔離。
-   色彩由 currentColor 派生（theirs 氣泡底 --bg、mine 氣泡底 --accent 白字皆自適應）。 */
-.chat-md > :first-child { margin-top: 0; }
-.chat-md > :last-child { margin-bottom: 0; }
-.chat-md p { margin: 0.35em 0; }
-.chat-md ul, .chat-md ol { margin: 0.35em 0; padding-left: 1.4em; }
-.chat-md ul { list-style: disc; }
-.chat-md ol { list-style: decimal; }
-.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 { margin: 0.6em 0 0.3em; font-weight: 600; line-height: 1.3; }
-.chat-md h1 { font-size: 1.15em; }
-.chat-md h2 { font-size: 1.1em; }
-.chat-md h3 { font-size: 1.05em; }
-.chat-md code { background: color-mix(in oklab, currentColor 12%, transparent); border-radius: 0.25rem; padding: 0.1em 0.35em; font-size: 0.85em; }
-.chat-md pre { background: color-mix(in oklab, currentColor 8%, transparent); border: 1px solid color-mix(in oklab, currentColor 20%, transparent); border-radius: 0.45rem; padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; }
-.chat-md pre code { background: transparent; padding: 0; }
-.chat-md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.9em; display: block; overflow-x: auto; }
-.chat-md th, .chat-md td { border: 1px solid color-mix(in oklab, currentColor 25%, transparent); padding: 0.3em 0.6em; text-align: left; }
-.chat-md th { background: color-mix(in oklab, currentColor 8%, transparent); font-weight: 600; }
-.chat-md blockquote { border-left: 3px solid color-mix(in oklab, currentColor 30%, transparent); margin: 0.4em 0; padding-left: 0.8em; opacity: 0.85; }
-.chat-md a { color: inherit; text-decoration: underline; }
-.chat-md hr { border: 0; border-top: 1px solid color-mix(in oklab, currentColor 20%, transparent); margin: 0.6em 0; }
-/* Markdown 內容不吃 scoped 的 white-space: pre-wrap —— 交給 markdown 斷行。
-   （.chat-md.chat-md 提高特異性，穩定壓過 scoped 的 .txt[data-v] pre-wrap） */
-.bubble .chat-md.chat-md { white-space: normal; }
-</style>

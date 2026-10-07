@@ -81,7 +81,8 @@
     "commitSubmit": "送出",
     "proposed": "附帶提案",
     "processing": "處理中…",
-    "traceCount": "{n} 個工具呼叫"
+    "traceCount": "{n} 個工具呼叫",
+    "artifactLoadFailed": "載入產出內容失敗——請稍後再試"
   },
   "inbox": {
     "proposals": "待核可提案",
