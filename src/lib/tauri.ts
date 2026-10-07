@@ -655,7 +655,14 @@ export interface WatchSnapshot {
   tasks: unknown[];
   resolved_commitments: { id: string; title: string; status: string }[];
   completed_tasks: { id: string; objective: string; status: string }[];
-  artifacts: unknown[];
+  artifacts: {
+    id: string;
+    title: string;
+    artifact_type: string;
+    content: string;
+    status: string;
+    created_at: string;
+  }[];
   memory: { notes: string[]; last_artifact_id: string | null } | null;
   events: { id: string; kind: string; detail: string; created_at: string }[];
   messages: {

@@ -323,7 +323,9 @@
     "clearConfirmTitle": "清除對話？",
     "clearConfirmText": "這會移除此對話的所有訊息。工作產出（Artifact）與承諾（Commitment）會保留。",
     "cleared": "對話已清除",
-    "pollError": "即時更新暫時失效，仍可繼續操作"
+    "pollError": "即時更新暫時失效，仍可繼續操作",
+    "processing": "處理中…",
+    "traceCount": "{n} 個工具呼叫"
   },
   "approval": {
     "approve": "核可",

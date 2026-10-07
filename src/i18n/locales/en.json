@@ -323,7 +323,9 @@
     "clearConfirmTitle": "Clear conversation?",
     "clearConfirmText": "This removes all messages in this conversation. Work artifacts and commitments are kept.",
     "cleared": "Conversation cleared",
-    "pollError": "Live updates temporarily unavailable; you can still interact."
+    "pollError": "Live updates temporarily unavailable; you can still interact.",
+    "processing": "Working…",
+    "traceCount": "{n} tool call(s)"
   },
   "approval": {
     "approve": "Approve",

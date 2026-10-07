@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.4.2",
   "license": "MIT",
-  "author": "\u6731\u570b\u68df (Charlie Chu)",
+  "author": "朱國棟 (Charlie Chu)",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,7 +19,9 @@
     "@tauri-apps/plugin-store": "^2.4.4",
     "@vueuse/core": "^14.2.1",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.16",
     "lucide-vue-next": "^0.576.0",
+    "marked": "^18.1.0",
     "pinia": "^3.0.4",
     "tailwind-merge": "^3.5.0",
     "vue": "^3.5",

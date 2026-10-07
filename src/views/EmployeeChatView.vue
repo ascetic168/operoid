@@ -2,7 +2,9 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { ArrowLeft, Eraser, Loader2, Send } from "lucide-vue-next";
+import { ArrowLeft, Eraser, Loader2, Send, Wrench } from "lucide-vue-next";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import {
   agentApproveCommitment,
   agentClearMessages,
@@ -25,8 +27,82 @@ const error = ref<string | null>(null);
 const scrollEl = ref<HTMLElement | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
 
-/** 對話串＝messages 反轉成時序（最舊在上、最新在下）。 */
-const thread = computed(() => (data.value ? [...data.value.messages].reverse() : []));
+type ChatMessage = WatchSnapshot["messages"][number];
+/** 對話串項目：訊息，或插入在最後一則 In 訊息之後的「工具過程列」。 */
+type ThreadItem = { kind: "msg"; msg: ChatMessage } | { kind: "trace" };
+
+/** Markdown 渲染（員工回覆）：marked → DOMPurify 消毒。聊天語境下單一換行視為斷行。 */
+marked.setOptions({ gfm: true, breaks: true });
+function renderMd(text: string): string {
+  return DOMPurify.sanitize(marked.parse(text) as string);
+}
+
+/** tool_call 事件 detail（契約 v1：v/step/tool/args/status/ms/note；ocore record_tool_call_event）。 */
+interface ToolCallStep {
+  v: number;
+  step: number;
+  tool: string;
+  args: string;
+  status: string;
+  ms: number;
+  note: string;
+}
+
+function parseToolCall(detail: string): ToolCallStep | null {
+  try {
+    const d = JSON.parse(detail) as ToolCallStep;
+    if (d && typeof d.tool === "string") return d;
+  } catch {
+    /* 非 JSON 或舊格式事件：略過 */
+  }
+  return null;
+}
+
+const working = computed(() => data.value?.employee.state === "working");
+/** 送出訊息後、回覆抵達前：員工 working 且最新一則是 In（或尚無訊息）。 */
+const awaitingReply = computed(() => {
+  if (!working.value) return false;
+  const msgs = data.value?.messages ?? [];
+  return msgs.length === 0 || (msgs[0]?.direction ?? "in") === "in";
+});
+
+/** 本回合的過程：最後一則 In 訊息之後的 tool_call 事件（時序排列）。 */
+const toolCalls = computed<ToolCallStep[]>(() => {
+  const events = data.value?.events ?? [];
+  let sinceTs = 0;
+  for (const m of data.value?.messages ?? []) {
+    if (m.direction !== "in") continue;
+    const ts = new Date(m.created_at).getTime();
+    if (!Number.isNaN(ts) && ts > sinceTs) sinceTs = ts;
+  }
+  const out: ToolCallStep[] = [];
+  for (const e of events) {
+    if (e.kind !== "tool_call") continue;
+    if (sinceTs && new Date(e.created_at).getTime() < sinceTs) continue;
+    const d = parseToolCall(e.detail);
+    if (d) out.push(d);
+  }
+  return out.reverse(); // events 最新在前 → 時序
+});
+
+const traceOpen = ref(false);
+const showTrace = computed(() => toolCalls.value.length > 0 || awaitingReply.value);
+
+const thread = computed<ThreadItem[]>(() => {
+  const msgs = data.value ? [...data.value.messages].reverse() : [];
+  const items: ThreadItem[] = msgs.map((m) => ({ kind: "msg", msg: m }));
+  if (showTrace.value) {
+    let lastInIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].direction === "in") {
+        lastInIdx = i;
+        break;
+      }
+    }
+    items.splice(lastInIdx + 1, 0, { kind: "trace" });
+  }
+  return items;
+});
 
 /** 將 RFC 3339 時間戳格式化為本地 HH:MM。失敗回空字串。 */
 function formatTime(iso: string): string {
@@ -76,6 +152,27 @@ async function reject(cid: string) {
   } finally {
     pending.value = null;
   }
+}
+
+// ── Artifact 展開（watch payload 已帶完整內容，免新增 API）──
+function artifactOf(id: string) {
+  return data.value?.artifacts.find((a) => a.id === id) ?? null;
+}
+const openArtifacts = ref<Set<string>>(new Set());
+function toggleArtifact(id: string) {
+  const next = new Set(openArtifacts.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  openArtifacts.value = next;
+}
+
+// ── 過程列 args 展開 ──
+const openArgs = ref<Set<number>>(new Set());
+function toggleArgs(i: number) {
+  const next = new Set(openArgs.value);
+  if (next.has(i)) next.delete(i);
+  else next.add(i);
+  openArgs.value = next;
 }
 
 // ── 清除對話 ──
@@ -132,6 +229,7 @@ async function send() {
   if (!text) return;
   sending.value = true;
   error.value = null;
+  traceOpen.value = true; // 送出後自動展開過程列，讓「正在做什麼」可見
   try {
     await agentSendMessage(props.id, text, null);
     input.value = "";
@@ -198,67 +296,133 @@ function stateColor(s: string | undefined): string {
       >
         {{ t("chat.empty") }}
       </div>
-      <div
-        v-for="m in thread"
-        :key="m.id"
-        class="mb-2 flex flex-col"
-        :class="m.direction === 'out' ? 'items-end' : 'items-start'"
-      >
-        <div
-          class="max-w-[75%] whitespace-pre-wrap rounded-lg px-3 py-1.5 text-sm"
-          :class="
-            m.direction === 'out'
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-accent text-foreground'
-          "
-        >
-          {{ m.text }}
-        </div>
-        <!-- 時間戳（氣泡下方） -->
-        <time
-          v-if="formatTime(m.created_at)"
-          class="mt-0.5 px-1 text-[10px] text-muted-foreground"
-          :class="m.direction === 'out' ? 'text-right' : 'text-left'"
-        >
-          {{ formatTime(m.created_at) }}
-        </time>
-        <!-- 決策徽章（本 session 已核可／拒絕）-->
-        <div
-          v-if="m.direction === 'out' && m.proposed_commitment_id && decided.has(m.proposed_commitment_id)"
-          class="mt-1 px-1 text-[10px]"
-          :class="decided.get(m.proposed_commitment_id!) === 'approved' ? 'text-emerald-600' : 'text-muted-foreground'"
-        >
-          {{ decided.get(m.proposed_commitment_id!) === "approved" ? "✓ " + t("approval.approved") : "✗ " + t("approval.rejected") }}
-        </div>
-        <!-- 提案核可鈕（僅 Out message 帶待核可提案、且尚未決策時顯示） -->
-        <div
-          v-else-if="m.direction === 'out' && m.proposed_commitment_id && proposedIds.has(m.proposed_commitment_id)"
-          class="mt-1"
-        >
-          <!-- R5（Ch.20 §5.4）：為何進到人類通道——讓賭注可見（核可卡原因行）-->
-          <div v-if="whyPending(m.proposed_commitment_id!)" class="mb-1 px-1 text-[10px] text-muted-foreground">
-            {{ t("approval.whyPending") }}：{{ whyPending(m.proposed_commitment_id!) }}
-          </div>
-          <div class="flex gap-2">
-          <button
-            class="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
-            :disabled="pending !== null"
-            @click="approve(m.proposed_commitment_id!)"
-          >
-            <Loader2 v-if="pending === m.proposed_commitment_id" :size="12" class="animate-spin" />
-            ✓ {{ t("approval.approve") }}
-          </button>
-          <button
-            class="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50"
-            :disabled="pending !== null"
-            @click="reject(m.proposed_commitment_id!)"
-          >
-            <Loader2 v-if="pending === m.proposed_commitment_id" :size="12" class="animate-spin" />
-            ✗ {{ t("approval.reject") }}
-          </button>
+      <template v-for="item in thread" :key="item.kind === 'msg' ? item.msg.id : 'trace'">
+        <!-- 工具過程列：插在最後一則 In 訊息之後（本回合「正在做什麼」） -->
+        <div v-if="item.kind === 'trace'" class="mb-2 w-full shrink-0">
+          <div class="overflow-hidden rounded-lg border border-border bg-card">
+            <button
+              class="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+              @click="traceOpen = !traceOpen"
+            >
+              <Loader2 v-if="awaitingReply" :size="12" class="animate-spin text-emerald-500" />
+              <Wrench v-else :size="12" />
+              <span v-if="awaitingReply" class="font-medium">{{ t("chat.processing") }}</span>
+              <span v-if="toolCalls.length">{{ t("chat.traceCount", toolCalls.length) }}</span>
+              <span class="ml-auto text-[10px]">{{ traceOpen ? "▾" : "▸" }}</span>
+            </button>
+            <div v-if="traceOpen" class="border-t border-border px-3 py-1.5">
+              <div v-for="(c, ci) in toolCalls" :key="ci" class="py-1 text-xs">
+                <div class="flex items-center gap-2">
+                  <span
+                    class="h-1.5 w-1.5 shrink-0 rounded-full"
+                    :class="c.status === 'ok' ? 'bg-emerald-500' : 'bg-amber-500'"
+                    :title="c.status"
+                  />
+                  <code class="font-medium">{{ c.tool }}</code>
+                  <span class="text-muted-foreground">· {{ c.ms }}ms</span>
+                  <span class="ml-auto text-[10px] text-muted-foreground">#{{ c.step }}</span>
+                </div>
+                <p
+                  v-if="c.note"
+                  class="mt-0.5 cursor-pointer pl-3.5 text-muted-foreground"
+                  :class="openArgs.has(ci) ? '' : 'line-clamp-2'"
+                  :title="c.args"
+                  @click="toggleArgs(ci)"
+                >
+                  {{ c.note }}
+                </p>
+                <pre
+                  v-if="openArgs.has(ci)"
+                  class="mt-1 overflow-x-auto rounded border border-border bg-accent px-2 py-1 text-[10px] text-muted-foreground"
+                >{{ c.args }}</pre>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+
+        <!-- 訊息氣泡 -->
+        <div
+          v-else
+          class="mb-2 flex flex-col shrink-0"
+          :class="item.msg.direction === 'out' ? 'items-end' : 'items-start'"
+        >
+          <!-- 員工回覆：Markdown（marked→DOMPurify 消毒後 v-html） -->
+          <div
+            v-if="item.msg.direction === 'out'"
+            class="max-w-[75%] rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+          >
+            <!-- eslint-disable-next-line vue/no-v-html —— 內容經 DOMPurify 消毒 -->
+            <div class="chat-md" v-html="renderMd(item.msg.text)"></div>
+          </div>
+          <!-- 使用者訊息：純文字 -->
+          <div
+            v-else
+            class="max-w-[75%] whitespace-pre-wrap rounded-lg bg-accent px-3 py-1.5 text-sm text-foreground"
+          >
+            {{ item.msg.text }}
+          </div>
+          <!-- 時間戳（氣泡下方） -->
+          <time
+            v-if="formatTime(item.msg.created_at)"
+            class="mt-0.5 px-1 text-[10px] text-muted-foreground"
+            :class="item.msg.direction === 'out' ? 'text-right' : 'text-left'"
+          >
+            {{ formatTime(item.msg.created_at) }}
+          </time>
+          <!-- Artifact 展開卡（watch payload 已含 content） -->
+          <div v-if="item.msg.artifact_id" class="mt-1 w-full px-1">
+            <button
+              class="text-[10px] text-muted-foreground hover:text-foreground"
+              @click="toggleArtifact(item.msg.artifact_id)"
+            >
+              📦 {{ artifactOf(item.msg.artifact_id)?.title ?? item.msg.artifact_id }}
+              {{ openArtifacts.has(item.msg.artifact_id) ? "▾" : "▸" }}
+            </button>
+            <div
+              v-if="openArtifacts.has(item.msg.artifact_id)"
+              class="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-accent px-2 py-1.5 text-xs text-foreground"
+            >
+              {{ artifactOf(item.msg.artifact_id)?.content ?? "" }}
+            </div>
+          </div>
+          <!-- 決策徽章（本 session 已核可／拒絕）-->
+          <div
+            v-if="item.msg.direction === 'out' && item.msg.proposed_commitment_id && decided.has(item.msg.proposed_commitment_id)"
+            class="mt-1 px-1 text-[10px]"
+            :class="decided.get(item.msg.proposed_commitment_id!) === 'approved' ? 'text-emerald-600' : 'text-muted-foreground'"
+          >
+            {{ decided.get(item.msg.proposed_commitment_id!) === "approved" ? "✓ " + t("approval.approved") : "✗ " + t("approval.rejected") }}
+          </div>
+          <!-- 提案核可鈕（僅 Out message 帶待核可提案、且尚未決策時顯示） -->
+          <div
+            v-else-if="item.msg.direction === 'out' && item.msg.proposed_commitment_id && proposedIds.has(item.msg.proposed_commitment_id)"
+            class="mt-1"
+          >
+            <!-- R5（Ch.20 §5.4）：為何進到人類通道——讓賭注可見（核可卡原因行）-->
+            <div v-if="whyPending(item.msg.proposed_commitment_id!)" class="mb-1 px-1 text-[10px] text-muted-foreground">
+              {{ t("approval.whyPending") }}：{{ whyPending(item.msg.proposed_commitment_id!) }}
+            </div>
+            <div class="flex gap-2">
+              <button
+                class="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                :disabled="pending !== null"
+                @click="approve(item.msg.proposed_commitment_id!)"
+              >
+                <Loader2 v-if="pending === item.msg.proposed_commitment_id" :size="12" class="animate-spin" />
+                ✓ {{ t("approval.approve") }}
+              </button>
+              <button
+                class="flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs hover:bg-accent disabled:opacity-50"
+                :disabled="pending !== null"
+                @click="reject(item.msg.proposed_commitment_id!)"
+              >
+                <Loader2 v-if="pending === item.msg.proposed_commitment_id" :size="12" class="animate-spin" />
+                ✗ {{ t("approval.reject") }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
 
     <!-- 輸入區 -->
@@ -318,3 +482,27 @@ function stateColor(s: string | undefined): string {
     </div>
   </div>
 </template>
+
+<style>
+/* 對話 Markdown 渲染：v-html 內容不吃 scoped 屬性 → 全域樣式但以 .chat-md 命名空間隔離。
+   色彩一律由 currentColor 派生（氣泡底色 primary 為前景反色，亮暗主題皆自適應）。 */
+.chat-md > :first-child { margin-top: 0; }
+.chat-md > :last-child { margin-bottom: 0; }
+.chat-md p { margin: 0.35em 0; }
+.chat-md ul, .chat-md ol { margin: 0.35em 0; padding-left: 1.4em; }
+.chat-md ul { list-style: disc; }
+.chat-md ol { list-style: decimal; }
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 { margin: 0.6em 0 0.3em; font-weight: 600; line-height: 1.3; }
+.chat-md h1 { font-size: 1.15em; }
+.chat-md h2 { font-size: 1.1em; }
+.chat-md h3 { font-size: 1.05em; }
+.chat-md code { background: color-mix(in oklab, currentColor 14%, transparent); border-radius: 0.25rem; padding: 0.1em 0.35em; font-size: 0.85em; }
+.chat-md pre { background: color-mix(in oklab, currentColor 10%, transparent); border: 1px solid color-mix(in oklab, currentColor 20%, transparent); border-radius: 0.45rem; padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; }
+.chat-md pre code { background: transparent; padding: 0; }
+.chat-md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.9em; display: block; overflow-x: auto; }
+.chat-md th, .chat-md td { border: 1px solid color-mix(in oklab, currentColor 25%, transparent); padding: 0.3em 0.6em; text-align: left; }
+.chat-md th { background: color-mix(in oklab, currentColor 8%, transparent); font-weight: 600; }
+.chat-md blockquote { border-left: 3px solid color-mix(in oklab, currentColor 30%, transparent); margin: 0.4em 0; padding-left: 0.8em; opacity: 0.85; }
+.chat-md a { text-decoration: underline; }
+.chat-md hr { border: 0; border-top: 1px solid color-mix(in oklab, currentColor 20%, transparent); margin: 0.6em 0; }
+</style>
