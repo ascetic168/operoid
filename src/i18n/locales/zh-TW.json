@@ -325,7 +325,8 @@
     "cleared": "對話已清除",
     "pollError": "即時更新暫時失效，仍可繼續操作",
     "processing": "處理中…",
-    "traceCount": "{n} 個工具呼叫"
+    "traceCount": "{n} 個工具呼叫",
+    "artifactLoadFailed": "載入產出內容失敗——請稍後再試"
   },
   "approval": {
     "approve": "核可",

@@ -325,7 +325,8 @@
     "cleared": "Conversation cleared",
     "pollError": "Live updates temporarily unavailable; you can still interact.",
     "processing": "Working…",
-    "traceCount": "{n} tool call(s)"
+    "traceCount": "{n} tool call(s)",
+    "artifactLoadFailed": "Failed to load artifact content — try again later"
   },
   "approval": {
     "approve": "Approve",

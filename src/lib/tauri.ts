@@ -640,6 +640,14 @@ export const agentSendMessage = (
   });
 export const agentClearMessages = (employeeId: string): Promise<void> =>
   agentFetch<void>(`/api/employees/${encodeURIComponent(employeeId)}/messages`, { method: "DELETE" });
+export interface ArtifactRow {
+  id: string;
+  title: string;
+  artifact_type: string;
+  content: string;
+  status: string;
+  created_at: string;
+}
 export interface WatchSnapshot {
   employee: Employee;
   llm_model: string | null;
@@ -655,14 +663,7 @@ export interface WatchSnapshot {
   tasks: unknown[];
   resolved_commitments: { id: string; title: string; status: string }[];
   completed_tasks: { id: string; objective: string; status: string }[];
-  artifacts: {
-    id: string;
-    title: string;
-    artifact_type: string;
-    content: string;
-    status: string;
-    created_at: string;
-  }[];
+  artifacts: ArtifactRow[];
   memory: { notes: string[]; last_artifact_id: string | null } | null;
   events: { id: string; kind: string; detail: string; created_at: string }[];
   messages: {
@@ -677,6 +678,9 @@ export interface WatchSnapshot {
 }
 export const agentWatch = (employeeId: string): Promise<WatchSnapshot> =>
   agentFetch<WatchSnapshot>(`/api/employees/${encodeURIComponent(employeeId)}/watch`);
+/** F3：單一 artifact（含 content）——watch 僅帶近 10 筆，聊天頁展開更舊的 artifact 時 fallback 載入。 */
+export const agentGetArtifact = (artifactId: string): Promise<ArtifactRow> =>
+  agentFetch<ArtifactRow>(`/api/artifacts/${encodeURIComponent(artifactId)}`);
 
 /** 動作類別登記表（Ch.20 §5；R5）——Commitment 的治理欄位（鏡射 ocore domain）。 */
 export interface CommitmentView {

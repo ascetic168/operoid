@@ -3,11 +3,11 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { ArrowLeft, Eraser, Loader2, Send, Wrench } from "lucide-vue-next";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
+import MarkdownText from "@/components/MarkdownText.vue";
 import {
   agentApproveCommitment,
   agentClearMessages,
+  agentGetArtifact,
   agentRejectCommitment,
   agentSendMessage,
   agentWatch,
@@ -30,12 +30,6 @@ let timer: ReturnType<typeof setInterval> | null = null;
 type ChatMessage = WatchSnapshot["messages"][number];
 /** 對話串項目：訊息，或插入在最後一則 In 訊息之後的「工具過程列」。 */
 type ThreadItem = { kind: "msg"; msg: ChatMessage } | { kind: "trace" };
-
-/** Markdown 渲染（員工回覆）：marked → DOMPurify 消毒。聊天語境下單一換行視為斷行。 */
-marked.setOptions({ gfm: true, breaks: true });
-function renderMd(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text) as string);
-}
 
 /** tool_call 事件 detail（契約 v1：v/step/tool/args/status/ms/note；ocore record_tool_call_event）。 */
 interface ToolCallStep {
@@ -154,12 +148,26 @@ async function reject(cid: string) {
   }
 }
 
-// ── Artifact 展開（watch payload 已帶完整內容，免新增 API）──
-function artifactOf(id: string) {
-  return data.value?.artifacts.find((a) => a.id === id) ?? null;
-}
+// ── Artifact 展開：watch 只帶近 10 筆——更舊的展開時 fallback 載 API（F3）──
 const openArtifacts = ref<Set<string>>(new Set());
-function toggleArtifact(id: string) {
+function artifactOf(id: string) {
+  return (
+    loadedArtifacts.value[id] ??
+    data.value?.artifacts.find((a) => a.id === id) ??
+    null
+  );
+}
+const loadedArtifacts = ref<Record<string, { title: string; content: string }>>({});
+const artifactErrors = ref<Record<string, boolean>>({});
+async function toggleArtifact(id: string) {
+  if (!openArtifacts.value.has(id) && !artifactOf(id) && !artifactErrors.value[id]) {
+    try {
+      loadedArtifacts.value[id] = await agentGetArtifact(id);
+    } catch (e) {
+      artifactErrors.value[id] = true;
+      void e;
+    }
+  }
   const next = new Set(openArtifacts.value);
   if (next.has(id)) next.delete(id);
   else next.add(id);
@@ -346,13 +354,12 @@ function stateColor(s: string | undefined): string {
           class="mb-2 flex flex-col shrink-0"
           :class="item.msg.direction === 'out' ? 'items-end' : 'items-start'"
         >
-          <!-- 員工回覆：Markdown（marked→DOMPurify 消毒後 v-html） -->
+          <!-- 員工回覆：Markdown（共用元件內部 marked→DOMPurify 消毒） -->
           <div
             v-if="item.msg.direction === 'out'"
             class="max-w-[75%] rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground"
           >
-            <!-- eslint-disable-next-line vue/no-v-html —— 內容經 DOMPurify 消毒 -->
-            <div class="chat-md" v-html="renderMd(item.msg.text)"></div>
+            <MarkdownText :text="item.msg.text" />
           </div>
           <!-- 使用者訊息：純文字 -->
           <div
@@ -369,7 +376,7 @@ function stateColor(s: string | undefined): string {
           >
             {{ formatTime(item.msg.created_at) }}
           </time>
-          <!-- Artifact 展開卡（watch payload 已含 content） -->
+          <!-- Artifact 展開卡：watch 近 10 筆內直接顯示，更舊的 fallback 載 API -->
           <div v-if="item.msg.artifact_id" class="mt-1 w-full px-1">
             <button
               class="text-[10px] text-muted-foreground hover:text-foreground"
@@ -379,11 +386,17 @@ function stateColor(s: string | undefined): string {
               {{ openArtifacts.has(item.msg.artifact_id) ? "▾" : "▸" }}
             </button>
             <div
-              v-if="openArtifacts.has(item.msg.artifact_id)"
+              v-if="openArtifacts.has(item.msg.artifact_id) && artifactOf(item.msg.artifact_id)"
               class="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-accent px-2 py-1.5 text-xs text-foreground"
             >
               {{ artifactOf(item.msg.artifact_id)?.content ?? "" }}
             </div>
+            <p
+              v-else-if="openArtifacts.has(item.msg.artifact_id) && artifactErrors[item.msg.artifact_id]"
+              class="mt-1 text-[10px] text-destructive"
+            >
+              {{ t("chat.artifactLoadFailed") }}
+            </p>
           </div>
           <!-- 決策徽章（本 session 已核可／拒絕）-->
           <div
@@ -483,26 +496,3 @@ function stateColor(s: string | undefined): string {
   </div>
 </template>
 
-<style>
-/* 對話 Markdown 渲染：v-html 內容不吃 scoped 屬性 → 全域樣式但以 .chat-md 命名空間隔離。
-   色彩一律由 currentColor 派生（氣泡底色 primary 為前景反色，亮暗主題皆自適應）。 */
-.chat-md > :first-child { margin-top: 0; }
-.chat-md > :last-child { margin-bottom: 0; }
-.chat-md p { margin: 0.35em 0; }
-.chat-md ul, .chat-md ol { margin: 0.35em 0; padding-left: 1.4em; }
-.chat-md ul { list-style: disc; }
-.chat-md ol { list-style: decimal; }
-.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 { margin: 0.6em 0 0.3em; font-weight: 600; line-height: 1.3; }
-.chat-md h1 { font-size: 1.15em; }
-.chat-md h2 { font-size: 1.1em; }
-.chat-md h3 { font-size: 1.05em; }
-.chat-md code { background: color-mix(in oklab, currentColor 14%, transparent); border-radius: 0.25rem; padding: 0.1em 0.35em; font-size: 0.85em; }
-.chat-md pre { background: color-mix(in oklab, currentColor 10%, transparent); border: 1px solid color-mix(in oklab, currentColor 20%, transparent); border-radius: 0.45rem; padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; }
-.chat-md pre code { background: transparent; padding: 0; }
-.chat-md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.9em; display: block; overflow-x: auto; }
-.chat-md th, .chat-md td { border: 1px solid color-mix(in oklab, currentColor 25%, transparent); padding: 0.3em 0.6em; text-align: left; }
-.chat-md th { background: color-mix(in oklab, currentColor 8%, transparent); font-weight: 600; }
-.chat-md blockquote { border-left: 3px solid color-mix(in oklab, currentColor 30%, transparent); margin: 0.4em 0; padding-left: 0.8em; opacity: 0.85; }
-.chat-md a { text-decoration: underline; }
-.chat-md hr { border: 0; border-top: 1px solid color-mix(in oklab, currentColor 20%, transparent); margin: 0.6em 0; }
-</style>
