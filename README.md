@@ -16,7 +16,7 @@ Operoid exists to be that environment.
 
 Built with **Rust** (a resident service + a Tauri v2 desktop shell) and
 **Vue 3 + TypeScript** frontends over a local HTTP API.
-**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** see [Current status](#current-status)
+**Author:** 朱國棟 (Charlie Chu) · **License:** [MIT](#license) · **Status:** see [What Operoid does today](#what-operoid-does-today)
 
 ---
 
@@ -37,6 +37,32 @@ Today's AI systems generally lack:
 - **continuous execution** — nothing wakes the agent when something relevant happens.
 
 Operoid treats AI as **organizational members, not chatbots.**
+
+## What you can do today
+
+- **Employees that keep working after you close the window.** A resident
+  runtime wakes them on triggers — a schedule, an incoming email, a human
+  message — restores their context, lets them work, and puts them back to sleep.
+- **From advice to action.** Employees work in their own sandboxed workspace:
+  reading files, editing them, running commands — under a per-template tool
+  allowlist that *you* control. Nothing is hands-off by default.
+- **A work session you can watch.** In the chat, every tool call appears as it
+  happens — what the Employee read, what it found, how long it took — and
+  replies render as markdown with tables, code, and lists.
+- **A boundary you draw — and the machine respects.** Delegation is granted per
+  action category, strict by default, expiring, and frozen automatically after
+  an incident. See [A delegation boundary humans can draw](#a-delegation-boundary-humans-can-draw).
+- **Your company's knowledge, with permissions.** Same brain, same query,
+  different identity → different results. Authorization happens before
+  retrieval and fails closed. See [A knowledge boundary the server enforces](#a-knowledge-boundary-the-server-enforces).
+- **Reach them where you already are.** Chat in the GUI, email, IM (via WASM
+  plugins) — same Employees, same persistent responsibilities.
+- **One codebase, two editions.** A desktop installer you just run; an
+  enterprise archive your company deploys on its own intranet.
+
+![A conversation where the Employee's tool calls are visible between the question and the markdown answer](assets/chat-with-process.png)
+
+![Knowledge query with markdown output and citation links](assets/knowledge-query.png)
 
 ## What is an "AI Agent Operating System"?
 
@@ -59,42 +85,29 @@ application.
 ## A delegation boundary humans can draw
 
 "Should AI decide?" is not one question but three. **Capability** — can the
-system decide correctly? Its answer moves with every model release.
-**Accountability** — when the decision is wrong, who answers for it?
-**Legitimacy** — is this a decision a human should be making at all? Only the
-first answer changes with technology. A delegation policy is sound only if it
-passes all three — and as models grow more capable, the same specification gap
-produces a larger blast radius, so the case for keeping the boundary in human
-hands gets **stronger**, not weaker.
+system decide correctly? **Accountability** — when the decision is wrong, who
+answers for it? **Legitimacy** — is this a decision a human should be making at
+all? Only the first answer changes with technology; a delegation policy is sound
+only if it passes all three.
 
-Operoid takes this seriously enough to make it constitutional —
+Operoid makes this constitutional —
 **[Handbook Principle 11, "the boundary is drawn by humans"](handbook/02-Design-Philosophy.md)** —
 and then operational:
 
-- **Delegation is granted to action categories**, never to "the system." Each
-  category is assessed by three questions — reversibility, blast radius, named
-  accountability — and assigned to one of three tiers: **human adjudication**,
-  **fenced autonomy**, or **owned autonomy**.
-- **Strict by default.** A category humans have not registered always goes to
-  human adjudication. Widening requires evidence and a signature; tightening is
-  always cheap. No Employee may take part in deciding its own scope of
-  authority, and metrics that reward boundary expansion — an "automation rate"
-  — are barred as performance indicators.
-- **The boundary is kept alive and auditable.** Authorizations expire and must
-  be re-signed; an incident automatically freezes the affected category back to
-  human adjudication; the machine's classifications are blind-sampled, and a
-  diverging sample narrows the boundary. The test of ownership is **document
-  reconstructability**: if the boundary's current position can be rebuilt from
-  human documents alone, it belongs to humans — if the system's own traces must
-  be inspected to know where it lies, it has changed hands.
+- **Delegation is granted to action categories**, never to "the system" — each
+  tiered as **human adjudication**, **fenced autonomy**, or **owned autonomy**.
+- **Strict by default.** Unregistered categories always go to a human; widening
+  requires evidence and a signature; tightening is always cheap.
+- **The boundary stays alive and auditable.** Authorizations expire and must be
+  re-signed; an incident automatically freezes the affected category; the
+  machine's classifications are blind-sampled against human reviewers.
 
 None of this was invented from theory. It is distilled from a real
 (de-identified) manufacturing case: an autonomous agent that judged for itself
 which actions were "routine" and recorded each drift as an achievement. The
 full analysis is the essay **[The Shape of the
 Boundary](journal/The_Shape_of_the_Boundary_Charlie_Chu.pdf)**; its machinery
-ships in the product
-as the **Action Registry** — see [Current status](#current-status).
+ships in the product as the **Action Registry**.
 
 ## A knowledge boundary the server enforces
 
@@ -104,40 +117,26 @@ The Action Registry draws the boundary for **actions** — what an Employee may
 enforced deterministically by the server, auditable after the fact.
 
 - **Authorization happens before retrieval.** Policy is evaluated in pure,
-  deterministic Rust — never by an LLM, which may assist understanding but
-  never grants access. Unauthorized knowledge never enters the candidate set
-  or an LLM's context; nothing is fetched-then-hidden.
+  deterministic code — never by an LLM. Unauthorized knowledge never enters an
+  Employee's context; nothing is fetched-then-hidden.
 - **One fabric, partitioned into scopes.** Company-common, per-department,
-  per-project and restricted knowledge map onto GBrain *sources*; a query
-  runs against only the **authorized source set**, enforced at the SQL level
-  inside GBrain — zero modification to GBrain itself. Personal Brains stay
-  physically separate.
+  per-project and restricted knowledge map onto separate sources; a query runs
+  against only the **authorized source set** — enforced by the engine itself,
+  not by prompt instructions.
 - **Fail closed.** A missing or corrupt policy means *deny*, with an event on
   record — and an explicit deny rule outranks everything, including temporary
   grants.
-- **Identity is server-side.** Every principal (human operator or AI
-  Employee) authenticates with its own API token; identity is resolved from
-  the token chain, never from what a caller claims.
-- **Everything privileged leaves a receipt.** Every retrieval writes a
-  structured record — who, on which task, under which policy version, seeing
-  which scopes. Grants, revocations, policy changes and identity changes are
-  audited events. Temporary grants expire by TTL and vanish instantly on
-  revocation.
-- **Classification levels with a hard ceiling.** Scopes carry a security
-  level (`public < internal < confidential < secret`); principals carry a
-  clearance. A scope above your clearance is denied outright — no policy
-  rule, and no temporary grant, can open it. The same ceiling applies on the
-  **write side**: an author cannot publish into a source classified above
-  their clearance, and factory output is routed to the scope you choose when
-  writing.
+- **Identity is server-side.** Every principal (human or AI Employee)
+  authenticates with its own token; identity is resolved from the token chain,
+  never from what a caller claims.
+- **Everything privileged leaves a receipt.** Who retrieved what, on which
+  task, under which policy version. Temporary grants expire by TTL and vanish
+  instantly on revocation.
 - **Same brain + same query + different identity = different results.** That
-  one-liner is proven end-to-end against a real GBrain — the smallest proof
-  that the knowledge fabric actually works.
+  one-liner is proven end-to-end against a real knowledge graph — the smallest
+  proof that the fabric actually works.
 
-Everything is managed under **Settings → Knowledge**: principals & API
-tokens, temporary grants, and the scope→source map. Two enterprise switches
-ship alongside (`ops_retrieval_enabled` retires retrieval ops from the
-console; `claude_code_handoff_enabled` retires the Claude Code handoff).
+![The manager inbox: pending proposals to approve, and employees needing attention](assets/manager-inbox.png)
 
 ## Core concepts
 
@@ -157,82 +156,54 @@ console; `claude_code_handoff_enabled` retires the Claude Code handoff).
 | **Trigger** | What decides an Employee should wake. |
 | **Runtime** | The engine that manages lifecycle, never reasoning. |
 | **Event** | The immutable record of what happened. |
-| **Memory** | An Employee's working context, restored each wake. |
 
 The full definitions — purpose, responsibilities, what each owns, lifecycle, and
 future extension — live in the **[Architecture Handbook](handbook/README.md)**,
 which is the constitution of this operating system.
 
-## Current status
+## What Operoid does today
 
-The Architecture Handbook is at **v0.2 (Draft)**, and the roadmap's milestones
-have been **built end-to-end through Phase 7** — the vision in the handbook is
-now a running system, not just a draft.
+The Architecture Handbook's roadmap has been **built end-to-end through Phase
+7** — the vision is a running system, and the roadmap's five milestones are all
+implemented (as of **v0.4.3**):
 
-**v0.4.0 — remote deployment: one codebase, two release tracks.** The same
-binary now splits into a **personal edition** and an **enterprise edition** at
-the *configuration* layer — a fork of neither code nor releases:
+1. ✅ **One Employee that truly works** — wake on a trigger, restore context, invoke a tool, commit an artifact, sleep.
+2. ✅ **Persistence & Commitments** — work survives a full shutdown and restart.
+3. ✅ **Shared Brains & Knowledge** — upgrade one Brain, watch many Employees adopt it.
+4. ✅ **Templates & Instances** — one template, many independent employees.
+5. ✅ **Collaboration** — teams of Employees completing a Project together.
 
-- **Personal (desktop installer):** unchanged — install and run; the app
-  manages a local `oserver` for you (loopback, hidden token, zero setup).
-- **Enterprise (server deployment package):** a `operoid-enterprise-*` archive
-  per platform (server binary + three browser frontends + deployment guide).
-  Drop an `operoid.toml` next to it (bind + TLS + RBAC), register it as a
-  service, and the whole company works from the browser through **role-based
-  frontends** — `/admin` (system administration), `/manager` (manager
-  dashboard, knowledge governance), `/user` (employee workspace) — backed by
-  **account & RBAC infrastructure**: password login (Argon2id) with a forced
-  first-login password change, per-principal tokens (CSPRNG, TTL, per-token
-  revocation), login lockout, endpoint-level authorization
-  (admin ⊃ manager ⊃ user, enforced server-side, fail-closed), and **SSE
-  event streaming**. See [DEPLOYMENT.md](DEPLOYMENT.md).
+On that foundation, the shipped product includes:
 
-**v0.3.6 — a resident service, many frontends.** The backend now runs as
-**`oserver`**, a local service (HTTP API on 127.0.0.1) that owns the Runtime:
-Employees keep working whether or not any window is open. The desktop app is
-now *one frontend among many* — anything that speaks HTTP can drive the same
-backend.
-
-- A **resident service architecture**: `ocore` (pure-Rust core: Runtime,
-  scheduler, event bus, GBrain capabilities) + `oserver` (axum HTTP API with
-  token auth) + the **Tauri v2 desktop shell** as a frontend.
-- **Service lifecycle, two modes**: install the boot-time service (Employees
-  run from power-on; closing the app changes nothing) or run without it (the
-  service starts and stops with the app). Windows is fully implemented and
-  verified; Linux (systemd) and macOS (launchd) are implemented but not yet
-  verified on real machines.
-- A **knowledge-graph foundation** built on [GBrain](https://github.com/garrytan/gbrain) — turn everyday files (contacts CSVs, meeting PDFs, company write-ups) into linked, queryable notes; sync, ask, and reason over them through a GUI instead of the CLI.
-- A full **Agent-OS runtime** (Phases 1–7): an Employee lifecycle engine driven
-  by Triggers; durable **Artifacts** and **Commitments** persisted in SQLite;
-  **Templates → Instances** (define once, deploy many); **shared Brains** so one
-  upgrade reaches every Employee; **Teams, Projects, and Task handoff** for
-  multi-Employee collaboration; and a **conversational layer** with human–agent
-  chat, message-driven waking, and a live observation panel.
-- **Interruptible lifecycle & resilience**: a running Employee can be **stopped
-  gracefully** or **archived** at any moment (history fully preserved, traceable,
-  unarchivable); failed Commitments **retry automatically** with exponential
-  backoff and hand back to the human after repeated failures.
-- **A delegation boundary humans can draw** (v0.3.4–v0.3.5): the **Action
-  Registry** — authorization per action category across three tiers, strict by
-  default, with a keyword fuse, expiry & re-signing, incident-driven freezing,
-  and sampled-review divergence alarms; edited under **Settings → Registry**
-  (structured forms; raw JSON for advanced use). Why the boundary looks this
-  way: [A delegation boundary humans can draw](#a-delegation-boundary-humans-can-draw).
-- **A knowledge boundary the server enforces** (v0.3.7): permission-aware
-  retrieval over the knowledge graph — scopes →
-  sources, pre-retrieval authorization, deterministic fail-closed policy,
-  per-principal tokens, TTL grants, retrieval receipts, task-focused
-  scoping, and a **Settings → Knowledge** admin page. See
-  [A knowledge boundary the server enforces](#a-knowledge-boundary-the-server-enforces).
-- **write-note, the first action tool**: Employees write finished output as
-  markdown notes into their own output directory (kept outside the knowledge
-  graph); humans review and promote approved notes into the notes repo, where
-  the existing sync makes them organizational knowledge
-  (output → verification → promotion). Enable per template.
-- **Email in/out** via [obridge](obridge/) (bundled): inbound mail wakes the
-  matching Employee through the event ingress; Employees reply through the
-  send tool. IM works through WASM plugins.
-- A first **agent entry point**: launch and monitor [Claude Code](https://claude.com/claude-code) from inside the workspace.
+- **Employees with hands, not just advice.** Beyond conversational tools
+  (knowledge search & reasoning, notes, messaging), Employees get a sandboxed
+  workspace: `read_file` / `write_file` / `edit_file` / `run_command` — enabled
+  per template, executed inside their own workspace, and visible in the chat as
+  it happens. A todo list persists across turns so long tasks don't drift.
+- **A conversation you can watch.** Human–agent chat in the GUI with markdown
+  replies, per-tool-call process visibility (arguments, duration, results), a
+  "working…" indicator, and expandable artifacts; managers get their own chat
+  view of any Employee's conversation. Email and IM reach the same Employees
+  through [obridge](obridge/).
+- **Artifacts as first-class outputs.** Durable, versioned, owned by the
+  workspace (never the chat) — retrievable by ID through the API, expandable
+  right in the conversation.
+- **A delegation boundary humans can draw** — the **Action Registry** edited
+  under **Settings → Registry** (structured forms; raw JSON for advanced use).
+- **A knowledge boundary the server enforces** — permission-aware retrieval
+  with a **Settings → Knowledge** admin page (principals & tokens, temporary
+  grants, scope→source map), plus a user-level knowledge query page.
+- **A resident service architecture.** `oserver` owns the Runtime; Employees
+  keep working whether or not any window is open. Optional boot-time service on
+  Windows (verified) and Linux/macOS (implemented, not yet verified on real
+  machines).
+- **A knowledge-graph foundation** built on [GBrain](https://github.com/garrytan/gbrain) — turn everyday files (contacts CSVs, meeting PDFs, company write-ups) into linked, queryable notes; sync, ask, and reason over them through a GUI instead of the CLI.
+- **Interruptible lifecycle & resilience.** A running Employee can be stopped
+  gracefully or archived at any moment (history preserved, unarchivable);
+  failed Commitments retry automatically with exponential backoff and hand back
+  to a human after repeated failures. Fine-grained process events clean
+  themselves up after 30 days; milestone events are kept forever.
+- **A first agent entry point:** launch and monitor [Claude Code](https://claude.com/claude-code) from inside the workspace.
 
 ## Tech stack
 
@@ -261,20 +232,25 @@ your platform from the
 [**Releases** page](https://github.com/ascetic168/Operoid/releases) and run it.
 No need to `git clone` or build from source unless you intend to develop Operoid.
 
-### Personal vs. enterprise (v0.4.0)
+### Personal vs. enterprise
 
 | | Personal | Enterprise |
 |---|---|---|
 | Artifact | Desktop installer | `operoid-enterprise-*` archive |
 | Where it runs | The user's own computer | A company intranet server |
-| Setup | None — install and run | `operoid.toml` (bind + TLS) + `oserver install` |
+| Setup | None — install and run | One guided command (see below) |
 | Frontend | The desktop app | Browser: `/admin` `/manager` `/user` |
-| Auth | Hidden local token | Password login + RBAC (admin/manager/user) |
+| Auth | Hidden local token | Password login + role-based access (admin/manager/user) |
 | Mail bridge (obridge) | Bundled, managed by the desktop app | Bundled; managed by oserver — form config in `/admin` (or deploy on a separate machine) |
 
-The desktop installer **is** the personal edition. Enterprise deployments
-download the `operoid-enterprise-*` archive from the same release and follow
-**[DEPLOYMENT.md](DEPLOYMENT.md)** — the server machine needs no Node/pnpm.
+The desktop installer **is** the personal edition.
+
+For the enterprise edition, download the `operoid-enterprise-*` archive from
+the same release and run **`oserver configure`** — a guided wizard that checks
+prerequisites, sets up TLS and the knowledge-brain workspace, creates the
+admin account, and optionally registers the boot-time service. Alternatively,
+drop an `operoid.toml` next to the binary by hand — both paths are covered in
+**[DEPLOYMENT.md](DEPLOYMENT.md)** (the server machine needs no Node/pnpm).
 Two cautions: do **not** run the desktop GUI on the enterprise server (it
 speaks personal-mode credentials), and the two editions coexist safely on one
 intranet (the personal edition binds to loopback only).
@@ -287,14 +263,11 @@ On Linux and macOS the boot-time service starts **before any user logs in**
 
 - Install it **from your own user account via `sudo`** (e.g. `sudo oserver
   install`). The privileged step only writes the unit file; the service itself
-  runs as **the user who installed it** (`User=` / `UserName`), so the SQLite
-  DB, `app-settings.json`, and gbrain/obridge files keep the same owner as the
-  desktop app — no permission conflicts with the GUI.
+  runs as **the user who installed it**, so the database and settings keep the
+  same owner as the desktop app.
 - If the installer cannot determine the invoking user (e.g. run from a pure
   root shell), it refuses with an error — install via `sudo` from your account
   instead.
-- `HOME` is set explicitly for the service (Linux unit), so bun/gbrain
-  convention paths resolve to your home, not `/root`.
 - Remove it with `sudo oserver uninstall`.
 - Linux/macOS service paths are implemented but **not yet verified on real
   machines** (Windows is).
@@ -337,10 +310,13 @@ cargo check                   # fast backend typecheck (whole workspace)
 src/              Vue 3 frontend (views, Pinia stores, i18n, HTTP wrappers)
                   — Brains, Factories, Config, Employee templates/instances,
                     Employee chat, Operations (live console), Inbox
+frontends/        Enterprise web frontends (pnpm workspace)
+                  — apps/{admin,manager,user} · packages/{api-client,ui}
 ocore/            Rust domain core (zero Tauri deps)
                     domain · runtime · scheduler · event_bus · agents state
                     knowledge (policy/service/planner/grants/receipts/identity)
                     gbrain capabilities (cli/brains/factories/converters) · llm
+                    employee tools (workspace sandbox: read/write/edit/command)
 oserver/          The resident service — axum HTTP API (token auth)
                     agent-os read/write · GBrain domain · operations console
                     knowledge admin (principals/tokens/grants)
@@ -356,18 +332,22 @@ handbook/         The Architecture Handbook — the constitution (EN + 中文)
 ## Roadmap
 
 The roadmap is laid out in the handbook, ordered by dependence. All five
-milestones have been **implemented through Phase 7**:
-
-1. ✅ **One Employee that truly works** — wake on a trigger, restore context, invoke a tool, commit an artifact, sleep.
-2. ✅ **Persistence & Commitments** — work survives a full shutdown and restart (SQLite).
-3. ✅ **Shared Brains & Knowledge** — upgrade one Brain, watch many Employees adopt it.
-4. ✅ **Templates & Instances** — one template, many independent employees.
-5. ✅ **Collaboration** — teams of Employees completing a Project together (Teams + Projects + Task handoff).
+milestones have been **implemented through Phase 7** (see
+[What Operoid does today](#what-operoid-does-today) for the shipped state).
 
 Phase 7 added the **human-collaboration layer**: commitments handed off to a
 human, the Message concept, conversational chat, and error resilience. See
 [Chapter 21 — Roadmap](handbook/21-Roadmap.md) for the full picture and what
 comes next.
+
+## Get involved
+
+- **Try it:** grab the latest build from the
+  [Releases page](https://github.com/ascetic168/Operoid/releases).
+- **Go deeper:** the [Architecture Handbook](handbook/README.md) is the
+  constitution — concepts, principles, and the reasoning behind them.
+- **Questions & feedback:** open a
+  [GitHub issue](https://github.com/ascetic168/Operoid/issues).
 
 ## License
 
