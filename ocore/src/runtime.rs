@@ -191,6 +191,60 @@ pub fn record_event(
     });
 }
 
+/// 事件 detail 欄位截斷（字元級，避免切斷多位元組字）；超長以「…」標記。
+fn clip_for_event(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// 記錄對話回合的單步工具呼叫過程（`tool_call` 事件；detail 為 JSON 字串，契約 v1：
+/// `{v,step,tool,args,status,ms,note}`）。與 `record_event` 不同：此事件每回合最多
+/// 數十筆（高頻），id 改以時間戳＋行程內序號生成，避免 `record_event` 的 O(1000)
+/// 去重掃描；`put_event` 為 upsert-by-id，id 不撞即 append。
+/// status：`ok`＝已執行（工具失敗依既有 fail-safe 語意轉為錯誤 note，由 note 呈現）、
+/// `unknown`＝未知工具。
+fn record_tool_call_event(
+    store: &dyn Store,
+    workspace_id: &str,
+    employee_id: &str,
+    step: u32,
+    tool: &str,
+    args: &serde_json::Value,
+    status: &str,
+    elapsed: std::time::Duration,
+    note: &str,
+) {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let detail = serde_json::json!({
+        "v": 1,
+        "step": step,
+        "tool": tool,
+        "args": clip_for_event(&args.to_string(), 400),
+        "status": status,
+        "ms": elapsed.as_millis() as u64,
+        "note": clip_for_event(note, 300),
+    })
+    .to_string();
+    let _ = store.put_event(&Event {
+        id: format!("evt-{employee_id}-tool_call-{nanos:x}-{seq:x}"),
+        workspace_id: workspace_id.to_string(),
+        employee_id: employee_id.to_string(),
+        kind: "tool_call".to_string(),
+        detail,
+        created_at: now_rfc3339(),
+    });
+}
+
 /// 建立員工主動提案的承諾（Proposed），或重用既有的同標題待核可提案（去重）。
 /// 供 `run_inbox` 使用；回傳 commitment id（供 Out Message 帶上，讓聊天頁顯示核可鈕）。
 /// `gate_reason`：為何進人類通道（`classify_proposal` 的機讀原因；核可卡顯示用）。
@@ -796,23 +850,61 @@ async fn run_conversational_turn(
             ));
             // 逐步執行本步的全部工具呼叫（v1 順序執行）。finish 命中即結束——其餘呼叫
             // 補佔位 tool 結果，保協議完整（每個 tool_call_id 都要有回應）。
+            // 每個呼叫記一筆 `tool_call` 事件（過程可見性：GUI 聊天頁／事件流／SSE 消費）。
             let mut finish_now = false;
             for tc in &turn.tool_calls {
                 if tc.name == "update_todos" || tc.name == "todos" {
                     last_todo_step = step_idx;
                 }
+                let started = std::time::Instant::now();
                 let action = s.execute_tool_call(&tc.name, &tc.arguments).await;
+                let elapsed = started.elapsed();
                 match action {
                     Some(TurnAction::Continue { note }) => {
+                        record_tool_call_event(
+                            store,
+                            &workspace_id,
+                            employee_id,
+                            step_idx,
+                            &tc.name,
+                            &tc.arguments,
+                            "ok",
+                            elapsed,
+                            &note,
+                        );
                         steps.push(note.clone());
                         history.push(llm::ChatMessage::tool(&tc.id, note));
                     }
-                    Some(TurnAction::Finish) => finish_now = true,
+                    Some(TurnAction::Finish) => {
+                        record_tool_call_event(
+                            store,
+                            &workspace_id,
+                            employee_id,
+                            step_idx,
+                            &tc.name,
+                            &tc.arguments,
+                            "ok",
+                            elapsed,
+                            "",
+                        );
+                        finish_now = true;
+                    }
                     // native 的未知工具：回錯誤 note 讓模型改用列出的工具（不中斷回合）。
                     None => {
                         let note = format!(
                             "[{}] 不是可用的工具；請改用系統列出的工具。",
                             tc.name
+                        );
+                        record_tool_call_event(
+                            store,
+                            &workspace_id,
+                            employee_id,
+                            step_idx,
+                            &tc.name,
+                            &tc.arguments,
+                            "unknown",
+                            elapsed,
+                            &note,
                         );
                         steps.push(note.clone());
                         history.push(llm::ChatMessage::tool(&tc.id, note));
@@ -858,11 +950,49 @@ async fn run_conversational_turn(
                 .and_then(|v| v.as_str())
                 .unwrap_or("finish")
                 .to_string();
+            let started = std::time::Instant::now();
             match s.execute_tool_call(&act, &action).await {
-                Some(TurnAction::Continue { note }) => steps.push(note),
-                Some(TurnAction::Finish) => break,
+                Some(TurnAction::Continue { note }) => {
+                    record_tool_call_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        step_idx,
+                        &act,
+                        &action,
+                        "ok",
+                        started.elapsed(),
+                        &note,
+                    );
+                    steps.push(note);
+                }
+                Some(TurnAction::Finish) => {
+                    record_tool_call_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        step_idx,
+                        &act,
+                        &action,
+                        "ok",
+                        started.elapsed(),
+                        "",
+                    );
+                    break;
+                }
                 // legacy 的未知 action 維持 v1 fail-safe：視同 finish（含 text 處理）。
                 None => {
+                    record_tool_call_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        step_idx,
+                        &act,
+                        &action,
+                        "unknown",
+                        started.elapsed(),
+                        "",
+                    );
                     s.finish_from_args(&action).await;
                     break;
                 }
@@ -6660,7 +6790,9 @@ pub fn watch_payload(
             .take(10)
             .collect::<Vec<_>>(),
         "memory": store.get_memory(employee_id)?,
-        "events": store.list_events_by_employee(employee_id, 20)?,
+        // 60 筆：對話一回合最多 turn_max_steps（40）步的 tool_call 事件＋里程碑事件，
+        // 20 筆不夠聊天頁還原完整回合過程。
+        "events": store.list_events_by_employee(employee_id, 60)?,
         "messages": store.list_messages_by_employee(employee_id, 50)?,
     }))
 }

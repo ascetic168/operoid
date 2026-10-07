@@ -412,3 +412,90 @@ fn native_history_identity_and_wake_dedup() {
     assert!(matches!(last.role, crate::llm::ChatRole::User));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// 對話回合過程可見性：native 步的每個工具呼叫落一筆 `tool_call` 事件
+/// （detail JSON 契約 v1：v/step/tool/args/status/ms/note；超長 args/note 截斷）。
+#[tokio::test]
+async fn conversational_native_tool_call_events_recorded() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "蝕刻良率怎麼了？");
+    let tool = StubTool::new("良率正常");
+    // 超過 400 字元的 args（與其衍生的超長 note）→ 兩者都應被字元級截斷。
+    let long_query = "查".repeat(600);
+    let reasoner = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call("gbrain_think", serde_json::json!({ "query": long_query })),
+        NativeStubReasoner::call("gbrain_search", serde_json::json!({"query": "蝕刻良率"})),
+        NativeStubReasoner::text("良率正常。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let mut calls: Vec<_> = store
+        .list_events_by_employee(&emp_id, 100)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.kind == "tool_call")
+        .collect();
+    calls.reverse(); // rowid DESC → 時序
+    assert_eq!(calls.len(), 2, "兩個工具呼叫各一筆（最終純文字非工具）：{:?}", calls);
+    // 第 1 步 think：超長 args/note 均截斷（400/300 字＋…）。
+    let d: serde_json::Value = serde_json::from_str(&calls[0].detail).unwrap();
+    assert_eq!(d["v"], 1);
+    assert_eq!(d["step"], 1);
+    assert_eq!(d["tool"], "gbrain_think");
+    assert_eq!(d["status"], "ok");
+    assert!(d["ms"].is_u64(), "ms 應為數字：{d}");
+    let args = d["args"].as_str().unwrap();
+    assert_eq!(args.chars().count(), 401, "400 字＋…：{args}");
+    assert!(args.ends_with('…'), "截斷以…標記");
+    let note = d["note"].as_str().unwrap();
+    assert_eq!(note.chars().count(), 301, "300 字＋…：{note}");
+    assert!(note.starts_with("[think「"), "note 帶動作前綴：{note}");
+    // 第 2 步 search：短查詢 → note 帶結果內容摘要。
+    let d2: serde_json::Value = serde_json::from_str(&calls[1].detail).unwrap();
+    assert_eq!(d2["step"], 2);
+    assert_eq!(d2["tool"], "gbrain_search");
+    assert!(d2["note"].as_str().unwrap().contains("良率正常"), "note 帶結果摘要：{d2}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 未知工具的過程記錄：status=unknown（不中斷回合），後續正確工具為 ok。
+#[tokio::test]
+async fn conversational_native_unknown_tool_event_marked() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "查一下出貨狀態");
+    let tool = StubTool::new("出貨正常");
+    let reasoner = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call("bash", serde_json::json!({"command": "ls"})), // 幻覺工具
+        NativeStubReasoner::call("gbrain_search", serde_json::json!({"query": "出貨狀態"})),
+        NativeStubReasoner::text("出貨正常。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let calls: Vec<_> = store
+        .list_events_by_employee(&emp_id, 100)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.kind == "tool_call")
+        .collect();
+    let by_tool = |name: &str| {
+        calls
+            .iter()
+            .find(|e| {
+                serde_json::from_str::<serde_json::Value>(&e.detail)
+                    .ok()
+                    .and_then(|d| d["tool"].as_str().map(|t| t == name))
+                    .unwrap_or(false)
+            })
+            .map(|e| serde_json::from_str::<serde_json::Value>(&e.detail).unwrap())
+            .unwrap_or_else(|| panic!("找不到 {name} 的 tool_call 事件：{:?}", calls))
+    };
+    assert_eq!(by_tool("bash")["status"], "unknown", "幻覺工具標 unknown");
+    assert_eq!(by_tool("gbrain_search")["status"], "ok");
+    std::fs::remove_dir_all(&dir).ok();
+}
