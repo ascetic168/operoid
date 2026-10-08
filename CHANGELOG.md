@@ -13,6 +13,40 @@
 
 ---
 
+## [v0.4.5] - 2026-10-08
+
+### Embedding model switched to EmbeddingGemma 2 via local llama-server
+
+- **Default embedding model upgrade**: brains now default to
+  `llama-server:embeddinggemma-2` — Google EmbeddingGemma 2 (Apache 2.0,
+  768-dim, 256K context) served by a local llama.cpp `llama-server` on
+  port 8080 — replacing `ollama:embeddinggemma`. Updated the new-brain
+  defaults (`ocore/src/brains.rs`), the desktop add-brain dialog
+  (`src/views/BrainsView.vue`), and the real-machine knowledge tests;
+  added `llama-server` to the provider tables with base URL
+  `http://127.0.0.1:8080/v1` (`ocore/src/gbrain_config.rs`).
+- **Existing brains migrated in place**: both live brains (host
+  `~/.gbrain`, 3002 chunks; Operoid default brain, 44 chunks) were
+  re-embedded via `gbrain migrate embeddings` — same-width 768→768
+  guarded transition, query cache purged, self-retrieval smoke checks
+  passed, post-migration retrieval verified on Traditional Chinese
+  corpora.
+- **Deployment docs**: `DEPLOYMENT.md` prerequisites now include the
+  embedding service with the required launch flags (`-c 32768 -b 8192
+  -ub 8192`; smaller physical batch sizes reject chunks over 512 tokens);
+  security model §7.3 and the enterprise-C master plan reflect the new
+  model and provider.
+- **Configurable default**: the Models tab gains a "default embedding model
+  for new brains" setting (model + dimensions, stored in app config;
+  precedence: app setting > GBrain config > built-in constant), and the
+  add-brain dialog prefill now reads from it instead of a hardcoded string.
+- **Enterprise admin UI**: new `GET/PUT /api/brains/defaults` (admin by
+  fail-closed RBAC) exposes the same default to the admin web — the brains
+  page gains a defaults editor (three-language i18n); DEPLOYMENT.md
+  documents the equivalent `app-settings.json` path for servers.
+- **Rollback path**: brains can be migrated back with the same command,
+  e.g. `gbrain migrate embeddings --to ollama:embeddinggemma --dim 768`.
+
 ## [v0.4.4] - 2026-10-07
 
 ### Enterprise user-tier factory with scoped conversion targets
