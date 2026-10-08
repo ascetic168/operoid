@@ -71,6 +71,14 @@ pub struct AppConfig {
     /// 管理操作（sync/sources/config）一律走 CLI。
     #[serde(default = "default_gbrain_transport")]
     pub gbrain_transport: String,
+    /// 新腦預設 embedding 模型（`provider:model`）。優先序：此設定 >
+    /// 作用中環境的 GBrain config（`~/.gbrain/config.json`）> 內建常數。
+    /// 僅影響**新建腦**的初始值；既有腦換模型走 `gbrain migrate embeddings`。
+    #[serde(default)]
+    pub default_embedding_model: Option<String>,
+    /// 新腦預設 embedding 維度（搭配 default_embedding_model；None = 內建 768）。
+    #[serde(default)]
+    pub default_embedding_dimensions: Option<i64>,
     /// W3（D-H2）：員工產出目錄（write-note 工具的沙箱根；在 notes repo 之外——
     /// 不入圖譜，人工 review 後移入 repo 走既有 sync 晉升）。
     #[serde(default = "default_employee_output_path")]
@@ -341,6 +349,8 @@ impl Default for AppConfig {
             gbrain_home_override: None,
             brains: vec![],
             gbrain_transport: default_gbrain_transport(),
+            default_embedding_model: None,
+            default_embedding_dimensions: None,
             employee_output_path: default_employee_output_path(),
             active_brain_id: None,
             active_source_id: None,

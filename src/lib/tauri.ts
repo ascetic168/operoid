@@ -127,6 +127,10 @@ export interface AppConfig {
   active_source_id: string | null;
   auto_sync: boolean;
   sync_no_pull: boolean;
+  /** 新腦預設 embedding 模型（provider:model；null = 內建預設）。 */
+  default_embedding_model: string | null;
+  /** 新腦預設 embedding 維度（null = 內建 768）。 */
+  default_embedding_dimensions: number | null;
   llm_temperature: number;
   llm_max_tokens: number;
   locale: string | null;

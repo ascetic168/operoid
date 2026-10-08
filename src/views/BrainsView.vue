@@ -14,11 +14,17 @@ import {
   FolderOpen,
 } from "lucide-vue-next";
 import { useBrainsStore } from "@/stores/brains";
+import { useConfigStore } from "@/stores/config";
 import { brainSync, formatError, type GbrainSource } from "@/lib/tauri";
 
 const store = useBrainsStore();
+const config = useConfigStore();
 const { t } = useI18n();
 onMounted(() => store.load());
+
+/** 內建最後 fallback；與 ocore brains.rs DEFAULT_EMBEDDING_* 保持一致。 */
+const FALLBACK_EMBEDDING_MODEL = "llama-server:embeddinggemma-2";
+const FALLBACK_EMBEDDING_DIM = 768;
 
 const selected = computed(() =>
   store.brains.find((b) => b.id === store.selectedBrainId) ?? null,
@@ -30,19 +36,27 @@ const addOpen = ref(false);
 const addCreate = ref(false);
 const addName = ref("");
 const addHome = ref("");
-const addEm = ref("llama-server:embeddinggemma-2");
-const addDim = ref(768);
+const addEm = ref(FALLBACK_EMBEDDING_MODEL);
+const addDim = ref(FALLBACK_EMBEDDING_DIM);
 const addCm = ref("zhipu:glm-5.3-flash");
 const addNotesRepo = ref("");
 const addBusy = ref(false);
 const addError = ref<string | null>(null);
 
-function openAdd() {
+async function openAdd() {
   addCreate.value = false;
   addName.value = "";
   addHome.value = "";
-  addEm.value = "llama-server:embeddinggemma-2";
-  addDim.value = 768;
+  // 預填優先序：AppConfig「新腦預設 embedding」（設定頁 Models 分頁）> 內建 fallback。
+  if (!config.app) {
+    try {
+      await config.loadApp();
+    } catch {
+      /* 讀不到 app config 就用 fallback 常數 */
+    }
+  }
+  addEm.value = config.app?.default_embedding_model?.trim() || FALLBACK_EMBEDDING_MODEL;
+  addDim.value = config.app?.default_embedding_dimensions || FALLBACK_EMBEDDING_DIM;
   addCm.value = "zhipu:glm-5.3-flash";
   addNotesRepo.value = "";
   addError.value = null;

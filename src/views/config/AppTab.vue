@@ -20,6 +20,8 @@ const form = reactive<AppConfig>({
   active_source_id: null,
   auto_sync: true,
   sync_no_pull: true,
+  default_embedding_model: null,
+  default_embedding_dimensions: null,
   llm_temperature: 0.2,
   llm_max_tokens: 4096,
   locale: null,

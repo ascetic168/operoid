@@ -108,6 +108,50 @@ function tierSourceLabel(src: string): string {
   return t("configView.tierSourceDefault");
 }
 
+// ---- 新腦預設 embedding（AppConfig 層；v0.5）----
+// 優先序：此設定 > 作用中環境 GBrain config > 內建常數（brains.rs DEFAULT_EMBEDDING_*）。
+// 只影響「新建腦」的初始值；既有腦換模型走 gbrain migrate embeddings（UI 不提供）。
+const defEm = ref("");
+const defDim = ref<number | "">("");
+const defSaved = ref(false);
+const defError = ref<string | null>(null);
+
+watchEffect(() => {
+  const a = config.app;
+  if (!a) return;
+  defEm.value = a.default_embedding_model ?? "";
+  defDim.value = a.default_embedding_dimensions ?? "";
+});
+
+async function applyDefaultEmbedding() {
+  defError.value = null;
+  defSaved.value = false;
+  const model = defEm.value.trim();
+  const dim = typeof defDim.value === "number" ? defDim.value : null;
+  if ((model && !model.includes(":")) || (dim !== null && (!Number.isFinite(dim) || dim <= 0))) {
+    defError.value = t("configView.defEmbedInvalid");
+    return;
+  }
+  try {
+    if (!config.app) await config.loadApp();
+    if (!config.app) return;
+    await config.saveAppConfig({
+      ...config.app,
+      default_embedding_model: model || null,
+      default_embedding_dimensions: dim,
+    });
+    defSaved.value = true;
+  } catch (e) {
+    defError.value = formatError(e);
+  }
+}
+
+async function clearDefaultEmbedding() {
+  defEm.value = "";
+  defDim.value = "";
+  await applyDefaultEmbedding();
+}
+
 // ---- Provider base URL 編輯（file-plane，直寫 config.json） ----
 const PROVIDERS = [
   "groq", "openai", "anthropic", "ollama", "deepseek",
@@ -305,6 +349,45 @@ async function runUnifyTypes() {
           <span>{{ $t("configView.subagentCacheWarn") }}</span>
         </p>
         <span v-if="tierError" class="text-xs text-destructive">{{ tierError }}</span>
+      </div>
+    </div>
+
+    <!-- 新腦預設 embedding（AppConfig 層；只影響新建腦） -->
+    <div class="mt-4 rounded-lg border border-border/60 bg-background/40 p-3 text-sm">
+      <div class="mb-1 font-medium">{{ $t("configView.defEmbedSection") }}</div>
+      <p class="mb-2 text-xs text-muted-foreground">{{ $t("configView.defEmbedDesc") }}</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <input
+          v-model="defEm"
+          :placeholder="$t('configView.defEmbedModelPh')"
+          class="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+        />
+        <input
+          v-model.number="defDim"
+          type="number"
+          :placeholder="$t('configView.defEmbedDimPh')"
+          class="w-28 rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs"
+        />
+        <button
+          class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+          @click="applyDefaultEmbedding"
+        >
+          <Save :size="14" /> {{ $t("configView.apply") }}
+        </button>
+        <button
+          class="flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+          :title="$t('configView.clear')"
+          @click="clearDefaultEmbedding"
+        >
+          <Trash2 :size="13" /> {{ $t("configView.clear") }}
+        </button>
+        <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {{ $t("configView.defEmbedScope") }}
+        </span>
+        <span v-if="defError" class="w-full text-xs text-destructive">{{ defError }}</span>
+        <span v-else-if="defSaved" class="flex items-center gap-1 text-xs text-green-500">
+          <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
+        </span>
       </div>
     </div>
 

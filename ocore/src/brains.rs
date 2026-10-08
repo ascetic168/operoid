@@ -96,25 +96,36 @@ pub fn unique_id(c: &AppConfig, base: &str) -> String {
     }
 }
 
+/// 新腦預設 embedding 的最後 fallback（優先序：AppConfig 設定 >
+/// 作用中環境 GBrain config > 此常數）。變更時須同步前端預填
+/// （`BrainsView.vue`）與 `tests_real.rs` 的 init 參數。
+pub const DEFAULT_EMBEDDING_MODEL: &str = "llama-server:embeddinggemma-2";
+pub const DEFAULT_EMBEDDING_DIM: i64 = 768;
+
 pub fn default_models(c: &AppConfig) -> (String, i64, String) {
-    match gbrain_config::load_for(c.active_env_home()).ok() {
-        Some(l) if l.exists => (
-            l.config
-                .embedding_model
-                .clone()
-                .unwrap_or_else(|| "llama-server:embeddinggemma-2".into()),
-            l.config.embedding_dimensions.unwrap_or(768),
-            l.config
-                .chat_model
-                .clone()
-                .unwrap_or_else(|| gbrain_config::DEFAULT_CHAT_MODEL.into()),
-        ),
-        _ => (
-            "llama-server:embeddinggemma-2".into(),
-            768,
-            gbrain_config::DEFAULT_CHAT_MODEL.into(),
-        ),
-    }
+    let cfg_model = c
+        .default_embedding_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let cfg_dim = c.default_embedding_dimensions.filter(|d| *d > 0);
+    let gb = gbrain_config::load_for(c.active_env_home())
+        .ok()
+        .filter(|l| l.exists);
+    let chat = gb
+        .as_ref()
+        .and_then(|l| l.config.chat_model.clone())
+        .unwrap_or_else(|| gbrain_config::DEFAULT_CHAT_MODEL.into());
+    (
+        cfg_model
+            .or_else(|| gb.as_ref().and_then(|l| l.config.embedding_model.clone()))
+            .unwrap_or_else(|| DEFAULT_EMBEDDING_MODEL.into()),
+        cfg_dim
+            .or(gb.as_ref().and_then(|l| l.config.embedding_dimensions))
+            .unwrap_or(DEFAULT_EMBEDDING_DIM),
+        chat,
+    )
 }
 
 /// 新腦建立後，把 chat_model 同步到 **兩個 plane**（file + DB）的
@@ -439,5 +450,24 @@ mod tests {
             gbrain_home: Some("/x".into()),
         });
         assert_eq!(unique_id(&c2, "demo"), "demo-2");
+    }
+
+    /// 新腦預設 embedding：AppConfig 設定優先於 GBrain config／內建常數。
+    /// 空字串與非正維度視同未設定（不留神按到空白也會回到下層來源）。
+    #[test]
+    fn default_models_prefers_app_config_embedding() {
+        let mut c = AppConfig::default();
+        c.default_embedding_model = Some("openai:text-embedding-3-small".into());
+        c.default_embedding_dimensions = Some(1536);
+        let (em, dim, _) = default_models(&c);
+        assert_eq!(em, "openai:text-embedding-3-small");
+        assert_eq!(dim, 1536);
+
+        c.default_embedding_model = Some("  ".into());
+        c.default_embedding_dimensions = Some(0);
+        let (em, dim, _) = default_models(&c);
+        // 空字串／0 視同未設定 → 不應採用，落到 GBrain config 或內建 fallback。
+        assert_ne!(em, "  ");
+        assert_ne!(dim, 0);
     }
 }
