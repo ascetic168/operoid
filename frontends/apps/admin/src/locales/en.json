@@ -100,7 +100,15 @@
   "brains": {
     "heading": "Brains",
     "none": "No brains registered",
-    "prereq": "Prerequisites"
+    "prereq": "Prerequisites",
+    "defaultsHeading": "Default embedding for new brains",
+    "defaultsDesc": "Initial embedding model (provider:model) and dimensions used when creating a brain. Precedence: this setting > the brain environment's GBrain config > built-in default. New brains only; to switch an existing brain use gbrain migrate embeddings.",
+    "defaultsModel": "Model (provider:model)",
+    "defaultsModelPh": "llama-server:embeddinggemma-2",
+    "defaultsDim": "Dimensions",
+    "defaultsSave": "Save",
+    "defaultsSaved": "Saved",
+    "defEmbedInvalid": "Invalid format: the model needs a provider prefix (provider:model); dimensions must be a positive integer"
   },
   "templates": {
     "heading": "Employee templates",

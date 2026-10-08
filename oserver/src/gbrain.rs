@@ -47,6 +47,10 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/brains/{id}/active", post(api_brains_set_active))
         .route("/api/brains/active-source", post(api_brains_set_active_source))
         .route(
+            "/api/brains/defaults",
+            get(api_brain_defaults_get).put(api_brain_defaults_put),
+        )
+        .route(
             "/api/brains/{id}/sources",
             get(api_brain_sources).post(api_brain_source_add),
         )
@@ -406,6 +410,84 @@ async fn api_brains_add(
         let (c2, entry) = add_brain_core(&c, &b).await?;
         save_cfg(&st, &c2)?;
         Ok(entry)
+    })
+    .await;
+    finish(res)
+}
+
+// ── 新腦預設 embedding（AppConfig 層；RBAC 未列即 Admin）──
+// 只影響「新建腦」的初始值（優先序：此設定 > GBrain config > 內建常數）；
+// 既有腦換模型走 `gbrain migrate embeddings`（破壞性全量重嵌，不提供 API）。
+
+#[derive(Deserialize)]
+struct BrainDefaultsReq {
+    #[serde(default)]
+    default_embedding_model: Option<String>,
+    #[serde(default)]
+    default_embedding_dimensions: Option<i64>,
+}
+
+/// 把輸入正規化成可儲存值：空字串／非正維度視同未設定（None）；
+/// 模型缺 provider 前綴（無 `:`）拒絕。
+fn normalize_brain_defaults(
+    model: Option<String>,
+    dim: Option<i64>,
+) -> Result<(Option<String>, Option<i64>), AppError> {
+    let model = model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(m) = &model {
+        if !m.contains(':') {
+            return Err(AppError::new("brains.defEmbedInvalid"));
+        }
+    }
+    let dim = dim.filter(|d| *d > 0);
+    Ok((model, dim))
+}
+
+async fn api_brain_defaults_get(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let res = tokio::task::spawn_blocking(move || {
+        let c = load_cfg(&state)?;
+        Ok(json!({
+            "default_embedding_model": c.default_embedding_model,
+            "default_embedding_dimensions": c.default_embedding_dimensions,
+        }))
+    })
+    .await;
+    finish(res)
+}
+
+async fn api_brain_defaults_put(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    body: Json<BrainDefaultsReq>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let b = body.0;
+    let res = tokio::task::spawn_blocking(move || {
+        let (model, dim) = normalize_brain_defaults(
+            b.default_embedding_model,
+            b.default_embedding_dimensions,
+        )?;
+        let mut c = load_cfg(&st)?;
+        c.default_embedding_model = model;
+        c.default_embedding_dimensions = dim;
+        save_cfg(&st, &c)?;
+        Ok(json!({
+            "default_embedding_model": c.default_embedding_model,
+            "default_embedding_dimensions": c.default_embedding_dimensions,
+        }))
     })
     .await;
     finish(res)

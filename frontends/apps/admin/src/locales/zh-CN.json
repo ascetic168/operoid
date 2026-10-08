@@ -100,7 +100,15 @@
   "brains": {
     "heading": "脑",
     "none": "未注册脑",
-    "prereq": "前置检查"
+    "prereq": "前置检查",
+    "defaultsHeading": "新建脑默认 embedding",
+    "defaultsDesc": "新建脑时的 embedding 初始值（provider:model 与维度）。优先序：此设置 > 脑环境 GBrain config > 内置默认。仅影响新建脑；已有脑换模型用 gbrain migrate embeddings。",
+    "defaultsModel": "模型（provider:model）",
+    "defaultsModelPh": "llama-server:embeddinggemma-2",
+    "defaultsDim": "维度",
+    "defaultsSave": "保存",
+    "defaultsSaved": "已保存",
+    "defEmbedInvalid": "格式错误：模型需含 provider 前缀（provider:model），维度需为正整数"
   },
   "templates": {
     "heading": "AI 员工模板",
