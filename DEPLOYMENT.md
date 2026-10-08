@@ -45,8 +45,10 @@
 | LLM API keys | 服務端自填（operoid.toml `[llm] env`） |
 
 **Embedding 服務（EmbeddingGemma 2）啟動方式**：從 llama.cpp Releases 下載對應平台 build，
-模型 GGUF（`llama-server:embeddinggemma-2`，Apache 2.0）取自 [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)
-的文字模型轉檔。建腦與檢索前須先啟動：
+模型 GGUF（`llama-server:embeddinggemma-2`，Apache 2.0）取自
+[ggml-org/embeddinggemma-2-GGUF](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF)
+（上游 [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)）。
+建腦與檢索前須先啟動：
 
 ```bash
 llama-server --embedding \
@@ -59,6 +61,12 @@ llama-server --embedding \
 > （>512 tokens）會被 llama-server 拒絕。`--alias` 必須與腦設定
 > `embedding_model: llama-server:embeddinggemma-2` 冒號後的名稱一致。
 > Windows 個人版可用登入排程任務常駐（S4U、隱藏視窗）；Linux 以 systemd unit 為宜。
+> **多模態嵌入（可選）**：同 repo 另附 `mmproj-embeddinggemma-2-{BF16,Q8_0}.gguf`
+> 影像／音訊投影器；下載後於啟動指令加
+> `--mmproj /opt/llama-cpp/models/mmproj-embeddinggemma-2-BF16.gguf`
+> 即支援圖片／音訊嵌入（輸出同為 768 維），`/v1/embeddings` 的每個 prompt 以
+> `{"content": [{"type": "image_url", ...}, ...]}` 傳入。腦的純文字嵌入用不到，
+> 省 RAM 可不加（BF16 版約多佔 0.9 GB，Q8_0 約 0.5 GB）。
 
 **新腦預設 embedding 模型（可選）**：伺服器上**新建腦**的 embedding 初始值可於
 `<data-dir>/app-settings.json` 的 `app_config` 區塊設定（改後重啟 oserver；企業版亦可以
