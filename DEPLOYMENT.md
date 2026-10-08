@@ -60,6 +60,22 @@ llama-server --embedding \
 > `embedding_model: llama-server:embeddinggemma-2` 冒號後的名稱一致。
 > Windows 個人版可用登入排程任務常駐（S4U、隱藏視窗）；Linux 以 systemd unit 為宜。
 
+**新腦預設 embedding 模型（可選）**：伺服器上**新建腦**的 embedding 初始值可於
+`<data-dir>/app-settings.json` 的 `app_config` 區塊設定（改後重啟 oserver；企業版亦可以
+admin 身分在 web 端腦頁設定）：
+
+```json
+{
+  "app_config": {
+    "default_embedding_model": "llama-server:embeddinggemma-2",
+    "default_embedding_dimensions": 768
+  }
+}
+```
+
+優先序：此設定 > 腦環境的 GBrain `config.json` > 內建預設（`llama-server:embeddinggemma-2` / 768）。
+僅影響**新建腦**；既有腦換模型一律走 `gbrain migrate embeddings`（破壞性全量重嵌，先備份）。
+
 > ⚠️ **伺服器機上不要開桌面 GUI（operoid 桌面程式）。** 它會嘗試沿用企業服務，但手上是個人版 token，
 > 會整片離線造成混淆；桌面 GUI 屬個人版形態，裝在使用者電腦。
 
