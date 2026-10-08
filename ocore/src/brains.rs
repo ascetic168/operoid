@@ -102,7 +102,7 @@ pub fn default_models(c: &AppConfig) -> (String, i64, String) {
             l.config
                 .embedding_model
                 .clone()
-                .unwrap_or_else(|| "ollama:embeddinggemma".into()),
+                .unwrap_or_else(|| "llama-server:embeddinggemma-2".into()),
             l.config.embedding_dimensions.unwrap_or(768),
             l.config
                 .chat_model
@@ -110,7 +110,7 @@ pub fn default_models(c: &AppConfig) -> (String, i64, String) {
                 .unwrap_or_else(|| gbrain_config::DEFAULT_CHAT_MODEL.into()),
         ),
         _ => (
-            "ollama:embeddinggemma".into(),
+            "llama-server:embeddinggemma-2".into(),
             768,
             gbrain_config::DEFAULT_CHAT_MODEL.into(),
         ),

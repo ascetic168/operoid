@@ -40,8 +40,25 @@
 |---|---|
 | 企業部署包 | GitHub Release 下載（上表）；或自行建置：`cargo build --release -p oserver`＋`cd frontends && pnpm install && pnpm build` |
 | GBrain | 安裝於**伺服器機**（`gbrain` CLI 於 PATH 或 operoid.toml 指定）；腦（GBRAIN_HOME）與 notes repo 同機 |
+| Embedding 服務 | 本機 [llama.cpp](https://github.com/ggml-org/llama.cpp/releases) `llama-server`（port 8080），模型 EmbeddingGemma 2（768 維）；GBrain 嵌入／查詢**硬依賴**，須常駐（見下方啟動指令） |
 | TLS 憑證 | 內網 CA 簽發（首選）或自簽（見 §4） |
 | LLM API keys | 服務端自填（operoid.toml `[llm] env`） |
+
+**Embedding 服務（EmbeddingGemma 2）啟動方式**：從 llama.cpp Releases 下載對應平台 build，
+模型 GGUF（`llama-server:embeddinggemma-2`，Apache 2.0）取自 [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)
+的文字模型轉檔。建腦與檢索前須先啟動：
+
+```bash
+llama-server --embedding \
+  -m /opt/llama-cpp/models/embeddinggemma-2.gguf \
+  --alias embeddinggemma-2 --host 127.0.0.1 --port 8080 \
+  -c 32768 -b 8192 -ub 8192
+```
+
+> `-c 32768` 為 context 上限、`-b/-ub 8192` 為實體批次大小——低於此值時長 chunk
+> （>512 tokens）會被 llama-server 拒絕。`--alias` 必須與腦設定
+> `embedding_model: llama-server:embeddinggemma-2` 冒號後的名稱一致。
+> Windows 個人版可用登入排程任務常駐（S4U、隱藏視窗）；Linux 以 systemd unit 為宜。
 
 > ⚠️ **伺服器機上不要開桌面 GUI（operoid 桌面程式）。** 它會嘗試沿用企業服務，但手上是個人版 token，
 > 會整片離線造成混淆；桌面 GUI 屬個人版形態，裝在使用者電腦。

@@ -215,7 +215,20 @@ async fn setup_two_source_brain(exe: &str, dir: &std::path::Path, home_s: &str) 
 
     // init＝best-effort：M0/C6 實測 schema 會建好，但 Windows 上末段 skill publication
     // 可能 exit 1（非必要步驟）——真正的閘是 sources add／sync 的 exit 0。
-    let (c, _, err) = g(&exe, &home_s, &["init", "--embedding-model", "ollama:embeddinggemma"]).await;
+    // llama-server 屬 user_provided_models recipe:維度必填,且需先啟動
+    // llama-server --embedding(alias embeddinggemma-2、port 8080)。
+    let (c, _, err) = g(
+        &exe,
+        &home_s,
+        &[
+            "init",
+            "--embedding-model",
+            "llama-server:embeddinggemma-2",
+            "--embedding-dimensions",
+            "768",
+        ],
+    )
+    .await;
     if c != 0 {
         let _ = g(&exe, &home_s, &["init"]).await;
         eprintln!("[real_m1] gbrain init exit {c}（skill publication 等）——續行：{err}");
