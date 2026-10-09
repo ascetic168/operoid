@@ -21,6 +21,7 @@ pub mod fake;
 pub mod figures;
 pub mod fusion;
 pub mod grants;
+pub mod ingest;
 pub mod service;
 pub mod identity;
 pub mod planner;
@@ -48,3 +49,6 @@ mod tests_k3;
 
 #[cfg(test)]
 mod tests_k4;
+
+#[cfg(test)]
+mod tests_ingest;

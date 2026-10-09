@@ -15,6 +15,27 @@
 
 ## [Unreleased]
 
+### PDF knowledge ingestion loop - the pipeline is now one call
+
+- New `ocore::knowledge::ingest::ingest_pdf`: the full production loop
+  in one function - `PDF -> K1 convert -> notes copied into the federated
+  notes repo -> git commit -> gbrain sync --no-extract (+ embed --stale)
+  -> sidecar merged into the production figures.sqlite -> vector
+  backfill (best-effort)`. Every degradation records a warning; the
+  notes and sidecar data are on disk before any network step, so a
+  failed sync is a re-run, not a loss.
+- **Idempotent re-ingestion**: notes overwrite by deterministic
+  filename; the sidecar merges doc-level (delete-and-reinsert) carrying
+  existing vectors across by `image_md5` - a re-conversion never
+  re-embeds unchanged figures. Caption-only rows (no md5) correctly
+  re-embed their text vector (captions may change).
+- `Sidecar` gains `merge_from` / `doc_stats` / `insert_row` (shared by
+  K1 emit and tests).
+- Real-machine verification (real_ingest, #[ignore]): first ingest 36
+  notes / 9 figure rows / 9 embedded / synced; second ingest identical
+  rows with 8 vectors carried and 1 caption-only text re-embed; gbrain
+  text retrieval over the ingested notes hits mueller2016 content.
+
 ### K5 - Generation-side image reading with honest locator degradation (P1 3/3)
 
 - **llm layer goes multimodal**: `ChatMessage` carries `images` (data

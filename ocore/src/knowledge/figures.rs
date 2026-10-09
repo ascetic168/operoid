@@ -145,6 +145,122 @@ impl Sidecar {
         Ok(self.conn.execute("UPDATE figures SET vec = NULL", [])?)
     }
 
+    /// 插入一列（`vec` 為 None 時留待回填）。K1 emit 與測試播种共用。
+    pub fn insert_row(
+        &self,
+        row: &crate::converters::mineru::FigureRow,
+        vec: Option<&[f32]>,
+    ) -> Result<()> {
+        let blob = vec.map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>());
+        self.conn.execute(
+            "INSERT INTO figures (doc_id, page, image_path, caption, section, figure_no, image_md5, source_id, vec)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params![
+                row.doc_id,
+                row.page,
+                row.image_path,
+                row.caption,
+                row.section,
+                row.figure_no,
+                row.image_md5,
+                row.source_id,
+                blob
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 文件統計：（列數、其中已有向量的列數）——入庫報告／測試用。
+    pub fn doc_stats(&self, doc_id: &str) -> Result<(usize, usize)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COUNT(*), SUM(vec IS NOT NULL) FROM figures WHERE doc_id = ?1",
+        )?;
+        let (n, v) = stmt.query_row([doc_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?))
+        })?;
+        Ok((n as usize, v.unwrap_or(0) as usize))
+    }
+
+    /// 入庫合併：`from`（K1 轉換產出的 sidecar）→ 本庫，**doc 級冪等**——
+    /// 先刪本庫同 `doc_id` 列再插入；插入時以 `image_md5` 攜帶既有向量
+    /// （重轉換不重嵌）。`source_id` 為授權歸檔（K4 鐵律）。
+    /// 回傳（合併後該文件列數、攜帶向量數）。
+    pub fn merge_from(
+        &self,
+        from: &Path,
+        doc_id: &str,
+        source_id: &str,
+    ) -> Result<(usize, usize)> {
+        let src = Sidecar::open(from)?;
+        let mut carried: std::collections::HashMap<String, Vec<f32>> =
+            std::collections::HashMap::new();
+        {
+            let mut stmt = self.conn.prepare(
+                "SELECT image_md5, vec FROM figures WHERE doc_id = ?1 AND vec IS NOT NULL",
+            )?;
+            let rows = stmt.query_map([doc_id], |r| {
+                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?;
+            for row in rows {
+                let (md5, blob) = row?;
+                if let Some(md5) = md5 {
+                    carried.insert(md5, bytes_to_vec(&blob));
+                }
+            }
+        }
+        self.conn
+            .execute("DELETE FROM figures WHERE doc_id = ?1", [doc_id])?;
+        let mut stmt = src.conn.prepare(
+            "SELECT doc_id, page, image_path, caption, section, figure_no, image_md5, vec
+             FROM figures WHERE doc_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map([doc_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<i64>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, Option<Vec<u8>>>(7)?,
+            ))
+        })?;
+        let mut count = 0usize;
+        let mut carried_count = 0usize;
+        for row in rows {
+            let (doc, page, image_path, caption, section, figure_no, image_md5, vec_blob) = row?;
+            let carried_vec = image_md5
+                .as_deref()
+                .and_then(|md5| carried.get(md5))
+                .cloned();
+            let vec_blob = carried_vec
+                .as_ref()
+                .map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>())
+                .or(vec_blob);
+            if vec_blob.is_some() {
+                carried_count += 1;
+            }
+            self.conn.execute(
+                "INSERT INTO figures (doc_id, page, image_path, caption, section, figure_no, image_md5, source_id, vec)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    doc,
+                    page,
+                    image_path,
+                    caption,
+                    section,
+                    figure_no,
+                    image_md5,
+                    Some(source_id),
+                    vec_blob
+                ],
+            )?;
+            count += 1;
+        }
+        Ok((count, carried_count))
+    }
+
     fn pending_rows(&self) -> Result<Vec<PendingRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, doc_id, page, figure_no, caption, section, image_path, image_md5
