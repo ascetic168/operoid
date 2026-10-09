@@ -82,6 +82,12 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/knowledge/health", get(api_knowledge_health))
         // K6 精簡能力狀態（Req::User——user 上傳面提示；便宜探測：無 spawn、只打 /v1/models）
         .route("/api/knowledge/caps", get(api_knowledge_caps))
+        // K5/P1：PDF 知識入庫（Req::User——企業 user 上傳面；非同步 202＋狀態查詢）
+        .route("/api/knowledge/ingest-pdf", post(api_knowledge_ingest_pdf))
+        .route(
+            "/api/knowledge/ingest-pdf/{id}",
+            get(api_knowledge_ingest_status),
+        )
         .layer(crate::routes::cors_layer())
 }
 
@@ -1673,4 +1679,144 @@ async fn api_knowledge_caps(State(state): State<Arc<ServerState>>, headers: Head
     )
     .await;
     ok_json(serde_json::to_value(&caps).unwrap_or_default())
+}
+
+
+// ── K5/P1：PDF 知識入庫（非同步；狀態表行程內）──────────────────────────
+
+static INGESTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+#[derive(Deserialize)]
+struct IngestPdfBody {
+    /// PDF 絕對路徑（企業端上傳暫存路徑或伺服器本機路徑）。
+    pdf: String,
+    /// 授權歸檔 source id；缺省自動以 notes repo 比對 `sources list`。
+    source_id: Option<String>,
+    /// 生產 sidecar 路徑；缺省 cfg.figures_db_path，再缺省 notes repo 伴隨檔。
+    figures_db: Option<String>,
+}
+
+/// `POST /api/knowledge/ingest-pdf`——PDF → 知識庫入庫（非同步；MinerU 解析為
+/// 長操作，立即回 202＋`ingest_id`，以 GET 查詢狀態與報告）。
+async fn api_knowledge_ingest_pdf(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<IngestPdfBody>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let cfg = match load_cfg(&state) {
+        Ok(c) => c,
+        Err(e) => return err_response(&e),
+    };
+    let pdf = std::path::PathBuf::from(&body.pdf);
+    if !pdf.is_file() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": "ingest.pdfNotFound", "detail": body.pdf})),
+        )
+            .into_response();
+    }
+    let notes = std::path::PathBuf::from(cfg.notes_repo_path.trim_end_matches('/'));
+    let source_id = match body.source_id.clone() {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => match ocore::knowledge::ingest::resolve_source_id(
+            &cfg.gbrain_exe_path,
+            cfg.active_env_home(),
+            &notes,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"code": "ingest.noSource", "detail": e.to_string()})),
+                )
+                    .into_response()
+            }
+        },
+    };
+    let figures_db = body
+        .figures_db
+        .clone()
+        .or_else(|| cfg.figures_db_path.clone())
+        .unwrap_or_else(|| {
+            ocore::knowledge::ingest::default_figures_db(&notes).to_string_lossy().into_owned()
+        });
+
+    let id = format!(
+        "ing-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    INGESTS
+        .lock()
+        .expect("ingests")
+        .insert(id.clone(), json!({ "state": "running", "pdf": body.pdf }));
+    let ingest_id = id.clone();
+
+    let gbrain_exe = cfg.gbrain_exe_path.clone();
+    let home = cfg.active_env_home().map(str::to_string);
+    let convert_cfg = cfg.convert_config();
+    tokio::spawn(async move {
+        let result = ocore::knowledge::ingest::ingest_pdf(
+            &pdf,
+            &convert_cfg,
+            std::path::Path::new(&figures_db),
+            std::path::Path::new(&notes),
+            &source_id,
+            &gbrain_exe,
+            home.as_deref(),
+        )
+        .await;
+        let mut st = INGESTS.lock().expect("ingests");
+        match result {
+            Ok(r) => {
+                let entry = st.get_mut(&id).expect("ingest entry");
+                *entry = json!({
+                    "state": "done",
+                    "report": {
+                        "doc_id": r.doc_id,
+                        "notes_written": r.notes_written,
+                        "figure_rows": r.figure_rows,
+                        "vectors_carried": r.vectors_carried,
+                        "vectors_embedded": r.vectors_embedded,
+                        "synced": r.synced,
+                        "warnings": r.warnings,
+                    }
+                });
+            }
+            Err(e) => {
+                let entry = st.get_mut(&id).expect("ingest entry");
+                *entry = json!({ "state": "error", "error": e.to_string() });
+            }
+        }
+    });
+    ok_json(json!({ "ingest_id": ingest_id, "state": "running" }))
+}
+
+/// `GET /api/knowledge/ingest-pdf/{id}`——入庫狀態／報告。
+async fn api_knowledge_ingest_status(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    match INGESTS.lock().expect("ingests").get(&id) {
+        Some(v) => ok_json(v.clone()),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "ingest.notFound", "detail": id})),
+        )
+            .into_response(),
+    }
 }

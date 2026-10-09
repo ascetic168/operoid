@@ -141,6 +141,9 @@ const INVENTORY: &[(&str, &str)] = &[
     ("GET", "/api/prereq"),
     // K6 知識管線健康（未列 rbac 矩陣 → Admin fail-closed——探測面屬管理資訊）
     ("GET", "/api/knowledge/health"),
+    // K5/P1：PDF 知識入庫（user 上傳面）
+    ("POST", "/api/knowledge/ingest-pdf"),
+    ("GET", "/api/knowledge/ingest-pdf/{id}"),
     // K6 精簡能力狀態（Req::User——上傳面提示）
     ("GET", "/api/knowledge/caps"),
     // R3 新增
@@ -222,6 +225,35 @@ async fn permission_matrix_all_routes_four_identities() {
             "未認證對 {method} {pattern} 必須 401"
         );
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// K5/P1：入庫端點行為——PDF 不存在 → 400（spawn 前 fail fast，不佔背景工作）、
+/// 未知狀態 id → 404。
+#[tokio::test]
+async fn ingest_pdf_validates_input() {
+    let dir = temp_dir("ingest");
+    let app = test_router(&dir);
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/api/knowledge/ingest-pdf")
+        .header("authorization", "Bearer adm")
+        .header("content-type", "application/json")
+        .body(Body::from(r#"{"pdf":"Z:/definitely/missing.pdf"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["code"], "ingest.pdfNotFound");
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/knowledge/ingest-pdf/no-such-id")
+        .header("authorization", "Bearer adm")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     std::fs::remove_dir_all(&dir).ok();
 }
 

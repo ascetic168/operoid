@@ -15,6 +15,21 @@
 
 ## [Unreleased]
 
+### PDF ingestion endpoints - the loop is reachable from the frontends
+
+- `POST /api/knowledge/ingest-pdf` (Req::User): `{pdf, source_id?,
+  figures_db?}` -> `202 {ingest_id}` - the ingestion loop (MinerU ->
+  notes -> sync -> sidecar -> vectors) runs in the background; source
+  id auto-resolves from the notes-repo registration when omitted;
+  figures db falls back to config then to the notes-repo sidecar file.
+- `GET /api/knowledge/ingest-pdf/{id}`: `{state: running|done|error,
+  report?}` for progress polling.
+- ocore: `resolve_source_id` (notes-repo -> registered source, path
+  comparison normalized) and `default_figures_db` (repo-adjacent file,
+  outside git/sync reach).
+- RBAC matrix: both routes registered at User tier; fail-fast
+  validation test (missing pdf -> 400 before spawn; unknown id -> 404).
+
 ### PDF knowledge ingestion loop - the pipeline is now one call
 
 - New `ocore::knowledge::ingest::ingest_pdf`: the full production loop

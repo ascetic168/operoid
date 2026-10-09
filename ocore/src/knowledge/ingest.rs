@@ -46,6 +46,63 @@ pub fn merge_sidecar(
     Sidecar::open(to)?.merge_from(from, doc_id, source_id)
 }
 
+/// 反斜線字元（避免在字面中書寫）。
+fn chr_backslash() -> char {
+    char::from_u32(0x5C).unwrap()
+}
+
+/// 解析 notes repo 對應的已註冊 source id（K4 授權歸檔用）——比對
+/// `gbrain sources list --json` 的 `local_path`（分隔符／大小寫寬容比對）。
+pub async fn resolve_source_id(
+    gbrain_exe: &str,
+    home: Option<&str>,
+    notes_repo: &Path,
+) -> Result<String> {
+    let env = crate::proc::env_for_brain(home);
+    let (code, out, err) = crate::gbrain_cli::run_capture(
+        gbrain_exe,
+        &["sources", "list", "--json"],
+        &env,
+    )
+    .await
+    .context("sources list spawn 失敗")?;
+    if code != 0 {
+        return Err(anyhow::anyhow!("sources list 失敗：{}", err.trim()));
+    }
+    let start = out.find('[').context("sources list 非 JSON 陣列")?;
+    let end = out.rfind(']').context("sources list 非 JSON 陣列")?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&out[start..=end])
+        .context("sources list 解析失敗")?;
+    let norm = |s: &str| s.replace(chr_backslash(), "/").trim_end_matches('/').to_ascii_lowercase();
+    let want = norm(&notes_repo.to_string_lossy());
+    for r in &rows {
+        let lp = r["local_path"].as_str().map(norm);
+        if lp.as_deref() == Some(want.as_str()) {
+            return r["id"]
+                .as_str()
+                .map(|s| s.to_string())
+                .context("source 列缺 id");
+        }
+    }
+    Err(anyhow::anyhow!(
+        "notes repo 未註冊為 source（{}）——請先 gbrain sources add <id> --path {}",
+        notes_repo.display(),
+        notes_repo.display()
+    ))
+}
+
+/// 預設 sidecar 路徑：notes repo 的伴隨檔（repo 外——避免被 git/sync 掃入）。
+/// `figures_db_path` 未設定時的後備；K4 融合要生效仍建議寫進設定。
+pub fn default_figures_db(notes_repo: &Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!(
+        "{}.figures.sqlite",
+        notes_repo
+            .to_string_lossy()
+            .trim_end_matches('/')
+            .trim_end_matches(char::from_u32(0x5C).unwrap())
+    ))
+}
+
 /// PDF → 知識庫入庫閉環：
 /// `PDF →（K1 轉換）→ notes 拷貝進聯邦 repo → sidecar doc 級合併 → git commit
 ///  → gbrain sync --no-extract → 向量回填（best-effort）`。
