@@ -183,7 +183,7 @@ pub async fn ingest_pdf(
         "--no-extract",
     ];
     match crate::gbrain_cli::run_capture(gbrain_exe, &sync_args, &env).await {
-        Ok((code, _, err)) if code == 0 => synced = true,
+        Ok((code, _, _err)) if code == 0 => synced = true,
         Ok((code, _, err)) => warnings.push(format!(
             "gbrain sync --source {source_id} 失敗（exit {code}）：{}——notes 已入庫，請確認 source 已註冊後補跑同步",
             err.trim().chars().take(200).collect::<String>()

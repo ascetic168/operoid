@@ -15,6 +15,26 @@
 
 ## [Unreleased]
 
+### K8 - VLM caption enrichment for short-caption figures
+
+- New `ocore::knowledge::enrich`: figures whose captions are too short
+  to be retrievable (< 80 chars) get a VLM-generated description
+  (explicitly prompted for key numeric values and trends) written into
+  the figure note body and the sidecar caption - with the AI-generated
+  marker and the vector cleared for re-embedding by the next backfill.
+- **Egress trust tiers enforced**: chat endpoint classified
+  local/private/public from its base URL; public third-party clouds are
+  skipped entirely unless `allow_public_egress` is opted in (K1 tiers,
+  K8 constrained by them as designed).
+- **Live verification closed the plan's open question**: zhipu
+  glm-5.3-flash DOES read images - enriching a real mueller2016 figure
+  produced the exact pixel-only values (peak efficiencies 87.1% /
+  91.1% / 89.7% / 88.6%, per-frequency readings at 100 MHz, trend
+  descriptions). The generation model being vision-capable is now
+  confirmed, not "pending verification".
+- Degradation: VLM rejection/empty response/non-JSON are recorded as
+  skipped-with-warning - the pipeline never fails on enrichment.
+
 ### Mixed batches route per-file
 
 - The previous all-PDF gate left mixed batches (PDF + txt/md/csv)

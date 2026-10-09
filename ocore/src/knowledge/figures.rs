@@ -95,6 +95,16 @@ struct PendingRow {
     image_md5: Option<String>,
 }
 
+/// 短 caption 候選列（K8 enrich 的輸入）。
+#[derive(Debug, Clone)]
+pub struct ShortCaptionRow {
+    pub doc_id: String,
+    pub page: i64,
+    pub figure_no: Option<u32>,
+    pub caption: String,
+    pub image_path: Option<String>,
+}
+
 /// sidecar 開啟＋schema 就緒（含舊版 K1 資料庫的欄位補齊）。
 pub struct Sidecar {
     conn: rusqlite::Connection,
@@ -166,6 +176,52 @@ impl Sidecar {
                 row.source_id,
                 blob
             ],
+        )?;
+        Ok(())
+    }
+
+
+    /// 短 caption 圖列（有原圖、caption 長度 < `min_chars`）。
+    pub fn short_captions(
+        &self,
+        min_chars: usize,
+        limit: usize,
+    ) -> Result<Vec<ShortCaptionRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT doc_id, page, figure_no, caption, image_path FROM figures
+             WHERE image_path IS NOT NULL AND LENGTH(caption) < ?1
+             ORDER BY id LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params![min_chars as i64, limit as i64],
+                |r| {
+                    Ok(ShortCaptionRow {
+                        doc_id: r.get(0)?,
+                        page: r.get(1)?,
+                        figure_no: r.get::<_, Option<i64>>(2)?.map(|n| n as u32),
+                        caption: r.get(3)?,
+                        image_path: r.get(4)?,
+                    })
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 補寫後更新：caption 加上 AI 生成描述、清向量（`embed_pending` 重嵌）。
+    pub fn apply_enrichment(
+        &self,
+        doc_id: &str,
+        page: i64,
+        description: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE figures
+             SET caption = caption || char(10) || '[AI 生成圖說] ' || ?3,
+                 vec = NULL
+             WHERE doc_id = ?1 AND page = ?2",
+            rusqlite::params![doc_id, page, description],
         )?;
         Ok(())
     }
