@@ -2933,7 +2933,8 @@ pub fn build_tool_ctx(
         None,
     )?;
     // C6：唯一檢索邊界——員工的知識存取一律經 policy→授權集→receipts（I1/I2）。
-    let knowledge = Some(crate::knowledge::service::service_arc(db_path));
+    // K4：sidecar 融合隨設定接線（figures_db_path 未設＝僅文字路，行為不變）。
+    let knowledge = Some(crate::knowledge::service::service_for_config(db_path, cfg));
     // think 顯式 --model 的來源：models.think 優先（長合成需要非推理模型，
     // 見 GBrainConfig::think_model 文檔），缺時 fallback chat_model。
     let chat_model = gbrain_config::load_for(entry.env_home())

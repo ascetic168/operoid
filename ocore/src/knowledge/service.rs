@@ -21,6 +21,8 @@ use serde_json::json;
 
 use super::backend::RetrieveKind;
 use super::bootstrap::load_policy_fail_closed;
+use super::figures::{self, FigureHit};
+use super::fusion::{self, FusionItem, TextHit};
 use super::policy::{authorized_scope_ids_with_grants, authorized_sources};
 use super::types::AccessContext;
 use crate::domain::store::Store;
@@ -39,7 +41,8 @@ pub fn retrieval_query(q: &str) -> String {
 /// K2：`gbrain query` CLI 參數——前綴後的查詢＋`--no-expand`。
 /// query expansion 政策：gbrain 預設 `--expand`（多查詢擴張＝額外 chat 計費＋查詢
 /// 文字出端點）；實測不加已達 0.917——Operoid 一律 `--no-expand`（純 hybrid RRF）；
-/// 未來若要開，以 A/B 實測增益再開。純函式供測試。
+/// 未來若要開，以 A/B 實測增益再開。`--json`＝K4 融合需要可識別的命中項
+/// （slug/chunk_text/cosine）。純函式供測試。
 pub fn query_cli_args(prefixed_query: &str, limit: u32, source_id: &str) -> Vec<String> {
     vec![
         "query".into(),
@@ -49,6 +52,7 @@ pub fn query_cli_args(prefixed_query: &str, limit: u32, source_id: &str) -> Vec<
         "--source".into(),
         source_id.into(),
         "--no-expand".into(),
+        "--json".into(),
     ]
 }
 
@@ -97,11 +101,23 @@ pub struct RetrievalReceipt {
 
 pub struct KnowledgeService {
     db_path: PathBuf,
+    /// K4：sidecar 融合設定（None＝僅 gbrain 文字路；`with_sidecar`／
+    /// `service_for_config` 接線）。
+    sidecar: Option<figures::SidecarConfig>,
 }
 
 impl KnowledgeService {
     pub fn new(db_path: impl Into<PathBuf>) -> Self {
-        Self { db_path: db_path.into() }
+        Self {
+            db_path: db_path.into(),
+            sidecar: None,
+        }
+    }
+
+    /// K4：啟用 sidecar 融合（路 2 圖向量＋路 3 metadata 附帶）。
+    pub fn with_sidecar(mut self, sidecar: figures::SidecarConfig) -> Self {
+        self.sidecar = Some(sidecar);
+        self
     }
 
     /// 授權檢索入口。`query`/`anchor` 來自工具輸入（I4：scope 意圖**不在**輸入面——
@@ -136,18 +152,20 @@ impl KnowledgeService {
             });
         }
 
-        // 逐 source 呼叫（M0-V1：`source_id` 為逐呼叫純量）後合併。
-        let mut futs = Vec::with_capacity(plan.source_ids.len());
-        for sid in &plan.source_ids {
-            futs.push(self.execute_source(sid, query, limit, ctx));
-        }
-        let results = futures::future::join_all(futs).await;
-        let mut sections: Vec<String> = Vec::new();
+        // ── 路1：逐 source 取 gbrain 命中（M0-V1：`source_id` 為逐呼叫純量；
+        //    CLI `--json` 結構化——RRF 融合需要可識別的命中項）──
+        let mut gbrain_lists: Vec<Vec<FusionItem>> = Vec::new();
         let mut errors = serde_json::Map::new();
+        let futs: Vec<_> = plan
+            .source_ids
+            .iter()
+            .map(|sid| self.fetch_source_hits(sid, query, limit, ctx))
+            .collect();
+        let results = futures::future::join_all(futs).await;
         for (sid, res) in plan.source_ids.iter().zip(results) {
             match res {
-                Ok(text) if !text.trim().is_empty() => {
-                    sections.push(format!("── {sid} ──\n{}", text.trim()));
+                Ok(hits) if !hits.is_empty() => {
+                    gbrain_lists.push(hits.into_iter().map(FusionItem::Text).collect());
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -155,13 +173,92 @@ impl KnowledgeService {
                 }
             }
         }
-        let all_failed = sections.is_empty() && !errors.is_empty();
+
+        // ── 路2：sidecar 圖向量（K4；best-effort——嵌入/開檔失敗只降級記 meta，
+        //    絕不讓檢索失效）。C4 歸因：以文字路首位命中文件為錨——同文件圖參與
+        //    融合排序，他文件圖降為附帶池（聯合空間的跨主題基線 cosine 高達 ~0.6，
+        //    絕對門檻無法歸因；metadata 綁定才是鐵律）──
+        let mut sidecar_meta = serde_json::Value::Null;
+        let mut sidecar_error: Option<String> = None;
+        let anchor_doc = gbrain_lists
+            .first()
+            .and_then(|l| l.first())
+            .and_then(|it| it.doc_id());
+        let mut extra_related: Vec<FigureHit> = Vec::new();
+        let mut lists: Vec<Vec<FusionItem>> = Vec::new();
+        if let Some(sc) = &self.sidecar {
+            let attempt = async {
+                let qv = figures::embed_query(&sc.embedding_base, None, query).await?;
+                let sidecar = figures::Sidecar::open(&sc.db_path)?;
+                let hits: Vec<FigureHit> =
+                    sidecar.search(&qv, Some(&plan.source_ids), limit as usize)?;
+                anyhow::Ok(hits)
+            };
+            match attempt.await {
+                Ok(hits) if !hits.is_empty() => {
+                    // 排序面只收「錨文件＋高於門檻」的命中；他文件命中降入附帶池。
+                    let (mut same, other) =
+                        fusion::split_by_anchor(hits, anchor_doc.as_deref());
+                    same.retain(|h| h.score >= figures::SIDECAR_FUSION_MIN_COSINE);
+                    if !same.is_empty() {
+                        sidecar_meta = json!({ "figures": same.len() });
+                        lists.push(same.into_iter().map(FusionItem::Figure).collect());
+                    }
+                    extra_related = other;
+                }
+                Ok(_) => {}
+                Err(e) => sidecar_error = Some(e.to_string()),
+            }
+        }
+        // sidecar 清單先插入：RRF 同分平手時，多模態命中（稀少模態、其像素資訊
+        // 文字 chunk 無法替代——C7 純視覺答案實驗）排在等價文字命中之前。
+        lists.extend(gbrain_lists);
+
+        // ── RRF 合併（k=60）＋路3 附帶：命中文件的同文件圖（metadata 綁定、
+        //    不需向量——純文字嵌入模式也能把圖帶出來；嚴禁二次向量配對）。
+        //    附帶池＝metadata 命中文件圖＋路2 的他文件降級命中（去重後接尾）──
+        let mut merged = fusion::rrf_merge(lists, fusion::RRF_K);
+        if self.sidecar.is_some() && !merged.is_empty() {
+            if let Some(sc) = &self.sidecar {
+                let mut docs: Vec<String> =
+                    merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
+                docs.sort();
+                docs.dedup();
+                let related = figures::Sidecar::open(&sc.db_path)
+                    .and_then(|s| s.figures_for_docs(&docs, Some(&plan.source_ids), limit as usize * 2))
+                    .map(|mut r| {
+                        r.extend(extra_related.drain(..));
+                        r
+                    });
+                match related {
+                    Ok(related) if !related.is_empty() => {
+                        let before = merged.len();
+                        merged = fusion::attach_related_figures(merged, related, limit as usize);
+                        if let Some(obj) = sidecar_meta.as_object_mut() {
+                            obj.insert("attached".into(), json!(merged.len() - before));
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => sidecar_error = Some(format!("attach: {e}")),
+                }
+            }
+        }
+        if let Some(e) = sidecar_error {
+            sidecar_meta = json!({ "error": e });
+        }
+
+        // ── 渲染：每項自帶出處（員工具直接消費；K5 據圖檔路徑讀原圖或指向圖）──
+        let all_failed = merged.is_empty() && !errors.is_empty();
         let text = if all_failed {
             "知識檢索暫時失敗（所有授權來源皆無回應）。".to_string()
-        } else if sections.is_empty() {
+        } else if merged.is_empty() {
             "No results.".to_string()
         } else {
-            sections.join("\n\n")
+            merged
+                .iter()
+                .map(|(it, _)| it.render())
+                .collect::<Vec<_>>()
+                .join("\n\n")
         };
 
         self.record(
@@ -170,7 +267,7 @@ impl KnowledgeService {
             kind_str,
             &plan,
             !errors.is_empty(),
-            sections.len(),
+            merged.len(),
             access.clearance,
         )?;
         Ok(ToolOutput {
@@ -181,6 +278,8 @@ impl KnowledgeService {
                 "policy_version": plan.policy_version,
                 "sources_with_errors": errors,
                 "receipt_kind": kind_str,
+                "fused_items": merged.len(),
+                "sidecar": sidecar_meta,
             }),
         })
     }
@@ -242,19 +341,47 @@ impl KnowledgeService {
         Ok(plan)
     }
 
-    /// 單一 source 的檢索（MCP 優先；CLI fallback——M0-V5 實測 `--source` 有效）。
+    /// 路1 單一 source 的命中（MCP 優先；CLI fallback——M0-V5 實測 `--source` 有效）。
     /// K2：查詢縫 task 前綴（兩路一致）＋停用 expansion（額外計費且無實測增益）。
-    async fn execute_source(
+    /// CLI 走 `--json`（K4 融合需要可識別的命中項）；MCP 結果可解析為 JSON 列則同用，
+    /// 否則整段視為單一 opaque 項（融合退化、輸出格式不變）。
+    async fn fetch_source_hits(
         &self,
         sid: &str,
         query: &str,
         limit: u32,
         ctx: &ToolCtx,
-    ) -> std::result::Result<String, String> {
+    ) -> std::result::Result<Vec<TextHit>, String> {
         let prefixed = retrieval_query(query);
         if let Some(mcp) = &ctx.mcp {
             let args = json!({ "query": prefixed, "limit": limit, "source_id": sid, "expand": false });
-            return mcp.call("query", args).await.map_err(|e| e.to_string());
+            let text = mcp.call("query", args).await.map_err(|e| e.to_string())?;
+            if text.trim().is_empty() {
+                return Ok(Vec::new());
+            }
+            if let Some(rows) = fusion::parse_gbrain_hits(&text) {
+                if !rows.is_empty() {
+                    return Ok(rows
+                        .into_iter()
+                        .map(|r| TextHit {
+                            source_id: sid.into(),
+                            slug: r.slug,
+                            title: r.title,
+                            chunk_text: r.chunk_text,
+                            cosine: r.cosine,
+                            opaque: false,
+                        })
+                        .collect());
+                }
+            }
+            return Ok(vec![TextHit {
+                source_id: sid.into(),
+                slug: String::new(),
+                title: String::new(),
+                chunk_text: text,
+                cosine: None,
+                opaque: true,
+            }]);
         }
         let args = query_cli_args(&prefixed, limit, sid);
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -268,7 +395,23 @@ impl KnowledgeService {
         if code != 0 {
             return Err(format!("gbrain query exit {code}: {}", err.trim()));
         }
-        Ok(out)
+        let rows = fusion::parse_gbrain_hits(&out).ok_or_else(|| {
+            format!(
+                "gbrain query --json 解析失敗：{}",
+                out.chars().take(160).collect::<String>()
+            )
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|r| TextHit {
+                source_id: sid.into(),
+                slug: r.slug,
+                title: r.title,
+                chunk_text: r.chunk_text,
+                cosine: r.cosine,
+                opaque: false,
+            })
+            .collect())
     }
 
     /// 寫入 receipt＋`retrieval` 事件（Test 9；Rule 8）。收據**不記查詢全文**——
@@ -353,6 +496,18 @@ pub fn service_arc(db_path: impl Into<PathBuf>) -> Arc<KnowledgeService> {
     Arc::new(KnowledgeService::new(db_path))
 }
 
+/// 便利建構（K4）：依 AppConfig 接 sidecar 融合（`figures_db_path` 有設才啟用）。
+pub fn service_for_config(
+    db_path: impl Into<PathBuf>,
+    cfg: &crate::app_config::AppConfig,
+) -> Arc<KnowledgeService> {
+    let mut svc = KnowledgeService::new(db_path);
+    if let Some(sc) = cfg.sidecar_config() {
+        svc = svc.with_sidecar(sc);
+    }
+    Arc::new(svc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,7 +525,7 @@ mod tests {
         assert_eq!(RETRIEVAL_QUERY_PREFIX.len(), 29);
     }
 
-    /// **K2**：CLI 參數帶前綴查詢＋`--no-expand`＋授權 source 過濾。
+    /// **K2**：CLI 參數帶前綴查詢＋`--no-expand`＋授權 source 過濾＋`--json`（K4 融合面）。
     #[test]
     fn k2_cli_args_carry_prefix_and_no_expand() {
         let args = query_cli_args(&retrieval_query("two-chip IVR"), 5, "k7");
@@ -383,7 +538,8 @@ mod tests {
                 "5",
                 "--source",
                 "k7",
-                "--no-expand"
+                "--no-expand",
+                "--json"
             ]
         );
     }

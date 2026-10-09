@@ -297,7 +297,9 @@ pub fn join_labels(section: &[(String, String)], sep: &str) -> String {
 }
 
 static FIG_CAP: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)^Figure (\d+)\.\s*(.*)$").expect("static regex"));
+    // 圖說分隔符兩種慣例：IEEE「Figure N.」與 arXiv/NeurIPS「Figure N | 」（實測
+    // mhc2512 語料，數字後有空格）——兩者都收。
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)^Figure (\d+)\s*[.|]\s*(.*)$").expect("static regex"));
 static TABLE_CAP: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r"^TABLE ([IVX]+)\.\s*(.*)$").expect("static regex"));
 
@@ -329,7 +331,7 @@ mod tests {
                         {"content": "Figure 2. Comparison of measured loss."}],
            "image_source": "images/page_1_table_0.jpg"},
           {"type": "chart", "content": "", "captions": [], "image_source": "images/page_1_chart_0.jpg"},
-          {"type": "chart", "content": "", "captions": [{"content": "(a)"}, {"content": "Figure 3. Efficiency versus phases."}], "image_source": "images/page_1_chart_1.jpg"},
+          {"type": "chart", "content": "", "captions": [{"content": "(a)"}, {"content": "Figure 3 | Efficiency versus phases."}], "image_source": "images/page_1_chart_1.jpg"},
           {"type": "paragraph_title", "level": 2, "content": "REFERENCES"},
           {"type": "ref_text", "content": "[1] Someone. Title."}
         ]},
@@ -378,7 +380,7 @@ mod tests {
         assert_eq!(fig2.fig, Some(2));
         assert_eq!(fig2.section_id(), "II.A");
         assert_eq!(fig2.image_source, None, "caption-only 拾回不虛構圖檔");
-        // chart 帶 Figure caption → 也是圖；面板標記 (a) 不入 caption。
+        // chart 帶 Figure caption → 也是圖（arXiv 管線分隔符亦收）；面板標記 (a) 不入 caption。
         let fig3 = &p.blocks[7];
         assert_eq!(fig3.fig, Some(3));
         assert_eq!(fig3.text, "Efficiency versus phases.");

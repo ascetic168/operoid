@@ -15,6 +15,34 @@
 
 ## [Unreleased]
 
+### K4 - Three-way retrieval fusion with metadata attribution (P1 2/3)
+
+- `KnowledgeService.retrieve` now fuses three paths with RRF (k=60):
+  1. **gbrain text path** - `execute_source` upgraded to structured hits
+     (`query --json`: slug / chunk_text / cosine / source_id), rendered
+     per item with source and slug (MCP results that are not JSON degrade
+     to one opaque item - output format unchanged);
+  2. **figure vector path** - K3 sidecar cosine hits;
+  3. **metadata attachment** - same-document figures carried along with
+     text hits (no vectors needed - works in the text-only tier too).
+- **C4 attribution by metadata, not vectors**: measured joint-space
+  baseline cosine is ~0.6 even for cross-topic queries, so an absolute
+  threshold cannot attribute. Instead the first text hit's document is
+  the anchor: same-document figures rank in the fusion list, other-doc
+  vector hits are demoted to the attachment pool
+  (`fusion::split_by_anchor`); sidecar fusion participation also has a
+  minimum-cosine gate (0.35).
+- Sidecar list is inserted before the text list, so RRF score ties favor
+  the multimodal hit (scarce modality; its pixel information cannot be
+  substituted by text chunks - C7).
+- Config: `figures_db_path` (AppConfig + wired via
+  `KnowledgeService::service_for_config` at all four production
+  construction sites; unset = text-only behavior unchanged).
+- Real-machine verification (real_k4, two-document corpus with the mHC
+  paper as distractor): visual query -> the right figure at fused rank 1;
+  directed queries -> the named paper's figure leads and the top-3 blocks
+  carry zero wrong-document figures (attribution errors = 0).
+
 ### K3 - Figure vector sidecar (P1 1/3)
 
 - New `ocore::knowledge::figures`: the `figures.sqlite` sidecar from K1

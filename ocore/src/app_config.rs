@@ -220,6 +220,10 @@ pub struct AppConfig {
     /// private 自設端點不受此閘門連坐（設定本身即同意）。
     #[serde(default)]
     pub allow_public_egress: bool,
+    /// K4：圖向量 sidecar 資料庫（K1 轉換產出的 `figures.sqlite` 路徑）。
+    /// 有設＝檢索啟用三路融合（gbrain＋sidecar＋metadata 附帶）；None＝僅文字路。
+    #[serde(default)]
+    pub figures_db_path: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -313,6 +317,18 @@ impl AppConfig {
             mineru_api_key: self.mineru_api_key.clone(),
             allow_public_egress: self.allow_public_egress,
         }
+    }
+
+    /// K4：sidecar 融合設定（`figures_db_path` 有設才啟用；嵌入端點走本地預設）。
+    pub fn sidecar_config(&self) -> Option<crate::knowledge::figures::SidecarConfig> {
+        self.figures_db_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|p| crate::knowledge::figures::SidecarConfig {
+                db_path: p.into(),
+                embedding_base: crate::knowledge::figures::DEFAULT_EMBEDDING_BASE.into(),
+            })
     }
 
     /// 一次性、冪等的 migration：種預設腦、吸收舊 gbrain_home_override、修正 active。
@@ -427,6 +443,7 @@ impl Default for AppConfig {
             mineru_remote_url: None,
             mineru_api_key: None,
             allow_public_egress: false,
+            figures_db_path: None,
         };
         cfg.normalize();
         cfg

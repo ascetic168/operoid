@@ -857,7 +857,7 @@ async fn api_op_run(
             } else {
                 ocore::knowledge::backend::RetrieveKind::Search
             };
-            let svc = ocore::knowledge::service::KnowledgeService::new(&st2.db_path);
+            let svc = ocore::knowledge::service::service_for_config(&st2.db_path, &cfg.0);
             let tctx = ocore::domain::tools::ToolCtx {
                 gbrain_exe: cfg.1.clone(),
                 gbrain_home: cfg.0.active_env_home().map(str::to_string),
@@ -1027,7 +1027,7 @@ async fn api_knowledge_ask(
         turn_max_steps: cfg.0.turn_max_steps,
         tool_result_max_chars: cfg.0.tool_result_max_chars,
     };
-    let svc = ocore::knowledge::service::KnowledgeService::new(&state.db_path);
+    let svc = ocore::knowledge::service::service_for_config(&state.db_path, &cfg.0);
     match svc.retrieve(&tctx.access, kind, &b.arg, None, 10, &tctx).await {
         Ok(o) => {
             let denied = o.meta.get("denied").and_then(|v| v.as_bool()).unwrap_or(false);

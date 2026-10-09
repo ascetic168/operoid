@@ -15,7 +15,7 @@
 //! Section …, page P] …`）——與實驗 V3m 的聯合向量輸入相同。查詢端一律純文字
 //! ＋K2 前綴；跨模態比對由嵌入模型的統一空間承擔。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
@@ -25,10 +25,22 @@ use crate::knowledge::service::RETRIEVAL_QUERY_PREFIX;
 /// 預設本地 llama-server（與 doctor／gbrain provider 慣例一致）。
 pub const DEFAULT_EMBEDDING_BASE: &str = super::doctor::DEFAULT_EMBEDDING_BASE;
 
+/// K4：sidecar 融合設定（`KnowledgeService` 的路 2/路 3 資料源）。
+/// 由 `AppConfig::sidecar_config()` 自 `figures_db_path` 構造；未設＝融合關閉。
+#[derive(Debug, Clone)]
+pub struct SidecarConfig {
+    pub db_path: PathBuf,
+    pub embedding_base: String,
+}
+
 /// 多模態批次上限（實驗驗證過的批次大小；8K context 上每圖約 82 tokens）。
 const MULTIMODAL_BATCH: usize = 4;
 /// 純文字批次上限。
 const TEXT_BATCH: usize = 32;
+/// 路2 參與融合的最低 cosine——低於此值的圖不進融合清單（跨主題查詢的雜訊圖
+/// 不該靠 RRF 平手擠進結果；門檻以雙文件實測校準：同題視覺查詢 ≥0.5、
+/// 跨主題查詢 ≲0.35）。
+pub const SIDECAR_FUSION_MIN_COSINE: f64 = 0.35;
 
 /// 嵌入模式（能力分層；由呼叫端以 doctor 探測結果決定）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -53,8 +65,8 @@ pub struct EmbedStats {
     pub warnings: Vec<String>,
 }
 
-/// 檢索命中（K4 融合的「路 2」項）。
-#[derive(Debug, Clone, Serialize)]
+/// 檢索命中（K4 融合的「路 2」項；路 3 附帶以 `attached` 標記）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FigureHit {
     pub doc_id: String,
     pub page: i64,
@@ -63,8 +75,11 @@ pub struct FigureHit {
     pub section: String,
     pub image_path: Option<String>,
     pub source_id: Option<String>,
-    /// cosine 相似度（[-1, 1]；嵌入已近 L2 正規化時即內積）。
+    /// cosine 相似度（[-1, 1]；嵌入已近 L2 正規化時即內積）。附帶項為 0。
     pub score: f64,
+    /// 路3 結構性附帶（同文件 metadata 帶出，非向量命中）。
+    #[serde(default)]
+    pub attached: bool,
 }
 
 /// 待嵌列（自 figures.sqlite 讀出）。
@@ -212,10 +227,67 @@ impl Sidecar {
                 image_path,
                 source_id,
                 score: cosine(query, &vec),
+                attached: false,
             });
         }
         hits.sort_by(|a, b| b.score.total_cmp(&a.score));
         hits.truncate(top_k);
+        Ok(hits)
+    }
+
+    /// 路3 附帶：給定文件集合，回傳其圖片列（**不需向量**——metadata 綁定，
+    /// 純文字模式也能把同文件的圖帶出來）。`sources` 過濾同 `search`（鐵律）。
+    pub fn figures_for_docs(
+        &self,
+        docs: &[String],
+        sources: Option<&[String]>,
+        limit: usize,
+    ) -> Result<Vec<FigureHit>> {
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT doc_id, page, figure_no, caption, section, image_path, source_id
+             FROM figures ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ))
+        })?;
+        let mut hits = Vec::new();
+        for row in rows {
+            let (doc_id, page, figure_no, caption, section, image_path, source_id) = row?;
+            if !docs.iter().any(|d| d == &doc_id) {
+                continue;
+            }
+            if let Some(allowed) = sources {
+                let Some(sid) = source_id.as_deref() else {
+                    continue; // 未歸檔＝未授權
+                };
+                if !allowed.iter().any(|a| a == sid) {
+                    continue;
+                }
+            }
+            hits.push(FigureHit {
+                doc_id,
+                page,
+                figure_no: figure_no.map(|n| n as u32),
+                caption,
+                section,
+                image_path,
+                source_id,
+                score: 0.0,
+                attached: true,
+            });
+        }
+        hits.truncate(limit);
         Ok(hits)
     }
 }
@@ -245,10 +317,15 @@ fn figure_doc_text(row: &PendingRow) -> String {
     )
 }
 
-/// 檢索查詢向量（K2 前綴在此縫上——呼叫端傳原始查詢）。
-pub async fn embed_query(base: &str, model: &str, query: &str) -> Result<Vec<f32>> {
+/// 檢索查詢向量（K2 前綴在此縫上——呼叫端傳原始查詢）。`model=None` 時自
+/// `/v1/models` 解析第一個 id。
+pub async fn embed_query(base: &str, model: Option<&str>, query: &str) -> Result<Vec<f32>> {
+    let model = match model {
+        Some(m) => m.to_string(),
+        None => resolve_model(base).await?,
+    };
     let text = format!("{RETRIEVAL_QUERY_PREFIX}{query}");
-    let vecs = embed_texts(base, model, &[text]).await?;
+    let vecs = embed_texts(base, &model, &[text]).await?;
     vecs.into_iter().next().ok_or_else(|| anyhow!("空回應"))
 }
 
@@ -293,6 +370,8 @@ pub async fn embed_pending(
     }
 
     // 2) 有圖批次（caption＋原圖聯合向量；content-parts 形狀＝實驗 V3m 驗證版）。
+    //    **批次被拒（llama-server 多元素行為飄移實測）→ 逐列單元素重試**——
+    //    單元素 content-parts 恆穩定，部分成功優於整批放棄。
     let with_img: Vec<&(&PendingRow, Option<String>)> =
         jobs.iter().filter(|(_, i)| i.is_some()).collect();
     for batch in with_img.chunks(MULTIMODAL_BATCH) {
@@ -306,49 +385,73 @@ pub async fn embed_pending(
             })
             .collect();
         let body = serde_json::json!({ "model": model, "input": input });
-        match embed_batch(base, &body).await {
-            Ok(vecs) if vecs.len() == batch.len() => {
+        if let Ok(vecs) = embed_batch(base, &body).await {
+            if vecs.len() == batch.len() {
                 for ((r, _), v) in batch.iter().zip(vecs) {
                     sidecar.store_vec(r.id, &v)?;
                     stats.embedded += 1;
                 }
+                continue;
             }
-            Ok(vecs) => {
-                stats.skipped += batch.len();
-                stats.warnings.push(format!(
-                    "多模態批次回應數不符（{} 向量 vs {} 列）——整批跳過",
-                    vecs.len(),
-                    batch.len()
-                ));
-            }
-            Err(e) => {
-                stats.skipped += batch.len();
-                stats.warnings.push(format!("多模態批次失敗：{e}"));
+            stats
+                .warnings
+                .push(format!("多模態批次回應數不符（{} vs {}）——逐列重試", vecs.len(), batch.len()));
+        } else {
+            stats
+                .warnings
+                .push("多模態批次被拒——逐列單元素重試".into());
+        }
+        for (r, uri) in batch {
+            let text = figure_doc_text(r);
+            let body = serde_json::json!({ "model": model, "input": [{ "content": [
+                { "type": "text", "text": text },
+                { "type": "image_url", "image_url": { "url": uri.clone().expect("batch filtered") } },
+            ]}]});
+            match embed_batch(base, &body).await {
+                Ok(mut v) if v.len() == 1 => {
+                    sidecar.store_vec(r.id, &v.remove(0))?;
+                    stats.embedded += 1;
+                }
+                other => {
+                    stats.skipped += 1;
+                    stats
+                        .warnings
+                        .push(format!("id={} 單元素重試仍失敗（{:?}）", r.id, other.map(|v| v.len())));
+                }
             }
         }
     }
 
     // 3) 純文字批次（TextOnly 全部；Multimodal 的缺圖列——caption-only 拾回等）。
+    //    同上：批次失敗退逐列。
     let text_only: Vec<&(&PendingRow, Option<String>)> =
         jobs.iter().filter(|(_, i)| i.is_none()).collect();
     for batch in text_only.chunks(TEXT_BATCH) {
         let texts: Vec<String> = batch.iter().map(|(r, _)| figure_doc_text(r)).collect();
-        match embed_texts(base, &model, &texts).await {
-            Ok(vecs) if vecs.len() == batch.len() => {
+        let body = serde_json::json!({ "model": model, "input": texts });
+        if let Ok(vecs) = embed_batch(base, &body).await {
+            if vecs.len() == batch.len() {
                 for ((r, _), v) in batch.iter().zip(vecs) {
                     sidecar.store_vec(r.id, &v)?;
                     stats.embedded += 1;
                 }
+                continue;
             }
-            Ok(vecs) => {
-                stats.skipped += batch.len();
-                stats
-                    .warnings
-                    .push(format!("文字批次回應數不符（{} vs {}）", vecs.len(), batch.len()));
-            }
-            Err(e) => {
-                stats.skipped += batch.len();
-                stats.warnings.push(format!("文字批次失敗：{e}"));
+        }
+        for (r, _) in batch {
+            let text = figure_doc_text(r);
+            let body = serde_json::json!({ "model": model, "input": [text] });
+            match embed_batch(base, &body).await {
+                Ok(mut v) if v.len() == 1 => {
+                    sidecar.store_vec(r.id, &v.remove(0))?;
+                    stats.embedded += 1;
+                }
+                other => {
+                    stats.skipped += 1;
+                    stats
+                        .warnings
+                        .push(format!("id={} 文字嵌入失敗（{:?}）", r.id, other.map(|v| v.len())));
+                }
             }
         }
     }

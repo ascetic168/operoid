@@ -19,6 +19,7 @@ pub mod bootstrap;
 pub mod doctor;
 pub mod fake;
 pub mod figures;
+pub mod fusion;
 pub mod grants;
 pub mod service;
 pub mod identity;
@@ -44,3 +45,6 @@ mod tests_real;
 
 #[cfg(test)]
 mod tests_k3;
+
+#[cfg(test)]
+mod tests_k4;

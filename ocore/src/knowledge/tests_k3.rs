@@ -78,7 +78,7 @@ async fn real_k3_sidecar_multimodal_visual_queries() {
     eprintln!("\n[k3] ── 純視覺查詢（multimodal sidecar, top-5）──");
     let mut top3_hits = 0usize;
     for (q, target_fig) in pixel_queries() {
-        let qv = embed_query(base, "embeddinggemma-2", q).await.unwrap();
+        let qv = embed_query(base, Some("embeddinggemma-2"), q).await.unwrap();
         let hits = sidecar.search(&qv, Some(&authorized), 5).unwrap();
         let rank = hits
             .iter()
@@ -115,7 +115,7 @@ async fn real_k3_sidecar_multimodal_visual_queries() {
     let sidecar2 = Sidecar::open(&db2).unwrap();
     let qv = embed_query(
         base,
-        "embeddinggemma-2",
+        Some("embeddinggemma-2"),
         "Extracted effective inductance and resistance versus frequency of the modelled inductor",
     )
     .await
