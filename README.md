@@ -55,6 +55,11 @@ Operoid treats AI as **organizational members, not chatbots.**
 - **Your company's knowledge, with permissions.** Same brain, same query,
   different identity → different results. Authorization happens before
   retrieval and fails closed. See [A knowledge boundary the server enforces](#a-knowledge-boundary-the-server-enforces).
+- **Documents become knowledge — figures included.** Two-column papers,
+  scanned reports, figure-heavy decks: parsed into section-aware notes with one
+  retrievable item per figure, routed by complexity, degraded visibly, and kept
+  local unless a cloud is explicitly opted in.
+  See [A document pipeline that reads the whole page](#a-document-pipeline-that-reads-the-whole-page).
 - **Reach them where you already are.** Chat in the GUI, email, IM (via WASM
   plugins) — same Employees, same persistent responsibilities.
 - **One codebase, two editions.** A desktop installer you just run; an
@@ -138,6 +143,42 @@ enforced deterministically by the server, auditable after the fact.
 
 ![The manager inbox: pending proposals to approve, and employees needing attention](assets/manager-inbox.png)
 
+## A document pipeline that reads the whole page
+
+Most retrieval pipelines read a PDF the way a photocopier reads a painting:
+two-column layouts scramble, figures become noise, tables turn to soup. Operoid
+treats a complex document as structured knowledge:
+
+- **Parsed like a document, not a text file.** [MinerU](https://github.com/opendatalab/MinerU)
+  recovers reading order, tables (real markdown), equations (LaTeX), and every
+  figure — with its caption and page number.
+- **Chunked the way a human reads.** Notes follow section boundaries; every
+  figure becomes its **own retrievable item** (caption + section + page) instead
+  of drowning mid-paragraph; tables stay atomic.
+- **Routed by complexity, degraded with grace.** Simple PDFs never pay for deep
+  parsing — a millisecond fast path handles them. And a missing capability is
+  never a silent failure: no MinerU installed → fast path plus an on-screen
+  notice; text-only embedding → figures indexed by caption. A **capability
+  matrix** (MinerU / multimodal embedding / image reading) is visible in every
+  edition — the desktop settings page and the enterprise admin/manager/user
+  web UIs — so it is always clear what works now and what unlocks the rest.
+- **Benchmarked, not vibes.** On a real IEEE paper, twelve questions about
+  specific figures and tables: **12/12 hit in the top 5, MRR 0.90** — through
+  the production retrieval stack, not a hand-tuned demo.
+
+Because documents are sensitive, the pipeline follows the same discipline as
+everything else: **local by default, explicit tiers for everything else.** Your
+own machine is always allowed; a self-hosted endpoint is consented by the act
+of configuring it; third-party clouds are **blocked unless you opt in** — and
+every conversion records where its data went.
+
+**Multimodal, on your terms.** Embedding runs on your own llama-server. With
+the optional mmproj projector, figure items upgrade to joint caption+image
+vectors in one unified embedding space — a plain-text query can find the right
+chart even when its caption says almost nothing. The upgrade is detected and
+surfaced in-app (figure-vectored retrieval is landing next), so you always know
+which mode you are in.
+
 ## Core concepts
 
 | Concept | One-line role |
@@ -198,6 +239,12 @@ On that foundation, the shipped product includes:
   Windows (verified) and Linux/macOS (implemented, not yet verified on real
   machines).
 - **A knowledge-graph foundation** built on [GBrain](https://github.com/garrytan/gbrain) — turn everyday files (contacts CSVs, meeting PDFs, company write-ups) into linked, queryable notes; sync, ask, and reason over them through a GUI instead of the CLI.
+- **A document pipeline that reads the whole page.** MinerU-backed parsing
+  (reading order, tables as markdown, equations as LaTeX, every figure with
+  caption and page), section-aware chunking, one retrievable item per figure —
+  benchmarked on a real IEEE paper at **12/12 top-5, MRR 0.90**. Millisecond
+  fast path for simple PDFs; visible degradation for missing tooling; egress
+  trust tiers keep documents local unless a cloud is explicitly opted in.
 - **Interruptible lifecycle & resilience.** A running Employee can be stopped
   gracefully or archived at any moment (history preserved, unarchivable);
   failed Commitments retry automatically with exponential backoff and hand back
@@ -224,6 +271,18 @@ To use the current knowledge-graph features, the desktop app expects:
 
 Paths are auto-detected (e.g. `~/.bun/bin/gbrain.exe` on Windows) and can be
 overridden on the **Config** page.
+
+Optional — for the document pipeline (complex PDFs → knowledge):
+
+| Tool | Why | Without it |
+|---|---|---|
+| **llama-server** (EmbeddingGemma 2) | local embedding backend for retrieval; launch flags in [DEPLOYMENT.md](DEPLOYMENT.md) | retrieval degrades to keyword-only |
+| **mmproj projector** (optional) | joint caption+image vectors for figures | figures indexed by caption text |
+| **MinerU** (optional) | complex-PDF parsing (two-column / scanned / figures) — `uv tool install mineru` | simple PDFs only, via the fast path |
+
+Everything is detected and surfaced in-app: a capability matrix under
+**Settings → Services** (personal edition) and across the enterprise
+admin/manager/user web UIs.
 
 ## Install & run
 
