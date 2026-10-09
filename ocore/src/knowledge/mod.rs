@@ -16,6 +16,7 @@
 
 pub mod backend;
 pub mod bootstrap;
+pub mod doctor;
 pub mod fake;
 pub mod grants;
 pub mod service;

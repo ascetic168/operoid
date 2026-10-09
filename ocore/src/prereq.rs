@@ -48,6 +48,11 @@ fn probe(cmd: &str, args: &[&str]) -> Option<String> {
     Some(s.lines().next().unwrap_or("").trim().to_string())
 }
 
+/// 對外的顯式版本探測（K6 doctor 等**非啟動關鍵路徑**用——會 spawn 子行程）。
+pub fn probe_version(program: &str, args: &[&str]) -> Option<String> {
+    probe(program, args)
+}
+
 fn bun_path(user_home: Option<&Path>) -> Option<PathBuf> {
     user_home.map(|h| h.join(".bun").join("bin").join(bun_bin_name()))
 }

@@ -77,6 +77,9 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/factories/upload/cleanup", post(api_factory_upload_cleanup))
         // 前置檢查
         .route("/api/prereq", get(api_prereq))
+        // K6 知識管線健康（admin——路由未列於 RBAC 表 → fail-closed 預設 admin-only；
+        // 會跑網路／spawn 探測，勿掛啟動路徑）
+        .route("/api/knowledge/health", get(api_knowledge_health))
         .layer(crate::routes::cors_layer())
 }
 
@@ -1616,4 +1619,37 @@ async fn api_prereq(
         )
             .into_response(),
     }
+}
+
+
+// ── K6 知識管線健康檢查 ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct KnowledgeHealthQuery {
+    /// 嵌入端點 base（預設本地 llama-server http://127.0.0.1:8080/v1）。
+    embedding_base: Option<String>,
+    /// chat 端點 base＋model 都給時才探 VLM 能力（K5 讀圖/定位模式的判準）。
+    chat_base: Option<String>,
+    chat_model: Option<String>,
+}
+
+async fn api_knowledge_health(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(q): Query<KnowledgeHealthQuery>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let cfg = match load_cfg(&state) {
+        Ok(c) => c,
+        Err(e) => return err_response(&e),
+    };
+    let embed_base = q
+        .embedding_base
+        .unwrap_or_else(|| ocore::knowledge::doctor::DEFAULT_EMBEDDING_BASE.into());
+    let chat = q.chat_base.as_deref().zip(q.chat_model.as_deref());
+    let health =
+        ocore::knowledge::doctor::check(&embed_base, chat, &cfg.convert_config()).await;
+    ok_json(serde_json::to_value(&health).unwrap_or_default())
 }

@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### K6 — Pipeline health checks + deployment docs (P0 3/4)
+
+- New `ocore::knowledge::doctor`: embedding-endpoint probe (`/v1/models`
+  input_modalities / vision flag / n_ctx, plus a ~2,200-token live embedding
+  probe that catches the llama-server `-b/-ub 8192` flag regression), chat
+  endpoint VLM capability probe (1x1 PNG试探, cached per endpoint - decides
+  K5 read-image vs locator mode), and a MinerU ladder probe (resolves the
+  ladder and spawns `--version` for local tiers; installs hints when
+  missing).
+- oserver: `GET /api/knowledge/health` (admin-only via unlisted-route
+  fail-closed default) exposes all three probes; optional
+  `chat_base`+`chat_model` query params enable the VLM probe.
+- DEPLOYMENT.md: new section 10 "PDF knowledge pipeline" - embedding
+  service flag discipline (long-input probe), MinerU's four install forms
+  (config override / PATH / remote / degrade), egress trust-tier table,
+  conversion output layout, and the gbrain version discipline
+  (0.60.105.0 verified; rerun the K7 benchmark after upgrades).
+
 ### K2 — Retrieval query task prefix (P0 2/4)
 
 - Employee knowledge retrieval (`KnowledgeService.execute_source`, both MCP and
