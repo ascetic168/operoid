@@ -15,6 +15,18 @@
 
 ## [Unreleased]
 
+### K2 — Retrieval query task prefix (P0 2/4)
+
+- Employee knowledge retrieval (`KnowledgeService.execute_source`, both MCP and
+  CLI transports) and the Operations console `query` op now prepend the
+  EmbeddingGemma 2 model-card query format `task: search result | query: `
+  before calling `gbrain query` - the experiment interception proved gbrain
+  passes query strings through verbatim, and the prefix is worth ~0.2 MRR
+  (hybrid-RRF pipeline 0.794 -> 0.917 on the 12-query benchmark).
+- Query expansion disabled by default (`--no-expand` on CLI, `expand: false`
+  on MCP): the measured gain is zero while expansion costs an extra chat
+  LLM call and sends the query text to the endpoint.
+
 ### K1 — MinerU converter for complex PDFs (multimodal retrieval upgrade, P0 1/4)
 
 - **New converter** `ocore::converters::mineru`: complex PDFs are converted into

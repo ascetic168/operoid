@@ -26,6 +26,32 @@ use super::types::AccessContext;
 use crate::domain::store::Store;
 use crate::domain::tools::{ToolCtx, ToolOutput};
 
+/// K2：EmbeddingGemma 2 檢索查詢的 model card 建議前綴。gbrain 對查詢字串**原樣**
+/// 送嵌（第十章攔截驗證）——呼叫端縫上即可，gbrain 零修改。
+/// 實測價值 ≈0.2 MRR（raw 0.707→前綴 0.903；gbrain 混合 RRF 0.794→0.917）。
+pub const RETRIEVAL_QUERY_PREFIX: &str = "task: search result | query: ";
+
+/// K2：檢索查詢前綴（MCP／CLI 兩路共用；只影響嵌入檢索——think/ask 的合成問題不縫）。
+pub fn retrieval_query(q: &str) -> String {
+    format!("{RETRIEVAL_QUERY_PREFIX}{q}")
+}
+
+/// K2：`gbrain query` CLI 參數——前綴後的查詢＋`--no-expand`。
+/// query expansion 政策：gbrain 預設 `--expand`（多查詢擴張＝額外 chat 計費＋查詢
+/// 文字出端點）；實測不加已達 0.917——Operoid 一律 `--no-expand`（純 hybrid RRF）；
+/// 未來若要開，以 A/B 實測增益再開。純函式供測試。
+pub fn query_cli_args(prefixed_query: &str, limit: u32, source_id: &str) -> Vec<String> {
+    vec![
+        "query".into(),
+        prefixed_query.into(),
+        "--limit".into(),
+        limit.to_string(),
+        "--source".into(),
+        source_id.into(),
+        "--no-expand".into(),
+    ]
+}
+
 /// 一次授權檢索的計畫（policy 評估產物；執行前無任何 GBrain 呼叫——I1）。
 #[derive(Debug, Clone)]
 pub struct RetrievalPlan {
@@ -217,6 +243,7 @@ impl KnowledgeService {
     }
 
     /// 單一 source 的檢索（MCP 優先；CLI fallback——M0-V5 實測 `--source` 有效）。
+    /// K2：查詢縫 task 前綴（兩路一致）＋停用 expansion（額外計費且無實測增益）。
     async fn execute_source(
         &self,
         sid: &str,
@@ -224,14 +251,16 @@ impl KnowledgeService {
         limit: u32,
         ctx: &ToolCtx,
     ) -> std::result::Result<String, String> {
+        let prefixed = retrieval_query(query);
         if let Some(mcp) = &ctx.mcp {
-            let args = json!({ "query": query, "limit": limit, "source_id": sid });
+            let args = json!({ "query": prefixed, "limit": limit, "source_id": sid, "expand": false });
             return mcp.call("query", args).await.map_err(|e| e.to_string());
         }
-        let limit_s = limit.to_string();
+        let args = query_cli_args(&prefixed, limit, sid);
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let (code, out, err) = crate::gbrain_cli::run_capture(
             &ctx.gbrain_exe,
-            &["query", query, "--limit", &limit_s, "--source", sid],
+            &refs,
             &crate::proc::env_for_brain(ctx.gbrain_home.as_deref()),
         )
         .await
@@ -329,6 +358,35 @@ mod tests {
     use super::*;
     use crate::knowledge::bootstrap::{bootstrap_with_sources, save_policy_new_version};
     use crate::knowledge::types::{Effect, PolicyRule};
+
+    /// **K2**：查詢前綴逐字對齊 model card／實驗格式（第十章攔截：51 字元驗證字串
+    /// 原樣通過 gbrain）。
+    #[test]
+    fn k2_query_prefix_format() {
+        assert_eq!(
+            retrieval_query("protocol"),
+            "task: search result | query: protocol"
+        );
+        assert_eq!(RETRIEVAL_QUERY_PREFIX.len(), 29);
+    }
+
+    /// **K2**：CLI 參數帶前綴查詢＋`--no-expand`＋授權 source 過濾。
+    #[test]
+    fn k2_cli_args_carry_prefix_and_no_expand() {
+        let args = query_cli_args(&retrieval_query("two-chip IVR"), 5, "k7");
+        assert_eq!(
+            args,
+            vec![
+                "query",
+                "task: search result | query: two-chip IVR",
+                "--limit",
+                "5",
+                "--source",
+                "k7",
+                "--no-expand"
+            ]
+        );
+    }
 
     fn store() -> crate::domain::SqliteStore {
         let dir = std::env::temp_dir().join(format!(

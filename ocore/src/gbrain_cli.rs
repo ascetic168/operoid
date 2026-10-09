@@ -533,10 +533,13 @@ pub async fn op_run_core(
             Ok(OpResult::from_code(code))
         }
         // query＝混合檢索（向量＋關鍵字＋RRF 融合，無 LLM 合成；gbrain v0.46 的 `search`
-        // 只是 tsvector 關鍵字搜尋，混合檢索叫 `query`）。
+        // 只是 tsvector 關鍵字搜尋，混合檢索叫 `query`）。K2：呼叫端縫 task 前綴
+        // （≈0.2 MRR）＋`--no-expand`（expansion＝額外 chat 計費且實測無增益）——
+        // 與 KnowledgeService.execute_source 同一政策。
         "query" => {
             let q = arg.ok_or_else(|| AppError::new("op.needArg").p("op", "query"))?;
-            let code = run!(&["query", &q]).map_err(|e| e.to_string())?;
+            let prefixed = crate::knowledge::service::retrieval_query(q);
+            let code = run!(&["query", &prefixed, "--no-expand"]).map_err(|e| e.to_string())?;
             Ok(OpResult::from_code(code))
         }
         // schema pack v1（gbrain-base）→v2（gbrain-base-v2）遷移：提交 unify-types Minion
