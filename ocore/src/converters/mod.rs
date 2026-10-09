@@ -17,3 +17,6 @@ pub mod pdf_text;
 pub mod text_to_md;
 pub mod wikilink;
 
+#[cfg(test)]
+mod mineru_real_tests;
+

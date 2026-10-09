@@ -15,6 +15,22 @@
 
 ## [Unreleased]
 
+### K7 - End-to-end retrieval benchmark (P0 4/4) - P0 acceptance met
+
+- New `#[ignore]` real test `converters::mineru_real_tests::real_k7_end_to_end_mueller2016`
+  (run: `cargo test -p ocore real_k7 -- --ignored --nocapture`): the full
+  pipeline on the mueller2016 corpus - K1 convert() end-to-end (S3 signal
+  escalation, ladder tier-1 MinerU spawn), 27 text chunks + 9 figure notes
+  with figure 1-9 / table I-V coverage assertions, throwaway gbrain brain
+  (git init -> sources add -> sync --no-extract -> embed), then the 12
+  experiment queries ported verbatim with the K2 prefix and --no-expand,
+  scored by slug-attribute ground truth.
+- **P0 gate passed: hit@5 12/12, MRR 0.903** (acceptance line 12/12 and
+  >= 0.90; experiment baseline 0.917). Three-document attribution port is
+  deferred to P1 with the sidecar landing.
+- Run time ~280 s (MinerU CPU ~10 s/page dominates); corpus paths are
+  asserted with actionable skip messages when missing.
+
 ### K6 — Pipeline health checks + deployment docs (P0 3/4)
 
 - New `ocore::knowledge::doctor`: embedding-endpoint probe (`/v1/models`
