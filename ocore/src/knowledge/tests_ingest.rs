@@ -165,3 +165,49 @@ async fn real_ingest_pdf_end_to_end_idempotent() {
 fn policy_default_is_auto() {
     assert_eq!(ConvertConfig::default().policy, ConvertPolicy::Auto);
 }
+
+/// 拖拽流驗證（#[ignore]）：工廠 run_core 全 PDF 批次 → 知識管線自動全做
+/// （K1 轉換→筆記寫入→sidecar→向量），不需要單獨按鈕。
+#[ignore = "真實環境相依：需 MinerU venv、llama-server（mmproj）"]
+#[tokio::test]
+async fn real_factory_pdf_drag_flow() {
+    let pdf = Path::new(PDF);
+    let mineru = Path::new(MINERU);
+    for p in [pdf, mineru] {
+        assert!(p.exists(), "缺少 {}", p.display());
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "drag-real-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let notes = dir.join("notes");
+    let figures_db = dir.join("notes.figures.sqlite");
+    let mut cfg = crate::app_config::AppConfig::default();
+    cfg.notes_repo_path = notes.to_string_lossy().into_owned();
+    cfg.mineru_command = Some(mineru.to_string_lossy().into_owned());
+    // figures_db_path 未設 → 工廠用 notes repo 伴隨檔（預設鏈）。
+
+    let result = crate::factories::run_core(&cfg, "pdf", &[PDF.to_string()], None)
+        .await
+        .expect("拖 PDF 進工廠應成功");
+    eprintln!(
+        "[drag] total={} pages={} written={} errors={:?}",
+        result.total,
+        result.sample.len(),
+        result.written.len(),
+        result.errors
+    );
+    assert_eq!(result.total, 36, "27 文字＋9 圖筆記");
+    assert_eq!(result.factory, "pdf-knowledge");
+    assert!(notes.join("mueller2016").join("fig8-p6.md").exists());
+    let sc = Sidecar::open(&figures_db).unwrap();
+    let (rows, with_vec) = sc.doc_stats("mueller2016").unwrap();
+    assert_eq!((rows, with_vec), (9, 9), "sidecar 9 列全向量");
+
+    std::fs::remove_dir_all(&dir).ok();
+}

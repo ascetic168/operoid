@@ -609,7 +609,8 @@
     "inboxCaptured": "已 capture {n} 筆到 inbox/",
     "unknown": "未知工廠：{factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",
-    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}"
+    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}",
+    "pdfDone": "已將 {n} 篇 PDF 知識筆記寫入知識庫（章節切塊＋圖片筆記＋向量）"
   },
   "op": {
     "needArg": "{op} 需要{arg}",

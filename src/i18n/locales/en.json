@@ -609,7 +609,8 @@
     "inboxCaptured": "Captured {n} note(s) to inbox/",
     "unknown": "Unknown factory: {factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",
-    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}"
+    "companiesRebuiltClean": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}　--clean removed={removed}",
+    "pdfDone": "Wrote {n} PDF knowledge notes into the knowledge base (section chunks + figure notes + vectors)"
   },
   "op": {
     "needArg": "{op} requires {arg}",

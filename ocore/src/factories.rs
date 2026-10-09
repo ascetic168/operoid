@@ -204,12 +204,176 @@ pub async fn run_core(
 ) -> Result<PreviewResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
 
+    // 多模態檢索升級（K1～K5）：全 PDF 批次 → 知識管線（複雜度分流 → MinerU/
+    // 快速路徑 → 章節切塊筆記＋圖片筆記 → sidecar → 向量回填）——拖 PDF 進工廠
+    // 即自動完成，不需要單獨的按鈕。混合批次仍走原分流（逐檔處理）。
+    let all_pdf = !paths.is_empty()
+        && paths.iter().all(|p| {
+            Path::new(p)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("pdf"))
+                .unwrap_or(false)
+        });
+    if all_pdf {
+        return run_pdf_knowledge(cfg, &notes, paths).await;
+    }
+
     let (pack, spec) = spec_for(cfg, factory)?;
     match spec.pipeline {
         Pipeline::People => run_people(pack, spec, cfg, &notes, paths).await,
         Pipeline::Textual => run_textual(pack, spec, cfg, &notes, paths).await,
         Pipeline::Capture => run_inbox(spec, cfg, &notes, paths),
     }
+}
+
+/// PDF 知識管線（K1～K5 整合）：每個 PDF 經複雜度分流轉換為知識筆記（章節切塊
+/// ＋圖片筆記），立即寫入 notes repo（同 textual 語意），sidecar doc 級合併入
+/// 生產庫（`figures_db_path` 或 notes repo 伴隨檔）、向量回填 best-effort。
+/// 來源歸檔：以 notes repo 比對 `sources list` 解析 source id（K4 授權鐵律；
+/// 解析失敗記警告——圖列暫不可見，事後補 tag 即可）。
+async fn run_pdf_knowledge(
+    cfg: &AppConfig,
+    notes: &Path,
+    paths: &[String],
+) -> Result<PreviewResult, AppError> {
+    use crate::knowledge::figures::{self, Sidecar};
+    use crate::knowledge::ingest::{default_figures_db, merge_sidecar, resolve_source_id};
+
+    let conv = cfg.convert_config();
+    let figures_db =
+        cfg.figures_db_path.clone().unwrap_or_else(|| {
+            default_figures_db(notes).to_string_lossy().into_owned()
+        });
+    if let Some(parent) = Path::new(&figures_db).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let production = Sidecar::open(&figures_db)
+        .map_err(|e| AppError::new("factory.pdfSidecarFail").p("detail", e.to_string()))?;
+
+    // 授權歸檔：notes repo → source id（best-effort；失敗＝圖列暫不可見＋警告）。
+    let source_id = resolve_source_id(&cfg.gbrain_exe_path, cfg.active_env_home(), notes)
+        .await
+        .ok();
+    if source_id.is_none() {
+        // 不阻擋：筆記照寫（gbrain 文字路可檢），圖列待歸檔（事後補 tag）。
+    }
+
+    let mut pages: Vec<PreviewPage> = Vec::new();
+    let mut written: Vec<String> = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
+    let mut files: Vec<ProcessedFile> = Vec::new();
+    let mut total_notes = 0usize;
+
+    for (i, p) in paths.iter().enumerate() {
+        let mut pf = ProcessedFile {
+            path: p.clone(),
+            ok: true,
+            message: None,
+            pages: vec![],
+        };
+        let work = std::env::temp_dir().join(format!(
+            "pdf-factory-{}-{}-{i}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&work);
+        let outcome = match crate::converters::mineru::convert(Path::new(p), &work, &conv).await {
+            Ok(o) => o,
+            Err(e) => {
+                let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
+                pf.ok = false;
+                pf.message = Some(m.clone());
+                errors.push(m);
+                files.push(pf);
+                std::fs::remove_dir_all(&work).ok();
+                continue;
+            }
+        };
+        let doc_id = outcome.report.doc_id.clone();
+
+        // sidecar doc 級合併（冪等、攜帶向量）＋來源歸檔＋向量回填 best-effort。
+        let work_db = work.join("figures.sqlite");
+        if work_db.exists() {
+            if let Err(e) = production.merge_from(&work_db, &doc_id, source_id.as_deref().unwrap_or("")) {
+                let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
+                pf.ok = false;
+                pf.message = Some(m.clone());
+                errors.push(m);
+            }
+            // 回填（Multimodal；無 mmproj 時退純文字——TextOnly 重跑即升級）。
+            // embed_pending 只嵌 vec IS NULL 的列：攜帶向量不重嵌。
+            let _ = figures::embed_pending(
+                Path::new(&figures_db),
+                figures::DEFAULT_EMBEDDING_BASE,
+                None,
+                crate::knowledge::figures::SidecarMode::Multimodal,
+            )
+            .await;
+        }
+
+        // 筆記寫入 notes repo（doc 子目錄；冪等覆寫）。
+        let src_notes = work.join("notes").join(&doc_id);
+        let dst_notes = notes.join(&doc_id);
+        if src_notes.exists() {
+            let _ = std::fs::create_dir_all(&dst_notes);
+            for entry in std::fs::read_dir(&src_notes).into_iter().flatten().flatten() {
+                let from = entry.path();
+                if from.is_file() {
+                    let name = entry.file_name();
+                    match std::fs::copy(&from, dst_notes.join(&name)) {
+                        Ok(_) => {
+                            total_notes += 1;
+                            written.push(dst_notes.join(&name).to_string_lossy().into_owned());
+                        }
+                        Err(e) => {
+                            let m = L10n::new("factory.fileError")
+                                .p("file", name.to_string_lossy().into_owned())
+                                .p("detail", e.to_string());
+                            errors.push(m);
+                        }
+                    }
+                }
+            }
+        }
+        // 預覽頁：每篇筆記一頁（doc 子目錄；前端可編輯後覆寫）。
+        for entry in std::fs::read_dir(&dst_notes).into_iter().flatten().flatten() {
+            let p2 = entry.path();
+            if let Some(stem) = p2.file_stem().and_then(|s| s.to_str()) {
+                if let Ok(md) = std::fs::read_to_string(&p2) {
+                    pages.push(PreviewPage {
+                        slug: stem.into(),
+                        target_dir: format!("{doc_id}/"),
+                        name: stem.into(),
+                        markdown: md,
+                    });
+                }
+            }
+        }
+        let doc_dir = format!("{doc_id}/");
+        pf.pages = pages
+            .iter()
+            .filter(|pg| pg.target_dir == doc_dir)
+            .cloned()
+            .collect();
+        files.push(pf);
+        std::fs::remove_dir_all(&work).ok();
+    }
+
+    let total = total_notes;
+    let sample: Vec<PreviewPage> = pages.iter().take(6).cloned().collect();
+    Ok(PreviewResult {
+        factory: "pdf-knowledge".into(),
+        summary: L10n::new("factory.pdfDone").p("n", total),
+        sample,
+        total,
+        written,
+        errors,
+        files,
+    })
 }
 
 async fn run_people(

@@ -15,6 +15,23 @@
 
 ## [Unreleased]
 
+### Drag-and-drop does everything: the factory PDF flow now runs the knowledge pipeline
+
+- `run_core` routes all-PDF batches to the knowledge pipeline
+  automatically - no separate button. Dragging a PDF into the factory
+  (personal GUI or enterprise user frontend, which share `run_core`)
+  now: complexity-routes the conversion (millisecond fast path for
+  simple PDFs, MinerU for complex ones), writes section-chunked notes
+  plus one note per figure into the notes repo, merges the figure
+  sidecar into the production figures.sqlite (doc-level idempotent,
+  vectors carried by image_md5), and backfills vectors best-effort.
+- Source attribution resolves from the notes-repo registration
+  (best-effort; untagged figures stay invisible to fusion until filed).
+- i18n summary key `factory.pdfDone` (zh-TW/zh-CN/en).
+- Real-machine verification (real_factory_pdf_drag_flow, #[ignore]):
+  dragging mueller2016.pdf wrote 36 knowledge notes (27 text + 9
+  figure) with zero errors and all 9 sidecar rows vectorized.
+
 ### PDF ingestion endpoints - the loop is reachable from the frontends
 
 - `POST /api/knowledge/ingest-pdf` (Req::User): `{pdf, source_id?,
