@@ -173,11 +173,12 @@ of configuring it; third-party clouds are **blocked unless you opt in** — and
 every conversion records where its data went.
 
 **Multimodal, on your terms.** Embedding runs on your own llama-server. With
-the optional mmproj projector, figure items upgrade to joint caption+image
-vectors in one unified embedding space — a plain-text query can find the right
-chart even when its caption says almost nothing. The upgrade is detected and
-surfaced in-app (figure-vectored retrieval is landing next), so you always know
-which mode you are in.
+the optional mmproj projector, figures are indexed as joint caption+image
+vectors in one unified embedding space — a plain-text query finds the right
+chart even when its caption says almost nothing. Without it, figures are still
+first-class retrievable items by caption, section, and page. The app detects
+and surfaces which mode you are in, and upgrading only re-embeds the (small)
+figure sidecar.
 
 ## Core concepts
 
