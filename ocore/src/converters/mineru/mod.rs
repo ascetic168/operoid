@@ -1,6 +1,6 @@
 //! K1 MinerU converter——複雜 PDF → gbrain-legal 知識管線（計畫 §K1）。
 //!
-//! ```
+//! ```text
 //! PDF ──分流（router：S1–S4 訊號）──► MinerU（ladder 階梯取用；zip 輸出）
 //!                                       ├─ structured_content.json 解析（structured）
 //!                                       ├─ 章節切塊（chunk；實驗 V3-t 語意）
