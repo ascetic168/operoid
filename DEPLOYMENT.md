@@ -48,6 +48,14 @@
 模型 GGUF（`llama-server:embeddinggemma-2`，Apache 2.0）取自
 [ggml-org/embeddinggemma-2-GGUF](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF)
 （上游 [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)）。
+
+> **為何選 llama.cpp**：截至本文撰寫時，Google 推出的 EmbeddingGemma 2 太新，
+> 許多推理引擎尚未全面支援——ollama 提供的 GGUF 檔須有 MLX（Apple Silicon）才能執行，
+> Windows 環境走不通；故本專案選回 llama.cpp，並採用
+> [當下最新的開發版 build](https://github.com/ggml-org/llama.cpp/releases)。
+> 模型 GGUF 下載位置：[ggml-org/embeddinggemma-2-GGUF](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF)
+> （上游 [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)）。
+
 建腦與檢索前須先啟動：
 
 ```bash
