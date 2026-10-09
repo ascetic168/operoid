@@ -15,6 +15,28 @@
 
 ## [Unreleased]
 
+### Enterprise web: inline retrieved figures and source-PDF links
+
+- The three enterprise web frontends now render the deterministic
+  `圖檔：` / `原論文 PDF：` reply lines (shared `MarkdownText` in
+  `@front/ui`): figure lines render as inline images fed with
+  short-lived signed URLs, and source-PDF lines render as a pill link.
+- New `GET /api/media/source-pdf` (Req::User) streams the registered
+  source PDF (`Content-Type: application/pdf`, `Content-Disposition:
+  inline`): the `figure_docs` table is the allowlist — `doc_id` or
+  exact `path` lookup, and the file is always read from the stored
+  row string (client strings never touch the filesystem). Docs with
+  figure rows additionally go through knowledge-weave M1
+  authorization, mirroring `POST /api/media/figure-urls`.
+- Web auth has no cookies (memory-held Bearer tokens), so
+  `ChatView` (user/manager) and `KnowledgeAskView` batch-sign figure
+  paths via `POST /api/media/figure-urls` (re-signing before the
+  5-minute TTL lapses) and open source PDFs via Bearer fetch → blob →
+  new tab; `<img>`/`<a>` elements cannot carry headers.
+- RBAC matrix covers the new route (non-public, 401 unauthenticated,
+  403 cross-role); handler tests cover parameter validation,
+  unregistered docs, the happy path, and M1 denial.
+
 ### Chat replies carry retrieved figures and the source PDF
 
 - Employee chat replies now deterministically append what retrieval

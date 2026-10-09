@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ApiError, api } from '@front/api-client'
-import { ErrorBox, MarkdownText } from '@front/ui'
+import { ErrorBox, MarkdownText, figureImagePaths } from '@front/ui'
 import { useI18n } from 'vue-i18n'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -189,6 +189,7 @@ async function poll(): Promise<void> {
     error.value = ''
     offline.value = false
     forbidden.value = false
+    void syncFigureUrls()
     await nextTick()
     scrollToBottom()
   } catch (e) {
@@ -259,6 +260,50 @@ async function reject(id: string): Promise<void> {
   }
 }
 
+// ── 檢索圖片行內顯示：批量簽名 URL（<img> 帶不了 Bearer → 既有媒體簽名通道）──
+const signedFigures = ref<Record<string, { url: string; exp: number }>>({})
+const imageUrlMap = computed<Record<string, string>>(() =>
+  Object.fromEntries(Object.entries(signedFigures.value).map(([p, v]) => [p, v.url])),
+)
+
+/** 回覆帶 `圖檔：` 行時，把尚未簽名／快過期（TTL 300s，留 60s 緩衝）的路徑
+ *  批量送 POST /api/media/figure-urls（M1 授權在簽名前過）；失敗不擋對話。 */
+async function syncFigureUrls(): Promise<void> {
+  const now = Math.floor(Date.now() / 1000)
+  const need = new Set<string>()
+  for (const m of w.value?.messages ?? []) {
+    if (m.direction !== 'out') continue
+    for (const p of figureImagePaths(m.text)) {
+      if (!(p in signedFigures.value) || signedFigures.value[p].exp < now + 60) need.add(p)
+    }
+  }
+  if (need.size === 0) return
+  try {
+    const r = await api.post<{
+      urls: Array<{ path: string; authorized: boolean; url?: string; exp?: number }>
+    }>('/api/media/figure-urls', { paths: [...need] })
+    const next = { ...signedFigures.value }
+    for (const u of r.urls) {
+      if (u.authorized && u.url && u.exp) next[u.path] = { url: u.url, exp: u.exp }
+    }
+    signedFigures.value = next
+  } catch {
+    /* 簽名失敗 → 圖片退回純文字行，下一輪輪詢再試 */
+  }
+}
+
+// ── 來源 PDF：GET /api/media/source-pdf 為 Req::User → Bearer fetch→blob 開新分頁──
+async function openPdf(path: string): Promise<void> {
+  try {
+    const blob = await api.getBlob('/api/media/source-pdf?path=' + encodeURIComponent(path))
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } catch (e) {
+    actionError.value = e instanceof ApiError ? e.code : 'server.offline'
+  }
+}
+
 onMounted(() => {
   void poll()
   // 輪詢為主（訊息＋tool_call 過程）；SSE 事件由事件流頁呈現。
@@ -320,10 +365,13 @@ onBeforeUnmount(() => {
             <!-- 訊息氣泡 -->
             <div v-else class="msg" :class="item.msg.direction === 'in' ? 'mine' : 'theirs'">
               <div class="bubble">
-                <!-- 員工回覆：Markdown（共用元件內部 marked→DOMPurify 消毒） -->
+                <!-- 員工回覆：Markdown（共用元件內部 marked→DOMPurify 消毒）；
+                     檢索圖片以簽名 URL 行內顯示、來源 PDF 經 openPdf（Bearer fetch→blob） -->
                 <MarkdownText
                   v-if="item.msg.direction === 'out'"
                   :text="item.msg.text"
+                  :image-urls="imageUrlMap"
+                  @open-pdf="openPdf"
                 />
                 <p v-else class="txt">{{ item.msg.text }}</p>
                 <p v-if="item.msg.proposed_commitment_id" class="muted">📎 {{ t('chat.proposed') }}</p>

@@ -124,6 +124,31 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
   return handle<T>(resp)
 }
 
+/** Bearer GET → Blob（來源 PDF 等 binary 面）——401/403 紀律與 request() 一致：
+ *  401 清 session 並通知監聽者（導回登入），403 丟 ApiError 交頁面呈現。 */
+async function requestBlob(path: string): Promise<Blob> {
+  let resp: Response
+  try {
+    resp = await fetch(baseUrl + path, {
+      headers: token ? { authorization: 'Bearer ' + token } : {},
+    })
+  } catch {
+    throw new OfflineError()
+  }
+  if (resp.status === 401) {
+    const had = token !== null
+    clearSession()
+    if (had) unauthorizedListeners.forEach((f) => f())
+    throw new ApiError('auth.unauthorized', 401)
+  }
+  if (!resp.ok) {
+    const b = await safeBody(resp)
+    if (resp.status === 403) throw new ApiError(b?.code ?? 'auth.forbidden', 403, b?.params)
+    throw new ApiError(b?.code ?? 'server.internal', resp.status, b?.params)
+  }
+  return resp.blob()
+}
+
 /** multipart 檔案上傳（工廠暫存）——瀏覽器自帶 boundary；401/403 契約與 request 一致。 */
 export async function upload<T>(path: string, form: FormData): Promise<T> {
   let resp: Response
@@ -168,6 +193,7 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
+  getBlob: (path: string) => requestBlob(path),
   upload: <T>(path: string, form: FormData) => upload<T>(path, form),
 }
 
