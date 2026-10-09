@@ -15,6 +15,29 @@
 
 ## [Unreleased]
 
+### K5 - Generation-side image reading with honest locator degradation (P1 3/3)
+
+- **llm layer goes multimodal**: `ChatMessage` carries `images` (data
+  URIs / URLs); the wire serializes them as OpenAI content-parts
+  (`[{type:text},{type:image_url}]`), text-only messages stay plain
+  strings (back-compat).
+- **Honest degradation, both directions**:
+  - provider rejects multimodal content (400) -> the chat layer strips
+    images, appends the locator directive
+    (`[圖片提示｜visual_unreadable] ...指向文件/頁/圖號/圖檔路徑，勿推測`),
+    and retries once - the turn never fails;
+  - chat endpoint has no vision model -> the agent loop probes VLM
+    capability once per endpoint (K6 doctor, cached) and goes to locator
+    mode directly; the legacy flat-protocol loop (no message parts)
+    also goes locator-only.
+- **Plumbing**: `ToolOutput.images` carries retrieved figure paths
+  (capped at 4) from the K4 fused output; the knowledge search/think
+  tools propagate them as `TurnAction::ContinueImages`; the native loop
+  attaches data URIs when VLM-capable, the legacy loop degrades.
+- Tests: content-parts serialization + 400->locator fallback against a
+  body-capturing stub (llm.rs), VLM probe HTTP round trip
+  (accepting/rejecting stubs, cache behavior) in doctor.
+
 ### Fusion degradation hardening - no multimodal embedding / no VLM never errors
 
 - Embedding-query fast fail: the sidecar query embed (on the employee

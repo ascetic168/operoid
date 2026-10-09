@@ -170,6 +170,7 @@ impl Tool for SendTool {
                     return Ok(ToolOutput {
                         text: "外發失敗：沒有可用的來源通道——主動發送請在 params 提供 source（如 \"email\"）。"
                             .into(),
+images: Vec::new(),
                         meta: json!({"outcome": "error", "reason": "no source"}),
                     })
                 }
@@ -179,6 +180,7 @@ impl Tool for SendTool {
                 Err(e) => {
                     return Ok(ToolOutput {
                         text: format!("外發失敗：{e}"),
+images: Vec::new(),
                         meta: json!({"outcome": "error", "reason": e}),
                     })
                 }
@@ -201,6 +203,7 @@ impl Tool for SendTool {
             Ok(ToolOutput {
                 text: desc,
                 meta,
+                images: Vec::new(),
             })
         })
     }

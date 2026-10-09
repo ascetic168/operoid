@@ -132,7 +132,7 @@ async fn m1_t2_cross_department_allow_and_restrict() {
     assert!(dave.text.contains("HR"), "hr 白名單：{}", dave.text);
     assert!(dave.text.contains("Common"));
     assert!(!dave.text.contains("Quality"));
-    let _ = ToolOutput { text: String::new(), meta: serde_json::json!({}) };
+    let _ = ToolOutput { text: String::new(), meta: serde_json::json!({}), images: Vec::new() };
 }
 
 /// **C7b**：attrs 富集——store 內 principal 列的屬性疊加進 AccessContext（D-C7b）；

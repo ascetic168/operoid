@@ -500,7 +500,7 @@ pub async fn embed_pending(
 }
 
 /// 讀圖檔 → data URI（jpg/png；其他副檔名以 jpeg 試探）。
-fn read_image_data_uri(path: &str) -> Option<String> {
+pub(crate) fn read_image_data_uri(path: &str) -> Option<String> {
     let p = Path::new(path);
     let bytes = std::fs::read(p).ok()?;
     let mime = match p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()) {

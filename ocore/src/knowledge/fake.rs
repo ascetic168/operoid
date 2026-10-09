@@ -80,6 +80,7 @@ impl KnowledgeBackend for FakeBackend {
                     "sources_with_hits": used,
                     "count": lines.len(),
                 }),
+                images: Vec::new(),
             })
         })
     }

@@ -451,6 +451,59 @@ mod tests {
         assert!(!s.degraded(), "嵌入離線是未知不是缺失——不提示");
     }
 
+    /// K5/K6：VLM 探測 HTTP 回圈——接受圖的端點 → Some(true) 並按端點快取；
+    /// 拒圖的端點 → Some(false)（定位者模式）。快取鍵含隨機埠（唯一）——
+    /// 不 clear（全域快取的 clear 會與平行測試競態）。
+    #[tokio::test]
+    async fn vlm_probe_round_trip() {
+        use axum::{extract::State, routing::post, Json};
+        use std::sync::Arc as StdArc;
+        // 接受圖的 stub：回 content。
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            post(|Json(_): Json<serde_json::Value>| async {
+                Json(serde_json::json!({
+                    "choices": [{"message": {"content": "red"}}]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let ok_base = format!("http://{addr}");
+        let h = probe_chat_vlm(&ok_base, "vision-model").await;
+        assert_eq!(
+            h.capable,
+            Some(true),
+            "error={:?} base={}",
+            h.error,
+            ok_base
+        );
+        assert!(!h.cached);
+        let h2 = probe_chat_vlm(&ok_base, "vision-model").await;
+        assert_eq!(h2.capable, Some(true));
+        assert!(h2.cached, "第二次應命中快取");
+
+        // 拒圖的 stub：400。
+        let app2 = axum::Router::new().route(
+            "/chat/completions",
+            post(|Json(_): Json<serde_json::Value>| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "image not supported"})),
+                )
+            }),
+        );
+        let listener2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener2, app2).await.unwrap() });
+        let bad_base = format!("http://{addr2}");
+        let h3 = probe_chat_vlm(&bad_base, "text-only-model").await;
+        assert_eq!(h3.capable, Some(false), "明確拒圖＝無 VLM（定位者模式）");
+        assert!(!h3.cached);
+        clear_vlm_cache();
+    }
+
     /// **K6 實機**（#[ignore]：需本機 llama-server；手動跑）：
     /// `cargo test -p ocore real_doctor -- --ignored --nocapture`
     /// 驗收：reachable、vision（mmproj 已掛）、long_input_ok（`-b/-ub 8192` 紀律）、768 維。

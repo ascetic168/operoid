@@ -112,6 +112,7 @@ impl Tool for WriteNoteTool {
             let fail = |msg: String| {
                 Ok(ToolOutput {
                     text: format!("寫入失敗：{msg}"),
+images: Vec::new(),
                     meta: json!({"outcome": "error", "error": msg}),
                 })
             };
@@ -152,6 +153,7 @@ impl Tool for WriteNoteTool {
             }
             Ok(ToolOutput {
                 text: format!("已寫入筆記：{}", path.display()),
+images: Vec::new(),
                 meta: json!({"outcome": "written", "path": path.to_string_lossy()}),
             })
         })

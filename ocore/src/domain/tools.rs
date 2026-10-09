@@ -38,6 +38,9 @@ pub struct ToolInput {
 pub struct ToolOutput {
     pub text: String,
     pub meta: Value,
+    /// K5：檢索命中圖片的原圖絕對路徑（生成端讀圖用；上限 4，VLM 不在時由
+    /// 呼叫端降級為定位者指示）。非檢索工具恆為空。
+    pub images: Vec<String>,
 }
 
 /// Tool 執行脈絡（純資料，無 Tauri）。Phase 1 僅 gbrain 後端，故攜帶 gbrain exe 與

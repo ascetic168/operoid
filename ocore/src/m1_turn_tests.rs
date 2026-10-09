@@ -41,7 +41,7 @@ impl Tool for StubTool {
     fn invoke<'a>(&'a self, _input: ToolInput, _ctx: &'a ToolCtx) -> ToolFuture<'a> {
         let text = self.canned.clone();
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Box::pin(async move { Ok(ToolOutput { text, meta: serde_json::json!({}) }) })
+        Box::pin(async move { Ok(ToolOutput { text, meta: serde_json::json!({}), images: Vec::new() }) })
     }
 }
 

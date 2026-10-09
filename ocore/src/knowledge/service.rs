@@ -149,6 +149,7 @@ impl KnowledgeService {
                     "policy_version": plan.policy_version,
                     "receipt_kind": kind_str,
                 }),
+                images: Vec::new(),
             });
         }
 
@@ -277,6 +278,17 @@ impl KnowledgeService {
             merged.len(),
             access.clearance,
         )?;
+        // K5：命中圖片的原圖路徑（上限 4）——生成端 VLM 讀圖／定位者模式消費。
+        let figure_images: Vec<String> = merged
+            .iter()
+            .filter_map(|(it, _)| match it {
+                FusionItem::Figure(f) => {
+                    f.image_path.clone().filter(|p| !p.trim().is_empty())
+                }
+                _ => None,
+            })
+            .take(4)
+            .collect();
         Ok(ToolOutput {
             text,
             meta: json!({
@@ -288,6 +300,7 @@ impl KnowledgeService {
                 "fused_items": merged.len(),
                 "sidecar": sidecar_meta,
             }),
+            images: figure_images,
         })
     }
 

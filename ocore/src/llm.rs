@@ -62,22 +62,46 @@ pub struct ChatMessage {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
     pub tool_call_id: Option<String>,
+    /// K5：附帶圖片（data URI 或 http URL；OpenAI content-parts 形）。
+    /// 非空時 wire content 以 parts 陣列序列化；provider 拒收（400）時 `chat`
+    /// 自動降級為純文字＋定位者指示重試一次。
+    pub images: Vec<String>,
 }
 
 impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
-        Self { role: ChatRole::System, content: content.into(), tool_calls: Vec::new(), tool_call_id: None }
+        Self { role: ChatRole::System, content: content.into(), tool_calls: Vec::new(), tool_call_id: None, images: Vec::new() }
     }
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: ChatRole::User, content: content.into(), tool_calls: Vec::new(), tool_call_id: None }
+        Self { role: ChatRole::User, content: content.into(), tool_calls: Vec::new(), tool_call_id: None, images: Vec::new() }
     }
     pub fn assistant(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
-        Self { role: ChatRole::Assistant, content: content.into(), tool_calls, tool_call_id: None }
+        Self { role: ChatRole::Assistant, content: content.into(), tool_calls, tool_call_id: None, images: Vec::new() }
     }
     pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: ChatRole::Tool, content: content.into(), tool_calls: Vec::new(), tool_call_id: Some(call_id.into()) }
+        Self { role: ChatRole::Tool, content: content.into(), tool_calls: Vec::new(), tool_call_id: Some(call_id.into()), images: Vec::new() }
+    }
+    /// K5：帶圖片的工具結果（生成端讀圖；provider 拒收時呼叫層自動降級定位者）。
+    pub fn tool_with_images(
+        call_id: impl Into<String>,
+        content: impl Into<String>,
+        images: Vec<String>,
+    ) -> Self {
+        Self {
+            role: ChatRole::Tool,
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some(call_id.into()),
+            images,
+        }
     }
 }
+
+/// K5 定位者指示——provider 拒收多模態 content（或端點無 VLM）時，附加在
+/// 工具結果之後：誠實降級為「定位者」（指向圖，不推測像素內容；C7/§K5）。
+pub const LOCATOR_DIRECTIVE: &str =
+    "
+[圖片提示｜visual_unreadable] 本環境無法讀取圖片像素：若答案需要圖中內容，     請指出「文件／頁碼／圖號／圖檔路徑」引導使用者開圖確認，勿推測圖中數值。";
 
 /// 一次 `chat` 的結果：文字（無工具呼叫時）＋工具呼叫＋finish 原因＋usage。
 #[derive(Debug, Clone)]
@@ -131,20 +155,44 @@ struct WireToolCallFn<'a> {
 struct WireMessage<'a> {
     role: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<&'a str>,
+    content: Option<WireContent<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<WireToolCallRef<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<&'a str>,
 }
 
+/// K5：訊息內容的兩種 wire 形——純文字（回溯相容）或 OpenAI content-parts
+/// （文字＋圖片；`untagged` 讓兩者都序列化為正確形狀）。
 #[derive(Serialize)]
+#[serde(untagged)]
+enum WireContent<'a> {
+    Text(&'a str),
+    Parts(Vec<WirePart<'a>>),
+}
+
+#[derive(Serialize)]
+struct WirePart<'a> {
+    #[serde(rename = "type")]
+    typ: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_url: Option<WireImageUrl<'a>>,
+}
+
+#[derive(Serialize)]
+struct WireImageUrl<'a> {
+    url: &'a str,
+}
+
+#[derive(Clone, Serialize)]
 struct WireTool<'a> {
     #[serde(rename = "type")]
     typ: &'static str,
     function: WireToolFn<'a>,
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct WireToolFn<'a> {
     name: &'a str,
     description: &'a str,
@@ -318,8 +366,8 @@ pub async fn complete(
     let body = ChatRequest {
         model: &endpoint.model,
         messages: vec![
-            WireMessage { role: "system", content: Some(system), tool_calls: None, tool_call_id: None },
-            WireMessage { role: "user", content: Some(user), tool_calls: None, tool_call_id: None },
+            WireMessage { role: "system", content: Some(WireContent::Text(system)), tool_calls: None, tool_call_id: None },
+            WireMessage { role: "user", content: Some(WireContent::Text(user)), tool_calls: None, tool_call_id: None },
         ],
         temperature: sampling.temperature,
         max_tokens: sampling.max_tokens,
@@ -341,46 +389,68 @@ pub async fn complete(
 ///
 /// `tools` 為空 → 請求體不含 `tools` 欄位（與 [`complete`] 等價的單發語意）。
 /// 模型回 tool_calls 時 `content` 常為 None／空；呼叫端以 tool_calls 優先。
+/// 單一訊息 → wire 形。帶圖時 content 以 parts 陣列呈現（text＋image_url）。
+fn build_wire_message(m: &ChatMessage) -> WireMessage<'_> {
+    let role = match m.role {
+        ChatRole::System => "system",
+        ChatRole::User => "user",
+        ChatRole::Assistant => "assistant",
+        ChatRole::Tool => "tool",
+    };
+    let content = if !m.images.is_empty() {
+        let mut parts: Vec<WirePart<'_>> = Vec::with_capacity(m.images.len() + 1);
+        if !m.content.is_empty() {
+            parts.push(WirePart {
+                typ: "text",
+                text: Some(m.content.as_str()),
+                image_url: None,
+            });
+        }
+        for uri in &m.images {
+            parts.push(WirePart {
+                typ: "image_url",
+                text: None,
+                image_url: Some(WireImageUrl { url: uri }),
+            });
+        }
+        Some(WireContent::Parts(parts))
+    } else if m.content.is_empty() && m.role == ChatRole::Assistant {
+        None
+    } else {
+        Some(WireContent::Text(m.content.as_str()))
+    };
+    WireMessage {
+        role,
+        content,
+        tool_calls: if m.tool_calls.is_empty() {
+            None
+        } else {
+            Some(
+                m.tool_calls
+                    .iter()
+                    .map(|tc| WireToolCallRef {
+                        id: tc.id.as_str(),
+                        typ: "function",
+                        function: WireToolCallFn {
+                            name: tc.name.as_str(),
+                            arguments: tc.arguments.to_string(),
+                        },
+                    })
+                    .collect(),
+            )
+        },
+        tool_call_id: m.tool_call_id.as_deref(),
+    }
+}
+
 pub async fn chat(
     endpoint: &LlmEndpoint,
     sampling: &SamplingParams,
     messages: &[ChatMessage],
     tools: &[ToolDef],
 ) -> Result<LlmTurn> {
-    let wire_msgs: Vec<WireMessage<'_>> = messages
-        .iter()
-        .map(|m| WireMessage {
-            role: match m.role {
-                ChatRole::System => "system",
-                ChatRole::User => "user",
-                ChatRole::Assistant => "assistant",
-                ChatRole::Tool => "tool",
-            },
-            content: if m.content.is_empty() && m.role == ChatRole::Assistant {
-                None
-            } else {
-                Some(m.content.as_str())
-            },
-            tool_calls: if m.tool_calls.is_empty() {
-                None
-            } else {
-                Some(
-                    m.tool_calls
-                        .iter()
-                        .map(|tc| WireToolCallRef {
-                            id: tc.id.as_str(),
-                            typ: "function",
-                            function: WireToolCallFn {
-                                name: tc.name.as_str(),
-                                arguments: tc.arguments.to_string(),
-                            },
-                        })
-                        .collect(),
-                )
-            },
-            tool_call_id: m.tool_call_id.as_deref(),
-        })
-        .collect();
+    let has_images = messages.iter().any(|m| !m.images.is_empty());
+    let wire_msgs: Vec<WireMessage<'_>> = messages.iter().map(build_wire_message).collect();
     let wire_tools = if tools.is_empty() {
         None
     } else {
@@ -403,9 +473,42 @@ pub async fn chat(
         messages: wire_msgs,
         temperature: sampling.temperature,
         max_tokens: sampling.max_tokens,
-        tools: wire_tools,
+        tools: wire_tools.clone(),
     };
-    let v = post_chat(endpoint, &body, !tools.is_empty()).await?;
+    let v = match post_chat(endpoint, &body, !tools.is_empty()).await {
+        Ok(v) => v,
+        // K5 定位者降級：provider 拒收多模態 content（400）→ 剝除圖片＋注入
+        // 定位者指示，重試一次。管線任何階段不因「無 VLM／不支援讀圖」失效。
+        Err(e) if has_images && e.to_string().contains("非 2xx（400") => {
+            eprintln!(
+                "[llm] provider 拒收多模態 content（400）——降級為文字＋定位者指示重試"
+            );
+            let stripped: Vec<ChatMessage> = messages
+                .iter()
+                .map(|m| {
+                    let mut m = m.clone();
+                    if !m.images.is_empty() {
+                        m.images.clear();
+                        if !m.content.ends_with(LOCATOR_DIRECTIVE) {
+                            m.content.push_str(LOCATOR_DIRECTIVE);
+                        }
+                    }
+                    m
+                })
+                .collect();
+            let wire_msgs: Vec<WireMessage<'_>> =
+                stripped.iter().map(build_wire_message).collect();
+            let body = ChatRequest {
+                model: &endpoint.model,
+                messages: wire_msgs,
+                temperature: sampling.temperature,
+                max_tokens: sampling.max_tokens,
+                tools: wire_tools.clone(),
+            };
+            post_chat(endpoint, &body, !tools.is_empty()).await?
+        }
+        Err(e) => return Err(e),
+    };
     let chat: ChatResponse =
         serde_json::from_value(v).map_err(|e| anyhow!("LLM 回應解析失敗：{e}"))?;
     let choice = chat
@@ -509,6 +612,101 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         (format!("http://{addr}"), seen)
+    }
+
+    /// K5：捕獲請求體＋依腳本回狀態碼（供 400 降級斷言）。
+    async fn spawn_capture_stub(responses: Vec<u16>) -> (String, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let bodies: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let q: Arc<Mutex<VecDeque<u16>>> =
+            Arc::new(Mutex::new(responses.into_iter().collect()));
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            post(
+                move |State((bodies, q)): State<(Arc<Mutex<Vec<serde_json::Value>>>, Arc<Mutex<VecDeque<u16>>>)>,
+                      Json(body): Json<serde_json::Value>| {
+                    bodies.lock().unwrap().push(body);
+                    let code = q.lock().unwrap().pop_front().unwrap_or(200);
+                    async move {
+                        if code == 200 {
+                            (
+                                axum::http::StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "choices": [{"message": {"content": "done"}, "finish_reason": "stop"}],
+                                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                                })),
+                            )
+                        } else {
+                            (
+                                axum::http::StatusCode::from_u16(code).unwrap(),
+                                Json(serde_json::json!({"error": "bad content parts"})),
+                            )
+                        }
+                    }
+                },
+            )
+            .with_state((Arc::clone(&bodies), q)),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), bodies)
+    }
+
+    /// K5：帶圖訊息 → content-parts wire（text＋image_url）；純文字訊息保持字串形。
+    #[tokio::test]
+    async fn k5_images_serialize_as_content_parts() {
+        let (base, bodies) = spawn_capture_stub(vec![200]).await;
+        let ep = endpoint(&base);
+        let msgs = vec![
+            ChatMessage::system("s"),
+            ChatMessage::tool_with_images(
+                "call_1",
+                "檢索結果含圖",
+                vec!["data:image/jpeg;base64,QUJD".into()],
+            ),
+        ];
+        let res = chat(&ep, &sampling(), &msgs, &[]).await.unwrap();
+        assert_eq!(res.content.as_deref(), Some("done"));
+        let b = bodies.lock().unwrap();
+        assert_eq!(b.len(), 1);
+        let content = &b[0]["messages"][1]["content"];
+        assert!(content.is_array(), "帶圖訊息應以 parts 陣列呈現：{content}");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "檢索結果含圖");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/jpeg;base64,QUJD");
+        assert!(b[0]["messages"][0]["content"].is_string(), "純文字訊息保持字串形");
+    }
+
+    /// K5 定位者降級：provider 400 拒收 content-parts → 剝圖＋注入
+    /// visual_unreadable 指示重試一次；第二次請求為純文字。
+    #[tokio::test]
+    async fn k5_provider_400_falls_back_to_locator_text() {
+        let (base, bodies) = spawn_capture_stub(vec![400, 200]).await;
+        let ep = endpoint(&base);
+        let msgs = vec![
+            ChatMessage::system("s"),
+            ChatMessage::tool_with_images(
+                "call_1",
+                "檢索結果含圖",
+                vec!["data:image/jpeg;base64,QUJD".into()],
+            ),
+        ];
+        let res = chat(&ep, &sampling(), &msgs, &[]).await.unwrap();
+        assert_eq!(res.content.as_deref(), Some("done"));
+        let b = bodies.lock().unwrap();
+        assert_eq!(b.len(), 2, "首次 400 後應恰好重試一次");
+        assert!(b[0]["messages"][1]["content"].is_array(), "首問應帶圖");
+        let c2 = &b[1]["messages"][1]["content"];
+        assert!(c2.is_string(), "降級後應為純文字：{c2}");
+        assert!(
+            c2.as_str().unwrap().contains("visual_unreadable"),
+            "降級請求應含定位者指示：{c2}"
+        );
+        assert!(
+            !c2.as_str().unwrap().contains("image_url"),
+            "降級請求不得殘留圖片 parts"
+        );
     }
 
     fn endpoint(base: &str) -> LlmEndpoint {

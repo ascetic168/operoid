@@ -904,6 +904,43 @@ async fn run_conversational_turn(
                         steps.push(note.clone());
                         history.push(llm::ChatMessage::tool(&tc.id, note));
                     }
+                    Some(TurnAction::ContinueImages { note, images }) => {
+                        // K5：chat 端點 VLM 能力決定「讀圖作答」（原圖轉 data URI 掛
+                        // content-parts）或「定位者」降級（注入指示、標 visual_unreadable）。
+                        // 探測按端點快取（K6 doctor）——每端點僅首問付一次探測成本。
+                        let capable = !images.is_empty() && s.chat_vlm_capable().await;
+                        // steps 記錄與訊息本體共用 note——先算 steps 版再移動進訊息。
+                        let steps_note =
+                            format!("{note}{}", llm::LOCATOR_DIRECTIVE);
+                        let msg = if capable {
+                            let uris: Vec<String> = images
+                                .iter()
+                                .filter_map(|p| {
+                                    crate::knowledge::figures::read_image_data_uri(p)
+                                })
+                                .collect();
+                            if uris.is_empty() {
+                                llm::ChatMessage::tool(&tc.id, steps_note.clone())
+                            } else {
+                                llm::ChatMessage::tool_with_images(&tc.id, steps_note.clone(), uris)
+                            }
+                        } else {
+                            llm::ChatMessage::tool(&tc.id, steps_note.clone())
+                        };
+                        record_tool_call_event(
+                            store,
+                            &workspace_id,
+                            employee_id,
+                            step_idx,
+                            &tc.name,
+                            &tc.arguments,
+                            "ok",
+                            elapsed,
+                            if capable { "（附圖供讀取）" } else { "（visual_unreadable：定位者模式）" },
+                        );
+                        steps.push(steps_note);
+                        history.push(msg);
+                    }
                     Some(TurnAction::Finish) => {
                         record_tool_call_event(
                             store,
@@ -995,6 +1032,23 @@ async fn run_conversational_turn(
                     );
                     steps.push(note);
                 }
+                Some(TurnAction::ContinueImages { note, images }) => {
+                    // K5：legacy 扁平 prompt 無法掛 content-parts——一律定位者降級。
+                    let _ = images;
+                    let note = format!("{note}{}", llm::LOCATOR_DIRECTIVE);
+                    record_tool_call_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        step_idx,
+                        &act,
+                        &action,
+                        "ok",
+                        started.elapsed(),
+                        &note,
+                    );
+                    steps.push(note);
+                }
                 Some(TurnAction::Finish) => {
                     record_tool_call_event(
                         store,
@@ -1049,6 +1103,10 @@ async fn run_conversational_turn(
 enum TurnAction {
     /// 繼續迴圈；`note` 進 legacy steps／native tool 結果。
     Continue { note: String },
+    /// K5：繼續迴圈，且工具結果附帶檢索命中圖片（原圖絕對路徑）——native 協議
+    /// 依 chat 端點 VLM 能力決定「讀圖作答」（掛 content-parts）或「定位者」
+    /// （注入指示）；legacy 扁平協議一律定位者。
+    ContinueImages { note: String, images: Vec<String> },
     /// 結束回合。
     Finish,
 }
@@ -1131,6 +1189,23 @@ impl<'a> TurnSession<'a> {
     /// 執行一個員工動作（legacy JSON action 或 native function 呼叫；兩協議共用）。
     /// 回 `None`＝未知工具（呼叫端決定：native 回錯誤 note 續跑；legacy fail-safe 視同 finish）。
     /// M1：工具執行失敗一律以錯誤 note 回給模型（繼續迴圈、模型可自癒），不再硬失敗整個回合。
+    /// K5：chat 端點的 VLM 能力（doctor 1 圖探測、按端點快取——每端點僅首問
+    /// 付一次探測成本）。探測失敗（無端點／無 key／模型不支援）＝false → 定位者。
+    async fn chat_vlm_capable(&self) -> bool {
+        let Ok(loaded) = crate::gbrain_config::load_for(self.ctx.gbrain_home.as_deref()) else {
+            return false;
+        };
+        let Ok(ep) = crate::gbrain_config::resolve_endpoint(&loaded.config) else {
+            return false;
+        };
+        matches!(
+            crate::knowledge::doctor::probe_chat_vlm(&ep.base_url, &ep.model)
+                .await
+                .capable,
+            Some(true)
+        )
+    }
+
     async fn execute_tool_call(
         &mut self,
         name: &str,
@@ -1162,9 +1237,12 @@ impl<'a> TurnSession<'a> {
                     }
                 };
                 let snippet = self.take(&output.text);
-                Some(TurnAction::Continue {
-                    note: format!("[search「{query}」] 結果（節錄）：{snippet}"),
-                })
+                let note = format!("[search「{query}」] 結果（節錄）：{snippet}");
+                if output.images.is_empty() {
+                    Some(TurnAction::Continue { note })
+                } else {
+                    Some(TurnAction::ContinueImages { note, images: output.images })
+                }
             }
             "think" | "gbrain_think" => {
                 let query = args
@@ -1207,9 +1285,12 @@ impl<'a> TurnSession<'a> {
                     }
                 }
                 let snippet = self.take(&output.text);
-                Some(TurnAction::Continue {
-                    note: format!("[think「{query}」] 證據（節錄）：{snippet}"),
-                })
+                let note = format!("[think「{query}」] 證據（節錄）：{snippet}");
+                if output.images.is_empty() {
+                    Some(TurnAction::Continue { note })
+                } else {
+                    Some(TurnAction::ContinueImages { note, images: output.images })
+                }
             }
             // W3（D-H2/D-H3）：把完整產出寫成筆記檔——專屬產出目錄（不入圖譜）、
             // allowlist 閘門（無權限回報員工，仿 SendTool 未啟用語意）。
@@ -2634,7 +2715,7 @@ impl Tool for GbrainThinkTool {
                 match mcp.call("think", args).await {
                     Ok(text) => {
                         let meta = parse_think_meta(&text);
-                        return Ok(ToolOutput { text, meta });
+                        return Ok(ToolOutput { text, meta, images: Vec::new() });
                     }
                     Err(e) => eprintln!("[runtime] gbrain think 走 MCP 失敗（fallback CLI）: {e}"),
                 }
@@ -2675,7 +2756,7 @@ impl Tool for GbrainThinkTool {
                 anyhow::bail!("gbrain think failed (exit {code}): {}", stderr.trim());
             }
             let meta = parse_think_meta(&stdout);
-            Ok(ToolOutput { text: stdout, meta })
+            Ok(ToolOutput { text: stdout, meta, images: Vec::new() })
         })
     }
 }
@@ -2720,7 +2801,7 @@ impl Tool for GbrainSearchTool {
                     .call("query", serde_json::json!({ "query": input.query, "limit": 10 }))
                     .await
                 {
-                    Ok(text) => return Ok(ToolOutput { text, meta: serde_json::json!({}) }),
+                    Ok(text) => return Ok(ToolOutput { text, meta: serde_json::json!({}), images: Vec::new() }),
                     Err(e) => eprintln!("[runtime] gbrain query 走 MCP 失敗（fallback CLI）: {e}"),
                 }
             }
@@ -2745,7 +2826,7 @@ impl Tool for GbrainSearchTool {
             if code != 0 && stdout.trim().is_empty() {
                 anyhow::bail!("gbrain query failed (exit {code}): {}", stderr.trim());
             }
-            Ok(ToolOutput { text: stdout, meta: serde_json::json!({}) })
+            Ok(ToolOutput { text: stdout, meta: serde_json::json!({}), images: Vec::new() })
         })
     }
 }
@@ -3317,6 +3398,7 @@ mod tests {
                 Ok(ToolOutput {
                     text,
                     meta: serde_json::json!({"stub": true}),
+                    images: Vec::new(),
                 })
             })
         }
@@ -3346,7 +3428,7 @@ mod tests {
             let text = self.canned.clone();
             Box::pin(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                Ok(ToolOutput { text, meta: serde_json::json!({}) })
+                Ok(ToolOutput { text, meta: serde_json::json!({}), images: Vec::new() })
             })
         }
     }
@@ -4732,7 +4814,7 @@ mod tests {
             fn invoke<'a>(&'a self, _i: ToolInput, _c: &'a ToolCtx) -> ToolFuture<'a> {
                 assert!(self.state.request_stop(&self.emp_id), "busy 中應受理");
                 Box::pin(async move {
-                    Ok(ToolOutput { text: "ok".into(), meta: serde_json::json!({}) })
+                    Ok(ToolOutput { text: "ok".into(), meta: serde_json::json!({}), images: Vec::new() })
                 })
             }
         }
@@ -5261,7 +5343,7 @@ todos: Vec::new(),                updated_at: "t".into(),
         fn invoke<'a>(&'a self, _input: ToolInput, _ctx: &'a ToolCtx) -> ToolFuture<'a> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             let text = if n < self.switch_after { self.barren.clone() } else { self.good.clone() };
-            Box::pin(async move { Ok(ToolOutput { text, meta: serde_json::json!({}) }) })
+            Box::pin(async move { Ok(ToolOutput { text, meta: serde_json::json!({}), images: Vec::new() }) })
         }
     }
 
