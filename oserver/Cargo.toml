@@ -7,6 +7,7 @@ authors = ["朱國棟 (Charlie Chu)"]
 license = "MIT"
 
 [dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
 ocore = { path = "../ocore" }
 # multipart：工廠檔案上傳暫存（企業模式——瀏覽器前端無本機路徑可交 run/classify）。
 axum = { version = "0.8", features = ["multipart"] }

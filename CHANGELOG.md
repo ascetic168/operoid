@@ -60,6 +60,17 @@
   dragging mueller2016.pdf wrote 36 knowledge notes (27 text + 9
   figure) with zero errors and all 9 sidecar rows vectorized.
 
+### Enterprise figure-image service endpoint (allowlist-secured)
+
+- `GET /api/knowledge/figure-image?path=…` (Req::User): serves retrieved
+  figure images - **allowlist rule: only paths registered in the sidecar
+  `figures` table are served** (path traversal is structurally blocked:
+  unfiled = unauthorized). Content-Type by extension, private caching.
+- RBAC matrix at User tier + inventory. Enterprise browser image
+  rendering stays pending until the auth surface supports cookie/signed
+  URLs for <img> requests (text citations [[...]] already render via the
+  shared wikilink tokenizer).
+
 ### PDF ingestion endpoints - the loop is reachable from the frontends
 
 - `POST /api/knowledge/ingest-pdf` (Req::User): `{pdf, source_id?,

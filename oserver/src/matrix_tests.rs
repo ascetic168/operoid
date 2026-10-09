@@ -144,6 +144,7 @@ const INVENTORY: &[(&str, &str)] = &[
     // K5/P1：PDF 知識入庫（user 上傳面）
     ("POST", "/api/knowledge/ingest-pdf"),
     ("GET", "/api/knowledge/ingest-pdf/{id}"),
+    ("GET", "/api/knowledge/figure-image"),
     // K6 精簡能力狀態（Req::User——上傳面提示）
     ("GET", "/api/knowledge/caps"),
     // R3 新增

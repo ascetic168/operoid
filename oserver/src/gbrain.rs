@@ -88,6 +88,8 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
             "/api/knowledge/ingest-pdf/{id}",
             get(api_knowledge_ingest_status),
         )
+        // K5/P1：檢索命中圖片的安全服務（Req::User——只服務 sidecar 登記過的路徑）
+        .route("/api/knowledge/figure-image", get(api_knowledge_figure_image))
         .layer(crate::routes::cors_layer())
 }
 
@@ -1816,6 +1818,91 @@ async fn api_knowledge_ingest_status(
         None => (
             StatusCode::NOT_FOUND,
             Json(json!({"code": "ingest.notFound", "detail": id})),
+        )
+            .into_response(),
+    }
+}
+
+
+/// `GET /api/knowledge/figure-image?path=…`——檢索命中圖片的安全服務。
+/// **allowlist 鐵律**：只服務 sidecar `figures` 表中登記過 `image_path` 的檔案
+/// （路徑攻擊天然被擋：未入庫＝未授權）。回圖位元組＋Content-Type。
+async fn api_knowledge_figure_image(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let Some(path) = q.get("path").cloned() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": "figure.pathRequired"})),
+        )
+            .into_response();
+    };
+    let cfg = match load_cfg(&state) {
+        Ok(c) => c,
+        Err(e) => return err_response(&e),
+    };
+    let figures_db = cfg
+        .figures_db_path
+        .clone()
+        .unwrap_or_else(|| {
+            ocore::knowledge::ingest::default_figures_db(std::path::Path::new(
+                cfg.notes_repo_path.trim_end_matches('/'),
+            ))
+            .to_string_lossy()
+            .into_owned()
+        });
+    // 登記查驗（allowlist）。
+    let registered = std::path::Path::new(&figures_db).is_file()
+        && rusqlite::Connection::open(&figures_db)
+            .and_then(|db| {
+                db.query_row(
+                    "SELECT COUNT(*) FROM figures WHERE image_path = ?1",
+                    [&path],
+                    |r| r.get::<_, i64>(0),
+                )
+            })
+            .map(|n| n > 0)
+            .unwrap_or(false);
+    if !registered {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "figure.notRegistered"})),
+        )
+            .into_response();
+    }
+    let p = std::path::Path::new(&path);
+    let mime = match p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        _ => "image/jpeg",
+    };
+    match tokio::fs::read(p).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, mime.to_string()),
+                (
+                    axum::http::header::CACHE_CONTROL,
+                    "private, max-age=86400".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "figure.fileMissing"})),
         )
             .into_response(),
     }
