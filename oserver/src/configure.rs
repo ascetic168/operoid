@@ -119,6 +119,7 @@ fn build_toml(
             exe_path: if gbrain_exe.is_empty() { None } else { Some(gbrain_exe.to_string()) },
         },
         ingress: Default::default(),
+        knowledge: Default::default(),
     }
 }
 

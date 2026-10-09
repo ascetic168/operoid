@@ -200,6 +200,26 @@ pub struct AppConfig {
     /// gbrain 子行程自動繼承）。僅鍵存在於殼層環境者會被快照。
     #[serde(default)]
     pub llm_env: std::collections::BTreeMap<String, String>,
+    /// K1：PDF 轉換路由政策 `auto`（預設；S1–S4 訊號分流）／`always_fast`／`always_mineru`。
+    #[serde(default)]
+    pub pdf_convert_policy: Option<String>,
+    /// K1：MinerU 取用階梯第 1 級——完整可執行路徑或命令模板（venv launcher exe、
+    /// `conda run -n m mineru-kit`）。缺省 → PATH 找 `mineru-kit` → 遠端 → 降級 pdf_extract。
+    #[serde(default)]
+    pub mineru_command: Option<String>,
+    /// K1：MinerU 解析檔位 flash／basic（預設）／standard。
+    #[serde(default)]
+    pub mineru_tier: Option<String>,
+    /// K1：遠端解析——自架 mineru-kit api-server URL（private 信任層：設定即同意）。
+    #[serde(default)]
+    pub mineru_remote_url: Option<String>,
+    /// K1：遠端解析——mineru.net API key（public 信任層：須 allow_public_egress 才生效）。
+    #[serde(default)]
+    pub mineru_api_key: Option<String>,
+    /// K1：egress 信任分層閘門——public 第三方雲（mineru.net 等）預設擋（false）。
+    /// private 自設端點不受此閘門連坐（設定本身即同意）。
+    #[serde(default)]
+    pub allow_public_egress: bool,
 }
 
 fn default_true() -> bool {
@@ -277,6 +297,22 @@ impl AppConfig {
     /// 作用中腦的 GBRAIN_HOME 值（None = 預設腦，不設 env）。
     pub fn active_env_home(&self) -> Option<&str> {
         self.active_brain().and_then(|b| b.env_home())
+    }
+
+    /// K1：PDF 轉換設定（複雜度分流＋MinerU 取用階梯＋egress 信任分層）。
+    pub fn convert_config(&self) -> crate::converters::mineru::ConvertConfig {
+        crate::converters::mineru::ConvertConfig {
+            policy: self
+                .pdf_convert_policy
+                .as_deref()
+                .map(crate::converters::mineru::router::ConvertPolicy::parse)
+                .unwrap_or(crate::converters::mineru::router::ConvertPolicy::Auto),
+            mineru_command: self.mineru_command.clone(),
+            mineru_tier: self.mineru_tier.clone().unwrap_or_else(|| "basic".into()),
+            mineru_remote_url: self.mineru_remote_url.clone(),
+            mineru_api_key: self.mineru_api_key.clone(),
+            allow_public_egress: self.allow_public_egress,
+        }
     }
 
     /// 一次性、冪等的 migration：種預設腦、吸收舊 gbrain_home_override、修正 active。
@@ -385,6 +421,12 @@ impl Default for AppConfig {
             server_executable: None,
             prereq_cache: None,
             llm_env: std::collections::BTreeMap::new(),
+            pdf_convert_policy: None,
+            mineru_command: None,
+            mineru_tier: None,
+            mineru_remote_url: None,
+            mineru_api_key: None,
+            allow_public_egress: false,
         };
         cfg.normalize();
         cfg

@@ -47,6 +47,7 @@ pub struct OperoidToml {
     pub llm: LlmSection,
     pub gbrain: GbrainSection,
     pub ingress: IngressSection,
+    pub knowledge: KnowledgeSection,
 }
 
 /// `[server]`——bind 位址／port／master token／前端靜態檔目錄。
@@ -93,6 +94,28 @@ pub struct GbrainSection {
     pub exe_path: Option<String>,
 }
 
+/// `[knowledge]`——K1 PDF 知識管線：MinerU 取用階梯＋egress 信任分層。
+///
+/// ```toml
+/// [knowledge]
+/// mineru_command = "C:/python/.mineru/Scripts/mineru-kit.exe"  # 階梯 1：venv launcher（絕對路徑免 activate）
+/// mineru_tier = "basic"            # flash／basic（預設）／standard
+/// mineru_remote_url = "http://192.168.1.10:8000"  # 階梯 3-private：自架 api-server（設定即同意）
+/// mineru_api_key = "..."           # 階梯 3-public：mineru.net（須 allow_public_egress=true 才生效）
+/// allow_public_egress = false      # public 第三方雲 egress 閘門（預設擋）
+/// pdf_convert_policy = "auto"      # auto（預設）／always_fast／always_mineru
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KnowledgeSection {
+    pub mineru_command: Option<String>,
+    pub mineru_tier: Option<String>,
+    pub mineru_remote_url: Option<String>,
+    pub mineru_api_key: Option<String>,
+    pub allow_public_egress: Option<bool>,
+    pub pdf_convert_policy: Option<String>,
+}
+
 /// `[ingress]`——obridge 投遞口（event_ingress_port/secret 覆寫）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -124,6 +147,25 @@ pub fn apply_overrides(cfg: &mut AppConfig, t: Option<&OperoidToml>) {
     }
     if let Some(s) = &t.ingress.secret {
         cfg.event_ingress_secret = Some(s.clone());
+    }
+    // K1：知識管線（MinerU 階梯＋egress 分層）。
+    if let Some(p) = &t.knowledge.mineru_command {
+        cfg.mineru_command = Some(p.clone());
+    }
+    if let Some(p) = &t.knowledge.mineru_tier {
+        cfg.mineru_tier = Some(p.clone());
+    }
+    if let Some(p) = &t.knowledge.mineru_remote_url {
+        cfg.mineru_remote_url = Some(p.clone());
+    }
+    if let Some(p) = &t.knowledge.mineru_api_key {
+        cfg.mineru_api_key = Some(p.clone());
+    }
+    if let Some(b) = t.knowledge.allow_public_egress {
+        cfg.allow_public_egress = b;
+    }
+    if let Some(p) = &t.knowledge.pdf_convert_policy {
+        cfg.pdf_convert_policy = Some(p.clone());
     }
 }
 
@@ -165,6 +207,12 @@ OPENAI_API_KEY = "key-2"
 [gbrain]
 exe_path = "C:/gbrain/gbrain.exe"
 
+[knowledge]
+mineru_command = "C:/python/.mineru/Scripts/mineru-kit.exe"
+mineru_remote_url = "http://192.168.1.10:8000"
+allow_public_egress = true
+pdf_convert_policy = "always_mineru"
+
 [ingress]
 port = 7341
 secret = "ing-secret"
@@ -184,6 +232,13 @@ secret = "ing-secret"
         assert_eq!(t.gbrain.exe_path.as_deref(), Some("C:/gbrain/gbrain.exe"));
         assert_eq!(t.ingress.port, Some(7341));
         assert_eq!(t.ingress.secret.as_deref(), Some("ing-secret"));
+        // K1：知識管線節。
+        assert_eq!(
+            t.knowledge.mineru_command.as_deref(),
+            Some("C:/python/.mineru/Scripts/mineru-kit.exe")
+        );
+        assert_eq!(t.knowledge.allow_public_egress, Some(true));
+        assert_eq!(t.knowledge.pdf_convert_policy.as_deref(), Some("always_mineru"));
     }
 
     /// round-trip（驗收條件）：serialize → deserialize 恆等。

@@ -13,6 +13,42 @@
 
 ---
 
+## [Unreleased]
+
+### K1 — MinerU converter for complex PDFs (multimodal retrieval upgrade, P0 1/4)
+
+- **New converter** `ocore::converters::mineru`: complex PDFs are converted into
+  retrieval-ready chunk notes (hybrid V3-t layout: section-bounded text chunks with
+  inline figure captions + one standalone note per figure), a `figures.sqlite`
+  sidecar seed table (doc/page/image path/caption/section/content md5; vector
+  column filled by the upcoming K3), and an auditable `conversion-report.json`.
+- **Complexity routing** (default `auto`): millisecond pdf-extract signals S1-S4
+  (no text layer / glyph fragments / figure-table reference density / line
+  fragmentation) decide between the fast path and MinerU; hard extraction errors
+  always escalate to MinerU; `always_fast` / `always_mineru` policies supported.
+  Signals and verdict are recorded in the conversion report.
+- **MinerU resolution ladder**: config override (`mineru_command`, full path or
+  command template - covers venv launchers without activation, `conda run`, `uv run`)
+  -> PATH lookup of `mineru-kit` -> remote parsing -> degrade to pdf-extract with
+  a quality warning.
+- **Egress trust tiers**: remote parsing is governed per endpoint trust level -
+  `local` always allowed, `private` (self-hosted api-server URL) consented by
+  configuration, `public` third-party cloud (mineru.net) blocked unless
+  `allow_public_egress = true` (default false). Every conversion report records
+  the egress tier and endpoint. K5/K8 VLM calls will follow the same tiers.
+- **MinerU v4 parsing**: `structured_content.json` blocks with section path
+  reconstruction (regex-classified headings), atomic markdown pipe tables,
+  LaTeX equations kept inline, REFERENCES/ACKNOWLEDGMENT skipped, figure captions
+  recovered from neighbouring table blocks (real-corpus quirk), charts with
+  numbered captions treated as figures.
+- **Config surface**: six new AppConfig fields + `operoid.toml [knowledge]`
+  section (`mineru_command`, `mineru_tier`, `mineru_remote_url`,
+  `mineru_api_key`, `allow_public_egress`, `pdf_convert_policy`).
+- Validated on the mueller2016 corpus (full-document MinerU v4 zip):
+  27 text chunks + 9 figure notes with figures 1-9, tables I-V and all section
+  levels covered; gbrain pipeline pre-check scored hit@5 12/12, MRR 0.958
+  (12-query benchmark from the retrieval experiments).
+
 ## [v0.4.5] - 2026-10-08
 
 ### Embedding model switched to EmbeddingGemma 2 via local llama-server
