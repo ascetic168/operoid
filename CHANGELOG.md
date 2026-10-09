@@ -15,6 +15,30 @@
 
 ## [Unreleased]
 
+### K3 - Figure vector sidecar (P1 1/3)
+
+- New `ocore::knowledge::figures`: the `figures.sqlite` sidecar from K1
+  now gets its vectors filled and searched.
+  - `embed_pending`: two capability tiers - **multimodal** (joint
+    caption+image vectors via llama-server content-parts, 4 images per
+    batch, images sent as data URIs) and **text-only** (caption+section+
+    page text vectors; V2-experiment semantics, 12/12 MRR 0.938).
+    Caption-only recovered rows (no image crop) automatically take the
+    text path. `image_md5` dedup: the same image is embedded once, other
+    rows copy the vector (re-conversion never re-embeds).
+  - `Sidecar::search`: brute cosine over stored vectors with the
+    authorization rule applied - rows without a `source_id` tag are
+    invisible to any authorized set (fail closed: unfiled = unauthorized).
+  - Schema additions (additive, legacy K1 databases migrated idempotently
+    on open): `figure_no` (attribution label) and `source_id`
+    (authorization mapping); `clear_vectors` supports the cheap re-embed
+    upgrade path (add mmproj later, re-embed sidecar only).
+- Real-machine verification (`cargo test -p ocore real_k3 -- --ignored`):
+  9/9 figures embedded multimodally, **all three pixel-only queries
+  (answers living only inside the image) hit their target figure in the
+  top-3**, and text-only mode locates the caption query at rank 1 -
+  matching the experiment predictions.
+
 ### Capability status reaches the enterprise user tier (upload surface)
 
 - New `GET /api/knowledge/caps` (Req::User in the RBAC matrix): a

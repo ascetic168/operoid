@@ -18,6 +18,7 @@ pub mod backend;
 pub mod bootstrap;
 pub mod doctor;
 pub mod fake;
+pub mod figures;
 pub mod grants;
 pub mod service;
 pub mod identity;
@@ -40,3 +41,6 @@ mod tests_c9;
 
 #[cfg(test)]
 mod tests_real;
+
+#[cfg(test)]
+mod tests_k3;

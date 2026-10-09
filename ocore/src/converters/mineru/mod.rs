@@ -98,8 +98,12 @@ pub struct FigureRow {
     pub image_path: Option<String>,
     pub caption: String,
     pub section: String,
+    /// 圖號（歸因標籤；K4 輸出「Figure N」用）。
+    pub figure_no: Option<u32>,
     /// 圖檔內容 md5（K3 去重鍵——重轉換不重嵌）。
     pub image_md5: Option<String>,
+    /// 授權過濾用（K4：source_ids 鐵律；轉換時未知，工廠歸檔時補 tag）。
+    pub source_id: Option<String>,
 }
 
 /// 轉換報告（conversion-report.json；可稽核）。
@@ -354,7 +358,9 @@ fn emit(doc_id: &str, parsed: &Parsed, image_root: Option<&Path>, out_dir: &Path
             image_path: img_path,
             caption: b.text.clone(),
             section: b.section_id(),
+            figure_no: Some(fig),
             image_md5: md5,
+            source_id: None,
         });
     }
 
@@ -431,16 +437,27 @@ fn write_figures_sqlite(out_dir: &Path, rows: &[FigureRow]) -> Result<()> {
              image_path TEXT,
              caption TEXT NOT NULL DEFAULT '',
              section TEXT NOT NULL DEFAULT '',
+             figure_no INTEGER,
              image_md5 TEXT,
+             source_id TEXT,
              vec BLOB
          );
          CREATE INDEX IF NOT EXISTS idx_figures_doc ON figures(doc_id);",
     )?;
     for r in rows {
         db.execute(
-            "INSERT INTO figures (doc_id, page, image_path, caption, section, image_md5, vec)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
-            rusqlite::params![r.doc_id, r.page, r.image_path, r.caption, r.section, r.image_md5],
+            "INSERT INTO figures (doc_id, page, image_path, caption, section, figure_no, image_md5, source_id, vec)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            rusqlite::params![
+                r.doc_id,
+                r.page,
+                r.image_path,
+                r.caption,
+                r.section,
+                r.figure_no,
+                r.image_md5,
+                r.source_id
+            ],
         )?;
     }
     Ok(())
