@@ -15,6 +15,8 @@
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-10-10
+
 ### Desktop nav: rename the gbrain console entry to 知識庫 (Knowledge Base)
 
 - The left-nav entry for `/operations` (direct gbrain knowledge
