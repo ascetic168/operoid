@@ -62,6 +62,52 @@ export interface DepStatus {
 export const checkPrerequisites = (): Promise<DepStatus[]> =>
   agentFetch<DepStatus[]>("/api/prereq");
 
+// ---- K6 知識管線能力狀態（doctor；/api/knowledge/health）----
+
+/** MinerU 取用階梯探測結果。 */
+export interface MineruHealth {
+  resolved: boolean;
+  /** 命中階梯：local / private / public。 */
+  tier: string | null;
+  program: string | null;
+  version: string | null;
+  /** 未安裝時的安裝建議。 */
+  hint: string | null;
+}
+
+/** 嵌入端點健康（vision＝多模態嵌入可用）。 */
+export interface EmbeddingHealth {
+  base_url: string;
+  reachable: boolean;
+  model: string | null;
+  input_modalities: string[];
+  vision: boolean;
+  context_tokens: number | null;
+  /** 長輸入可嵌入——false 代表 llama-server 缺 `-b/-ub 8192` 旗標。 */
+  long_input_ok: boolean;
+  dimensions: number | null;
+  error: string | null;
+}
+
+/** chat 端點 VLM 能力（capable=null＝未探測——未給 chat 端點）。 */
+export interface VlmHealth {
+  base_url: string;
+  model: string;
+  capable: boolean | null;
+  cached: boolean;
+  error: string | null;
+}
+
+/** 知識管線能力狀態（橫幅與設定頁能力卡共用）。 */
+export interface KnowledgeHealth {
+  embedding: EmbeddingHealth;
+  vlm: VlmHealth;
+  mineru: MineruHealth;
+}
+
+export const knowledgeHealth = (): Promise<KnowledgeHealth> =>
+  agentFetch<KnowledgeHealth>("/api/knowledge/health");
+
 /** 用系統預設瀏覽器開 URL(tauri-plugin-shell open;需 shell:allow-open)。 */
 export async function openUrl(url: string): Promise<void> {
   const { open } = await import("@tauri-apps/plugin-shell");

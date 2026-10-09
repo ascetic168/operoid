@@ -119,6 +119,13 @@
       "installHint": "Install guide",
       "notFound": "{name} not found on PATH",
       "ack": "Got it"
+    },
+    "caps": {
+      "mineruMissing": "MinerU not detected - the PDF knowledge pipeline can only handle very simple PDFs (plain text, single column, no figures) in fast mode. Complex PDFs (two-column papers, scans, figures) require MinerU: `uv tool install mineru`, or set [knowledge] mineru_command in the config file.",
+      "noVision": "Embedding model has no multimodal support - images are indexed by caption text only, limiting visual queries. Add --mmproj to the llama-server launch flags to unlock joint caption+image vectors.",
+      "batchFlag": "llama-server is missing the -b/-ub 8192 flags - long chunks will be rejected (default 512), degrading knowledge retrieval quality.",
+      "recheck": "Recheck",
+      "dismiss": "Dismiss (hidden for this session)"
     }
   },
   "claude": {
@@ -760,5 +767,24 @@
     "principalFailed": "Principal operation failed: {detail}",
     "policySaveFailed": "Policy save failed: {detail}",
     "scopeFailed": "Scope operation failed: {detail}"
+  },
+  "caps": {
+    "title": "Knowledge pipeline capabilities",
+    "desc": "Missing capabilities never block the pipeline (built-in fallbacks: fast path / text-only indexing / locator mode) - they cap quality. Install or reconfigure, then hit Recheck.",
+    "recheck": "Recheck",
+    "unavailable": "Unable to fetch capability status",
+    "mineru": "MinerU (complex PDF conversion)",
+    "mineruOk": "Ready - two-column / scanned / figure-heavy PDFs go through full MinerU conversion (section chunking + figure notes + sidecar source data).",
+    "mineruMissing": "Not installed - only very simple PDFs (plain text, single column, no figures) in fast mode; complex PDFs degrade in quality with no image-side data.",
+    "embedding": "Embedding endpoint (llama-server)",
+    "vision": "multimodal",
+    "embeddingDown": "Unreachable - knowledge retrieval and PDF conversion need the local llama-server (default 127.0.0.1:8080).",
+    "embeddingMmOk": "Multimodal embedding available - images can get joint caption+image vectors (the key to visual queries).",
+    "embeddingTextOnly": "Text-only embedding - images are indexed by caption + section + page. Add --mmproj to the launch flags to unlock multimodal embedding (sidecar re-embed takes seconds).",
+    "batchFlag": "Long input rejected - llama-server needs -b 8192 -ub 8192 launch flags (default 512 rejects long chunks; they silently drop from the index).",
+    "vlm": "Chat endpoint VLM (generation-side image reading)",
+    "vlmUnknown": "Not probed - configure a chat endpoint to evaluate read-image answering.",
+    "vlmOk": "Can read images - when retrieval hits a figure, the generator can read the original image for values and details.",
+    "vlmNo": "Cannot read images - the generator degrades to locator mode: answers point at the figure (document / page / number), humans open the image to read pixels."
   }
 }

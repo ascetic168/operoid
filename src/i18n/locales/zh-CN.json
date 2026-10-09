@@ -119,6 +119,13 @@
       "installHint": "安装说明",
       "notFound": "在 PATH 上找不到 {name}",
       "ack": "我知道了"
+    },
+    "caps": {
+      "mineruMissing": "未检测到 MinerU——PDF 知识管线目前仅能以快速模式处理非常简单的 PDF（纯文字、单栏、无图表）；双栏论文／扫描／含图 PDF 需安装 MinerU（uv tool install mineru，或于设置文件 [knowledge] mineru_command 指定路径）。",
+      "noVision": "嵌入模型未启用多模态——图片仅以文字说明（caption）索引，纯视觉查询能力受限；于 llama-server 启动旗标加 --mmproj 可解锁「caption＋原图」联合向量。",
+      "batchFlag": "llama-server 缺 -b/-ub 8192 旗标——长 chunk 会被拒收（默认 512），知识检索质量将受影响。",
+      "recheck": "重测",
+      "dismiss": "关闭（本次执行不再显示）"
     }
   },
   "claude": {
@@ -760,5 +767,24 @@
     "principalFailed": "principal 操作失败：{detail}",
     "policySaveFailed": "政策保存失败：{detail}",
     "scopeFailed": "范围操作失败：{detail}"
+  },
+  "caps": {
+    "title": "知识管线能力",
+    "desc": "缺项不会阻断流程（内置降级：快速路径／纯文字索引／定位者模式），但会限制质量上限；安装或调整设置后按「重新检查」更新。",
+    "recheck": "重新检查",
+    "unavailable": "无法取得能力状态",
+    "mineru": "MinerU（复杂 PDF 转换）",
+    "mineruOk": "已就绪——双栏／扫描／含图 PDF 会经 MinerU 完整转换（章节切块＋图片笔记＋sidecar 来源数据）。",
+    "mineruMissing": "未安装——仅能以快速模式处理非常简单的 PDF（纯文字、单栏、无图表）；复杂 PDF 质量下降且无图片侧数据。",
+    "embedding": "嵌入端点（llama-server）",
+    "vision": "多模态",
+    "embeddingDown": "无法连接——知识检索与 PDF 转换需要本机 llama-server（默认 127.0.0.1:8080）。",
+    "embeddingMmOk": "多模态嵌入可用——图片可做「caption＋原图」联合向量（纯视觉查询的关键）。",
+    "embeddingTextOnly": "纯文字嵌入——图片仅以 caption＋章节＋页码索引；启动旗标加 --mmproj 可解锁多模态嵌入（sidecar 仅需秒级重嵌）。",
+    "batchFlag": "长输入被拒——llama-server 启动旗标需加 -b 8192 -ub 8192（默认 512 拒收长 chunk，chunk 会从索引消失）。",
+    "vlm": "chat 端点 VLM（生成端读图）",
+    "vlmUnknown": "未探测——配置 chat 端点后可评估「读图作答」能力。",
+    "vlmOk": "可读图作答——检索命中图片时，生成端可直接读原图回答数值与细节。",
+    "vlmNo": "不可读图——生成端降级为「定位者」模式：答案指向哪张图（文件／页／图号），像素内容由人类开图确认。"
   }
 }

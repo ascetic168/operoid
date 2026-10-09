@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity, RefreshCw } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
 import { useInboxStore } from "@/stores/inbox";
-import { checkPrerequisites, openUrl, tL10n, type DepStatus } from "@/lib/tauri";
+import { checkPrerequisites, knowledgeHealth, openUrl, tL10n, type DepStatus, type KnowledgeHealth } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import ClaudeCodeDialog from "@/components/ClaudeCodeDialog.vue";
 
@@ -13,6 +13,34 @@ const inbox = useInboxStore();
 const missingDeps = ref<DepStatus[]>([]);
 const claudeOpen = ref(false);
 const bellOpen = ref(false);
+
+// ── K6 知識管線能力提醒（顯著但不阻塞；fallback 已內建——缺 MinerU 走快速路徑、
+//    缺 vision 走純文字索引）──能力狀態只影響品質上限，故以橫幅提醒、不打斷操作。
+const caps = ref<KnowledgeHealth | null>(null);
+const capsDismissed = ref<Set<string>>(new Set());
+
+/** 三類能力缺口（MinerU 未安裝／嵌入無多模態／llama-server 批次旗標回歸）。 */
+const capsBanners = computed(() => {
+  const h = caps.value;
+  if (!h) return [];
+  const out: { key: string; textKey: string }[] = [];
+  if (!h.mineru.resolved) out.push({ key: "mineru", textKey: "app.caps.mineruMissing" });
+  if (h.embedding.reachable && !h.embedding.vision)
+    out.push({ key: "vision", textKey: "app.caps.noVision" });
+  if (h.embedding.reachable && !h.embedding.long_input_ok)
+    out.push({ key: "batch", textKey: "app.caps.batchFlag" });
+  return out.filter((b) => !capsDismissed.value.has(b.key));
+});
+
+async function recheckCaps(clearDismissed = false) {
+  try {
+    const h = await knowledgeHealth();
+    caps.value = h;
+    if (clearDismissed) capsDismissed.value = new Set();
+  } catch {
+    // 服務未啟動／探測失敗：不提醒（未知狀態不打擾）。
+  }
+}
 
 onMounted(async () => {
   config.load();
@@ -25,6 +53,8 @@ onMounted(async () => {
   } catch {
     // 檢查本身失敗不阻擋使用
   }
+  // 知識管線能力偵測（背景；MinerU 檔案存在性＋嵌入端點探測，秒級）。
+  void recheckCaps();
 });
 onUnmounted(() => {
   inbox.stop();
@@ -113,6 +143,31 @@ const nav = [
         <span>{{ $t('topbar.events') }}</span>
       </RouterLink>
     </header>
+
+    <!-- K6 知識管線能力提醒（顯著橫幅；可關閉，本次執行內不再出現；「重測」清關閉並重新探測） -->
+    <div
+      v-if="capsBanners.length"
+      class="shrink-0 border-b border-warning/30 bg-warning/10 px-3 py-1.5 text-xs"
+    >
+      <div v-for="b in capsBanners" :key="b.key" class="flex items-center gap-2 py-0.5">
+        <AlertTriangle class="size-3.5 shrink-0 text-warning" />
+        <span class="min-w-0 flex-1 text-foreground/90">{{ $t(b.textKey) }}</span>
+        <button
+          class="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :title="$t('app.caps.recheck')"
+          @click="recheckCaps(true)"
+        >
+          <RefreshCw :size="12" />{{ $t("app.caps.recheck") }}
+        </button>
+        <button
+          class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :title="$t('app.caps.dismiss')"
+          @click="capsDismissed.add(b.key); capsDismissed = new Set(capsDismissed)"
+        >
+          <X :size="13" />
+        </button>
+      </div>
+    </div>
 
     <!-- 名詞軌 + 主內容區 -->
     <div class="flex min-h-0 flex-1 overflow-hidden">

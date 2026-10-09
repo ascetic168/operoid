@@ -139,6 +139,8 @@ const INVENTORY: &[(&str, &str)] = &[
     ("POST", "/api/factories/save-authored"),
     ("POST", "/api/factories/classify"),
     ("GET", "/api/prereq"),
+    // K6 知識管線健康（未列 rbac 矩陣 → Admin fail-closed——探測面屬管理資訊）
+    ("GET", "/api/knowledge/health"),
     // R3 新增
     ("POST", "/api/commitments/{id}/satisfy"),
     ("GET", "/api/stream"),
@@ -218,6 +220,33 @@ async fn permission_matrix_all_routes_four_identities() {
             "未認證對 {method} {pattern} 必須 401"
         );
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// K6：`/api/knowledge/health`——admin 200＋三區塊形狀（探測皆可失敗，回報不中斷；
+/// GUI 橫幅／設定頁能力卡消費此形狀）。
+#[tokio::test]
+async fn knowledge_health_capability_shape() {
+    let dir = temp_dir("k6health");
+    let app = test_router(&dir);
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/knowledge/health")
+        .header("authorization", "Bearer adm")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let e = &v["embedding"];
+    assert!(e["reachable"].is_boolean());
+    assert!(e["vision"].is_boolean());
+    assert!(e["long_input_ok"].is_boolean());
+    assert!(e["input_modalities"].is_array());
+    let m = &v["mineru"];
+    assert!(m["resolved"].is_boolean());
+    let _ = &v["vlm"]["capable"];
     std::fs::remove_dir_all(&dir).ok();
 }
 

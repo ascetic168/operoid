@@ -15,6 +15,26 @@
 
 ## [Unreleased]
 
+### Capability awareness UI - MinerU / multimodal embedding not detected
+
+- The K1 fallback chain (MinerU missing -> fast path, no multimodal
+  embedding -> text-only index, no VLM -> locator mode) is invisible to
+  users if it only lives in conversion-report.json. The desktop GUI now
+  surfaces it:
+  - **App-level warning banner** (prominent, dismissible per session,
+    with a Recheck button): shown when MinerU is not detected ("only very
+    simple PDFs can be processed"), when the embedding endpoint is up
+    without vision, or when the llama-server batch-flag regression is
+    detected. Unknown states (server down / probe failed) stay silent.
+  - **Capability matrix card** in Settings > Services: MinerU (tier +
+    program + version), embedding endpoint (model / dims / vision /
+    long-input discipline), chat VLM (read-image capability) - each row
+    with status icon, impact explanation and unlock instructions
+    (localized zh-TW / zh-CN / en).
+- oserver matrix inventory: `/api/knowledge/health` registered
+  (admin-only, fail-closed) + in-process oneshot test asserting the
+  response shape consumed by the GUI.
+
 ### K7 - End-to-end retrieval benchmark (P0 4/4) - P0 acceptance met
 
 - New `#[ignore]` real test `converters::mineru_real_tests::real_k7_end_to_end_mueller2016`
