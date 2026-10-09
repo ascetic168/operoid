@@ -703,14 +703,6 @@ pub async fn resolve_model(base: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("models 回應無模型 id"))
 }
 
-async fn embed_texts(base: &str, model: &str, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-    let mut out = Vec::with_capacity(texts.len());
-    for chunk in texts.chunks(TEXT_BATCH) {
-        let body = serde_json::json!({ "model": model, "input": chunk });
-        out.extend(embed_batch(base, &body).await?);
-    }
-    Ok(out)
-}
 
 async fn embed_batch(base: &str, body: &serde_json::Value) -> Result<Vec<Vec<f32>>> {
     static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {

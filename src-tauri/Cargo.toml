@@ -17,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 # R2（遠端化）：master token 改 CSPRNG 生成。
 getrandom = "0.2"
 
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { convertFileSrc } from '@tauri-apps/api/core'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -57,8 +58,14 @@ marked.use({
   ],
 })
 
+/** K5：知識檢索的圖片指標行（「圖檔：<絕對路徑>」）→ 以 asset protocol 的圖片語法呈現。 */
+const FIGFILE_RE = /^圖檔：(.+?\.(?:jpe?g|png|gif|webp))\s*$/gm
+const processed = computed(() =>
+  props.text.replace(FIGFILE_RE, (_m, p1: string) => `![檢索圖片](${convertFileSrc(p1)})`),
+)
+
 /** Markdown → HTML（消毒）。聊天語境下單一換行視為斷行（breaks）。 */
-const html = computed(() => DOMPurify.sanitize(marked.parse(props.text) as string))
+const html = computed(() => DOMPurify.sanitize(marked.parse(processed.value) as string))
 </script>
 
 <template>

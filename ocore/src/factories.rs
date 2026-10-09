@@ -261,7 +261,7 @@ async fn run_pdf_knowledge(
     paths: &[String],
 ) -> Result<PreviewResult, AppError> {
     use crate::knowledge::figures::{self, Sidecar};
-    use crate::knowledge::ingest::{default_figures_db, merge_sidecar, resolve_source_id};
+    use crate::knowledge::ingest::{default_figures_db, resolve_source_id};
 
     let conv = cfg.convert_config();
     let figures_db =

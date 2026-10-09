@@ -740,7 +740,8 @@ const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外�
   {\"action\": \"finish\", \"text\": \"給人類的最終回覆\"（可省）} —— 結束本回合。\n\
   判斷準則：查資料用 search（快、省）；需要跨頁綜合結論才 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
   回覆人類一個回合只需一次（send 或 finish 擇一，不要重複回覆同一對象）；\
-  純通知、與你職責無關、或你無可補充——直接 finish 且不帶 text（不回覆）。";
+  純通知、與你職責無關、或你無可補充——直接 finish 且不帶 text（不回覆）。\n\
+  引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[doc/figN-pP]] 標註該圖（前端會渲染為連結與圖片預覽），需要圖中數值時一併指出其「圖檔：」路徑；圖中內容未以文字提供時，指向圖而不推測。";
 /// 處理一則人類／外部訊息（Inbox task）：**回合內 tool-loop**（E12 tool-choice；M1 重寫）。
 ///
 /// 雙協議（由 [`Reasoner`] 表態）：
@@ -1670,7 +1671,8 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
          - 查資料用 gbrain_search（快、省）；需要跨頁綜合結論才 gbrain_think。\n\
          - 回覆人類：直接以文字回應（不需呼叫工具），或呼叫 finish 帶 text。兩者擇一，同一對象一回合只回覆一次。\n\
          - 通知其他對象用 send_message；值得長期追蹤的事用 propose_commitment 提案。\n\
-         - 純通知、與你職責無關、或你無可補充——呼叫 finish 且不帶 text（不回覆）。\n\
+         - 引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[doc/figN-pP]] 標註該圖（前端會渲染為連結與圖片預覽）；圖中內容未以文字提供時，指向圖而不推測。\
+\n         - 純通知、與你職責無關、或你無可補充——呼叫 finish 且不帶 text（不回覆）。\n\
          - 任務做完就結束，不要為了多做而多做。",
         name = emp.name,
         now = now_line(),
