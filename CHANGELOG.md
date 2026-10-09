@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### Fusion degradation hardening - no multimodal embedding / no VLM never errors
+
+- Embedding-query fast fail: the sidecar query embed (on the employee
+  retrieval path) now uses a 10-second timeout instead of 120s - a hung
+  or dead embedding server skips the figure-vector path quickly instead
+  of stalling retrieval.
+- meta.sidecar now keeps partial-success counts AND the error together
+  (figures/attached counts no longer overwritten by a later attach
+  failure).
+- real_k4 gains Test D: with a broken sidecar (unreachable embedding
+  endpoint + missing figures.sqlite), retrieval still returns the full
+  text path, the failure is recorded in meta.sidecar.error, and no Err
+  propagates. figures.rs unit test pins the fast-fail behavior.
+- VLM absence: nothing in the fusion path touches VLM today (generation
+  read-image is K5); figure blocks already carry doc/page/figure/image-
+  path pointers for the K5 locator mode, whose VLM probe (K6 doctor)
+  degrades to locator when no vision model answers.
+
 ### K4 - Three-way retrieval fusion with metadata attribution (P1 2/3)
 
 - `KnowledgeService.retrieve` now fuses three paths with RRF (k=60):

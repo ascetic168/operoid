@@ -244,7 +244,14 @@ impl KnowledgeService {
             }
         }
         if let Some(e) = sidecar_error {
-            sidecar_meta = json!({ "error": e });
+            // 錯誤與成功計數並存（部分成功也要如實呈現），不互相覆蓋。
+            if !sidecar_meta.is_object() {
+                sidecar_meta = json!({});
+            }
+            sidecar_meta
+                .as_object_mut()
+                .expect("just made object")
+                .insert("error".into(), json!(e));
         }
 
         // ── 渲染：每項自帶出處（員工具直接消費；K5 據圖檔路徑讀原圖或指向圖）──

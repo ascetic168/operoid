@@ -319,14 +319,55 @@ fn figure_doc_text(row: &PendingRow) -> String {
 
 /// 檢索查詢向量（K2 前綴在此縫上——呼叫端傳原始查詢）。`model=None` 時自
 /// `/v1/models` 解析第一個 id。
+/// **10 秒快速失敗**：此呼叫在員工檢索的融合路徑上——嵌入服務掛住時寧可跳過
+/// 圖向量路（降級記 meta），不可讓檢索卡住。
 pub async fn embed_query(base: &str, model: Option<&str>, query: &str) -> Result<Vec<f32>> {
+    const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
     let model = match model {
         Some(m) => m.to_string(),
-        None => resolve_model(base).await?,
+        None => {
+            let client = reqwest::Client::builder()
+                .timeout(QUERY_TIMEOUT)
+                .build()?;
+            let url = format!("{}/models", base.trim_end_matches('/'));
+            let v: serde_json::Value = client
+                .get(&url)
+                .send()
+                .await
+                .context("嵌入服務不可達")?
+                .error_for_status()
+                .context("嵌入服務回應錯誤")?
+                .json()
+                .await
+                .context("models 回應非 JSON")?;
+            v["data"][0]["id"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| anyhow!("models 回應無模型 id"))?
+        }
     };
     let text = format!("{RETRIEVAL_QUERY_PREFIX}{query}");
-    let vecs = embed_texts(base, &model, &[text]).await?;
-    vecs.into_iter().next().ok_or_else(|| anyhow!("空回應"))
+    let client = reqwest::Client::builder().timeout(QUERY_TIMEOUT).build()?;
+    let url = format!("{}/embeddings", base.trim_end_matches('/'));
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({ "model": model, "input": [text] }))
+        .send()
+        .await
+        .context("查詢嵌入請求失敗（嵌入服務逾時或不可達——圖向量路跳過）")?
+        .error_for_status()
+        .context("查詢嵌入被拒")?;
+    let v: serde_json::Value = resp.json().await.context("embeddings 回應非 JSON")?;
+    let vec: Vec<f32> = v["data"][0]["embedding"]
+        .as_array()
+        .context("embeddings 回應缺向量")?
+        .iter()
+        .filter_map(|x| x.as_f64().map(|f| f as f32))
+        .collect();
+    if vec.is_empty() {
+        return Err(anyhow!("嵌入回應空向量"));
+    }
+    Ok(vec)
 }
 
 /// 把 `vec IS NULL` 的列回填向量（依模式分層；image_md5 去重）。
@@ -769,6 +810,22 @@ mod tests {
             .collect();
         assert!(cols.contains(&"figure_no".to_string()));
         assert!(cols.contains(&"source_id".to_string()));
+    }
+
+    /// 降級面：嵌入端點不可達 → embed_query **快速**失敗（10s 逾時設計，
+    /// 不可掛住員工檢索）；Sidecar::open 於不存在目錄 → Err（由 service 捕獲降級）。
+    #[tokio::test]
+    async fn embed_query_unreachable_fails_fast() {
+        let t0 = std::time::Instant::now();
+        let r = embed_query("http://127.0.0.1:9/v1", None, "probe").await;
+        assert!(r.is_err(), "不可達端點應 Err");
+        assert!(
+            t0.elapsed().as_secs() < 15,
+            "應快速失敗（實得 {:?}）",
+            t0.elapsed()
+        );
+        let missing = std::env::temp_dir().join(format!("k3-missing-{}", std::process::id()));
+        assert!(Sidecar::open(missing.join("figures.sqlite")).is_err());
     }
 
     /// 文件側文字格式與圖片筆記 body 同構（抽斷言避免格式漂移）。

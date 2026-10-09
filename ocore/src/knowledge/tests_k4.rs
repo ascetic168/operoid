@@ -283,10 +283,45 @@ async fn real_k4_fusion_and_attribution() {
         fig_blocks_c.len()
     );
 
-    // 收據：三次檢索各一筆 receipt＋retrieval 事件。
+    // ── Test D：降級不出錯——嵌入端點不可達＋sidecar 檔缺失時，檢索仍 Ok
+    //    （文字路完整）、sidecar 錯誤如實記在 meta，絕不傳播 Err ──
+    let broken_svc = Arc::new(
+        KnowledgeService::new(&store_db).with_sidecar(SidecarConfig {
+            db_path: dir.join("nonexistent").join("figures.sqlite"),
+            embedding_base: "http://127.0.0.1:9/v1".into(), // discard port——連線立即拒絕
+        }),
+    );
+    let out_d = broken_svc
+        .retrieve(
+            &ctx.access,
+            crate::knowledge::backend::RetrieveKind::Search,
+            "Mueller 2016 paper: magnetic field distribution in the cross section of the six-winding inductor",
+            None,
+            10,
+            &ctx,
+        )
+        .await
+        .expect("sidecar 故障時檢索不得 Err（應降級為文字路）");
+    assert!(!out_d.text.trim().is_empty(), "降級路徑仍應有文字命中");
+    assert!(
+        out_d.text.contains("mueller2016"),
+        "文字路應正常命中：{}",
+        &out_d.text[..out_d.text.len().min(300)]
+    );
+    let sc_meta = &out_d.meta["sidecar"];
+    assert!(
+        sc_meta.is_object() && sc_meta["error"].is_string(),
+        "sidecar 故障應記錄在 meta.sidecar.error：{sc_meta}"
+    );
+    eprintln!(
+        "[k4] D: broken sidecar → text {} bytes, meta.sidecar.error 記錄 ✓",
+        out_d.text.len()
+    );
+
+    // 收據：四次檢索各一筆 receipt＋retrieval 事件。
     use crate::domain::Store as _;
     let store = crate::domain::SqliteStore::open(&store_db).unwrap();
-    assert_eq!(store.list_recent_receipts(10).unwrap().len(), 3);
+    assert_eq!(store.list_recent_receipts(10).unwrap().len(), 4);
 
     std::fs::remove_dir_all(&dir).ok();
 }
