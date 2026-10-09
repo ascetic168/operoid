@@ -109,11 +109,13 @@ pub struct ShortCaptionRow {
 /// sidecar 開啟＋schema 就緒（含舊版 K1 資料庫的欄位補齊）。
 pub struct Sidecar {
     conn: rusqlite::Connection,
+    path: std::path::PathBuf,
 }
 
 impl Sidecar {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let conn = rusqlite::Connection::open(path)?;
+        let path = path.as_ref().to_path_buf();
+        let conn = rusqlite::Connection::open(&path)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS figures (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +141,53 @@ impl Sidecar {
                 conn.execute(&format!("ALTER TABLE figures ADD COLUMN {col} TEXT"), [])?;
             }
         }
-        Ok(Self { conn })
+        Ok(Self { conn, path })
+    }
+
+    /// 圖檔落地目錄：`<sidecar 旁>/figures.assets/{doc_id}/`。轉換工作目錄
+    /// （mineru 暫存）在入庫結束即刪，圖檔必須在 merge 時搬進耐久位置，
+    /// 否則 sidecar 的 image_path 一入庫就是死路徑（K5/P1.1）。
+    fn assets_dir(&self, doc_id: &str) -> std::path::PathBuf {
+        self.path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("figures.assets")
+            .join(doc_id)
+    }
+
+    /// 把單列的圖檔從來源路徑搬到耐久目錄並回傳新路徑。
+    /// 慣例：`{image_md5}.{ext}`（md5 同＝內容同，重跑冪等且不重複佔空間）；
+    /// 缺 md5 時退回原檔名。來源檔不存在則原樣返回（保持現況——serve 端會 404）。
+    fn relocate_image(&self, doc_id: &str, image_path: &str, md5: Option<&str>) -> String {
+        let src = Path::new(image_path);
+        if !src.is_file() {
+            return image_path.to_string();
+        }
+        let file_name = match md5 {
+            Some(m) if !m.is_empty() => {
+                let ext = src
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| format!(".{e}"))
+                    .unwrap_or_default();
+                format!("{m}{ext}")
+            }
+            _ => src
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("figure.img")
+                .to_string(),
+        };
+        let dir = self.assets_dir(doc_id);
+        let dst = dir.join(&file_name);
+        if dst.is_file() {
+            return dst.to_string_lossy().into_owned();
+        }
+        if std::fs::create_dir_all(&dir).is_ok() && std::fs::copy(src, &dst).is_ok() {
+            dst.to_string_lossy().into_owned()
+        } else {
+            image_path.to_string()
+        }
     }
 
     /// 歸檔：doc_id → source_id（K4 授權過濾的映射；轉換時未知、工廠入庫時補）。
@@ -298,6 +346,10 @@ impl Sidecar {
         let mut carried_count = 0usize;
         for row in rows {
             let (doc, page, image_path, caption, section, figure_no, image_md5, vec_blob) = row?;
+            // 圖檔落地（K5/P1.1）：來源是轉換工作目錄，merge 時搬到耐久位置。
+            let image_path = image_path.map(|p| {
+                self.relocate_image(&doc, &p, image_md5.as_deref())
+            });
             let carried_vec = image_md5
                 .as_deref()
                 .and_then(|md5| carried.get(md5))
@@ -1029,5 +1081,105 @@ mod tests {
         assert!(schema_fingerprint().contains("figure_no"));
         assert!(schema_fingerprint().contains("source_id"));
         assert!(schema_fingerprint().contains("vec"));
+    }
+
+    /// K5/P1.1 圖檔落地：merge 時圖檔搬進 `figures.assets/{doc}/`（md5 命名），
+    /// sidecar 記新路徑；來源檔已不存在的列保持原路徑（不虛構）；重跑冪等。
+    #[test]
+    fn merge_from_relocates_images_to_durable_assets() {
+        let work_dir = std::env::temp_dir().join(format!(
+            "k3-reloc-src-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&work_dir).unwrap();
+        let img = work_dir.join("page_1_image_7.jpg");
+        std::fs::write(&img, b"fake-jpeg-bytes").unwrap();
+
+        // work sidecar：一列圖存在、一列圖已遺失。
+        let work_path = work_dir.join("work.sqlite");
+        let work = Sidecar::open(&work_path).unwrap();
+        work.conn
+            .execute(
+                "INSERT INTO figures (doc_id, page, image_path, caption, section, image_md5)
+                 VALUES ('doc-r', 1, ?1, 'alive figure', 'I', 'md5-alive'),
+                        ('doc-r', 2, ?2, 'vanished figure', 'I', 'md5-dead')",
+                rusqlite::params![img.to_string_lossy(), r"C:\nonexistent\gone.jpg"],
+            )
+            .unwrap();
+
+        // 生產 sidecar 在另一目錄：merge 後圖應落在生產旁 figures.assets/。
+        let prod_dir = std::env::temp_dir().join(format!(
+            "k3-reloc-dst-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&prod_dir).unwrap();
+        let prod_path = prod_dir.join("figures.sqlite");
+        let prod = Sidecar::open(&prod_path).unwrap();
+
+        let (n, carried) = prod.merge_from(&work_path, "doc-r", "src-x").unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(carried, 0);
+
+        let rows: Vec<Option<String>> = prod
+            .conn
+            .prepare("SELECT image_path FROM figures WHERE caption = 'alive figure'")
+            .unwrap()
+            .query_map([], |r| r.get::<_, Option<String>>(0))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        let alive_path = rows.into_iter().next().unwrap().unwrap();
+        let expected = prod_dir
+            .join("figures.assets")
+            .join("doc-r")
+            .join("md5-alive.jpg");
+        assert_eq!(
+            std::path::Path::new(&alive_path),
+            expected,
+            "應改記耐久路徑"
+        );
+        assert!(expected.is_file(), "圖檔應已搬進 assets 目錄");
+        assert_eq!(
+            std::fs::read(&expected).unwrap(),
+            b"fake-jpeg-bytes",
+            "內容應一致"
+        );
+
+        let dead: Vec<Option<String>> = prod
+            .conn
+            .prepare("SELECT image_path FROM figures WHERE caption = 'vanished figure'")
+            .unwrap()
+            .query_map([], |r| r.get::<_, Option<String>>(0))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            dead.into_iter().next().unwrap().unwrap(),
+            r"C:\nonexistent\gone.jpg",
+            "來源已遺失者原樣保留"
+        );
+
+        // 冪等：再 merge 一次，路徑與檔案不變。
+        let (n2, _) = prod.merge_from(&work_path, "doc-r", "src-x").unwrap();
+        assert_eq!(n2, 2);
+        let again: String = prod
+            .conn
+            .query_row(
+                "SELECT image_path FROM figures WHERE caption = 'alive figure'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(again, alive_path);
+        std::fs::remove_dir_all(&work_dir).ok();
+        std::fs::remove_dir_all(&prod_dir).ok();
     }
 }

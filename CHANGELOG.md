@@ -62,10 +62,22 @@
 
 - On Windows, Node 17+ resolves `localhost` per OS DNS order, so vite
   bound `::1` (IPv6) only, while the Tauri CLI polled
-  `http://localhost:1420` via `127.0.0.1` - dev start stalled forever
+  `http://localhost:1420` - dev start stalled forever
   at "Waiting for your frontend dev server". vite now binds
   `127.0.0.1` explicitly (`TAURI_DEV_HOST` still takes precedence) and
   `devUrl` pins `http://127.0.0.1:1420`.
+
+### Figure images now survive ingest
+
+- The PDF knowledge pipeline kept sidecar `image_path` values pointing
+  into the MinerU temp work directory, which is deleted when the run
+  ends - every ingested figure became a dead path (captions and
+  vectors still searched fine, but image serving 404'd).
+- `Sidecar::merge_from` now relocates each figure image into
+  `figures.assets/{doc_id}/` next to the sidecar database (md5-named,
+  so re-ingests are idempotent and deduplicated) and records the
+  durable path instead. Applies to both ingest routes (factory run and
+  `POST /api/knowledge/ingest-pdf`) with no call-site changes.
 
 ### Mixed batches route per-file
 
