@@ -350,6 +350,16 @@ pub async fn open_note<R: Runtime>(
     Ok(NoteViewResult { title })
 }
 
+/// K5/P1.2：以系統預設應用程式開啟本機檔案（PDF → 預設 PDF 閱讀器）。
+/// 來源：員工回覆「來源文件」段的 `原論文 PDF：<絕對路徑>` 行。
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    if path.trim().is_empty() || !std::path::Path::new(&path).is_file() {
+        return Err(format!("檔案不存在：{path}"));
+    }
+    open::that(&path).map_err(|e| e.to_string())
+}
+
 /// 自足 HTML 的內嵌樣式（CJK 友善、可獨立閱讀）。
 const CSS: &str = r#"
 :root { color-scheme: light; }

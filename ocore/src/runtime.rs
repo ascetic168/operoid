@@ -741,7 +741,7 @@ const TURN_SYSTEM: &str = "你是一名員工，正在處理一則人類或外�
   判斷準則：查資料用 search（快、省）；需要跨頁綜合結論才 think；回覆外部訊息用 send；若訊息值得長期追蹤可 propose 再 finish；\
   回覆人類一個回合只需一次（send 或 finish 擇一，不要重複回覆同一對象）；\
   純通知、與你職責無關、或你無可補充——直接 finish 且不帶 text（不回覆）。\n\
-  引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[doc/figN-pP]] 標註該圖（前端會渲染為連結與圖片預覽），需要圖中數值時一併指出其「圖檔：」路徑；圖中內容未以文字提供時，指向圖而不推測。";
+  引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[實際slug]] 標註該圖（前端會渲染為可點連結與圖片預覽）——slug 從區塊標頭取實際值，如 [[mueller2016/fig4-p4]]，不要照抄範例中的字面「doc」；需要圖中數值時一併指出其「圖檔：」路徑；圖中內容未以文字提供時，指向圖而不推測。";
 /// 處理一則人類／外部訊息（Inbox task）：**回合內 tool-loop**（E12 tool-choice；M1 重寫）。
 ///
 /// 雙協議（由 [`Reasoner`] 表態）：
@@ -798,6 +798,8 @@ async fn run_conversational_turn(
             .external_reply_to
             .clone()
             .unwrap_or_else(|| "chat".into()),
+        fig_hits: Vec::new(),
+        source_docs: Vec::new(),
     };
 
     let channel = channel_context_line(task);
@@ -1136,6 +1138,52 @@ struct TurnSession<'a> {
     file_state: crate::tools::workspace::FileState,
     /// 預設回覆目標（喚醒訊息的回覆通道；無外部來源＝"chat"）。
     default_target: String,
+    /// K5/P1.1：本回合檢索命中的圖片（slug, 原圖絕對路徑；上限 4）。
+    /// 最終回覆確定性附加「檢索圖片」段——圖片顯示不依賴生成端照抄「圖檔：」路徑。
+    fig_hits: Vec<(String, String)>,
+    /// K5/P1.2：命中文件的來源 PDF（doc_id, 絕對路徑；上限 2）——最終回覆附加
+    /// 「來源文件」段，前端渲染為可點的開檔連結。
+    source_docs: Vec<(String, String)>,
+}
+
+/// K5/P1.1：解析 fusion 檢索輸出裡的圖片區塊 →（slug, 原圖路徑）清單。
+/// 區塊形態：`── 圖片[（結構性附帶]）? · {doc}/Figure {n}（p{page}）[{sec}] ──`
+/// 換行 caption 換行 `圖檔：<絕對路徑>`。無 `圖檔：` 行的區塊（無原圖）不收。
+fn figure_hits_from_text(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut pending: Option<String> = None; // "{doc}/Figure {n}（p{page}"
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("── 圖片") {
+            pending = rest
+                .split('·')
+                .nth(1)
+                .map(|spec| spec.split('）').next().unwrap_or("").trim().to_string());
+        } else if let Some(p) = line.strip_prefix("圖檔：") {
+            let path = p.trim();
+            let spec = pending.take();
+            let (Some(spec), false) = (spec, path.is_empty()) else {
+                continue;
+            };
+            let Some((doc, figpart)) = spec.rsplit_once('/') else {
+                continue;
+            };
+            let Some((n, page)) = figpart.split_once("（p") else {
+                continue;
+            };
+            let Some(n) = n.strip_prefix("Figure ").map(str::trim) else {
+                continue;
+            };
+            let page = page.trim();
+            if n.is_empty() || page.is_empty() {
+                continue;
+            }
+            if out.iter().any(|(_, ep)| ep == path) {
+                continue;
+            }
+            out.push((format!("{doc}/fig{n}-p{page}"), path.to_string()));
+        }
+    }
+    out
 }
 
 impl<'a> TurnSession<'a> {
@@ -1144,8 +1192,53 @@ impl<'a> TurnSession<'a> {
         text.chars().take(self.ctx.tool_result_max_chars).collect()
     }
 
+    /// K5/P1.1＋P1.2：從檢索工具輸出收集命中——圖片（fusion 文字區塊＋`圖檔：`
+    /// 路徑行）與來源 PDF（meta `source_docs`）。最終回覆由 `write_final_reply`
+    /// 確定性附加——顯示與連結不依賴生成端照抄。
+    fn collect_knowledge_hits(&mut self, output: &crate::domain::tools::ToolOutput) {
+        for (slug, path) in figure_hits_from_text(&output.text) {
+            if self.fig_hits.iter().any(|(_, ep)| ep == &path) {
+                continue;
+            }
+            self.fig_hits.push((slug, path));
+            if self.fig_hits.len() >= 4 {
+                break;
+            }
+        }
+        if let Some(docs) = output.meta.get("source_docs").and_then(|v| v.as_object()) {
+            for (doc, p) in docs {
+                let Some(p) = p.as_str() else {
+                    continue;
+                };
+                if self.source_docs.iter().any(|(_, ep)| ep == p) {
+                    continue;
+                }
+                self.source_docs.push((doc.clone(), p.to_string()));
+                if self.source_docs.len() >= 2 {
+                    return;
+                }
+            }
+        }
+    }
+
     /// 寫最終回覆 Out Message（掛提案 id 與知識證據）＋ reply 事件。
+    /// K5/P1.1＋P1.2：本回合有檢索命中時，確定性附加「檢索圖片」（wikilink＋
+    /// `圖檔：` 路徑行——前端渲染為行內圖）與「來源文件」（`原論文 PDF：` 行——
+    /// 前端渲染為開檔連結）。生成端已自行指出圖檔路徑時圖片段不重複。
     fn write_final_reply(&mut self, text: &str) -> anyhow::Result<()> {
+        let mut text = text.to_string();
+        if !self.fig_hits.is_empty() && !text.contains("圖檔：") {
+            text.push_str("\n\n---\n\n**檢索圖片**\n");
+            for (slug, path) in &self.fig_hits {
+                text.push_str(&format!("\n[[{slug}]]\n\n圖檔：{path}\n"));
+            }
+        }
+        if !self.source_docs.is_empty() {
+            text.push_str("\n\n---\n\n**來源文件**\n");
+            for (_, path) in &self.source_docs {
+                text.push_str(&format!("\n原論文 PDF：{path}\n"));
+            }
+        }
         self.store.put_message(&Message {
             id: fresh_id("msg-out"),
             workspace_id: self.workspace_id.to_string(),
@@ -1239,6 +1332,7 @@ impl<'a> TurnSession<'a> {
                 };
                 let snippet = self.take(&output.text);
                 let note = format!("[search「{query}」] 結果（節錄）：{snippet}");
+                self.collect_knowledge_hits(&output);
                 if output.images.is_empty() {
                     Some(TurnAction::Continue { note })
                 } else {
@@ -1287,6 +1381,7 @@ impl<'a> TurnSession<'a> {
                 }
                 let snippet = self.take(&output.text);
                 let note = format!("[think「{query}」] 證據（節錄）：{snippet}");
+                self.collect_knowledge_hits(&output);
                 if output.images.is_empty() {
                     Some(TurnAction::Continue { note })
                 } else {
@@ -1671,7 +1766,7 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
          - 查資料用 gbrain_search（快、省）；需要跨頁綜合結論才 gbrain_think。\n\
          - 回覆人類：直接以文字回應（不需呼叫工具），或呼叫 finish 帶 text。兩者擇一，同一對象一回合只回覆一次。\n\
          - 通知其他對象用 send_message；值得長期追蹤的事用 propose_commitment 提案。\n\
-         - 引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[doc/figN-pP]] 標註該圖（前端會渲染為連結與圖片預覽）；圖中內容未以文字提供時，指向圖而不推測。\
+         - 引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[實際slug]] 標註該圖（前端會渲染為可點連結與圖片預覽）——slug 從區塊標頭取實際值，如 [[mueller2016/fig4-p4]]，不要照抄範例中的字面「doc」；圖中內容未以文字提供時，指向圖而不推測。\
 \n         - 純通知、與你職責無關、或你無可補充——呼叫 finish 且不帶 text（不回覆）。\n\
          - 任務做完就結束，不要為了多做而多做。",
         name = emp.name,
@@ -3367,6 +3462,34 @@ mod tests {
     use crate::domain::tools::{ToolFuture, ToolOutput};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// K5/P1.1：fusion 圖片區塊解析——slug 組裝、無原圖區塊跳過、附帶標記容忍。
+    #[test]
+    fn figure_hits_from_text_parses_fusion_blocks() {
+        let text = "\
+── 圖片 · mueller2016/Figure 4（p4）[IV.A] ──
+Different options for embedded inductors with magnetic core.
+圖檔：C:\\assets\\a.jpg
+
+── gbrain-demo · companies/晶瀚半導體 ──
+（文字命中不收）
+
+── 圖片（結構性附帶） · mueller2016/Figure 2（p2）[III.A] ──
+Details of the proposed buck converter architecture.
+圖檔：C:\\assets\\b.jpg
+
+── 圖片 · mueller2016/Figure 9（p7）[V.B] ──
+Caption-only figure（無原圖 → 不收）
+";
+        let hits = figure_hits_from_text(text);
+        assert_eq!(
+            hits,
+            vec![
+                ("mueller2016/fig4-p4".to_string(), r"C:\assets\a.jpg".to_string()),
+                ("mueller2016/fig2-p2".to_string(), r"C:\assets\b.jpg".to_string()),
+            ]
+        );
+    }
 
     /// 測試用 stub：回固定輸出，並計數被 invoke 幾次（驗 Tool 邊界——不被呼叫就不動）。
     struct StubTool {

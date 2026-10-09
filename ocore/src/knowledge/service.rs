@@ -289,6 +289,20 @@ impl KnowledgeService {
             })
             .take(4)
             .collect();
+        // K5/P1.2：命中文件的來源 PDF 路徑（回覆「來源文件」開檔連結用）。
+        let mut source_docs = serde_json::Map::new();
+        if let Some(sc) = &self.sidecar {
+            let mut docs: Vec<String> = merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
+            docs.sort();
+            docs.dedup();
+            if let Ok(paths) = figures::Sidecar::open(&sc.db_path)
+                .and_then(|s| s.pdf_paths_for_docs(&docs))
+            {
+                for (d, p) in paths {
+                    source_docs.insert(d, json!(p));
+                }
+            }
+        }
         Ok(ToolOutput {
             text,
             meta: json!({
@@ -299,6 +313,7 @@ impl KnowledgeService {
                 "receipt_kind": kind_str,
                 "fused_items": merged.len(),
                 "sidecar": sidecar_meta,
+                "source_docs": source_docs,
             }),
             images: figure_images,
         })

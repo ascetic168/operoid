@@ -175,6 +175,7 @@ pub fn run() {
             brains::brain_bind_source_path,
             brains::brain_sync,
             note_view::open_note,
+            note_view::open_path,
             runtime::agent_seed,
             runtime::agent_recruit,
             runtime::agent_create_template,

@@ -327,6 +327,11 @@ async fn run_pdf_knowledge(
                 pf.message = Some(m.clone());
                 errors.push(m);
             }
+            // K5/P1.2：doc 層來源 PDF 歸檔（回覆「來源文件」開檔連結用；best-effort）。
+            if let Err(e) = production.tag_doc_source(&doc_id, p) {
+                let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
+                errors.push(m);
+            }
             // 回填（Multimodal；無 mmproj 時退純文字——TextOnly 重跑即升級）。
             // embed_pending 只嵌 vec IS NULL 的列：攜帶向量不重嵌。
             let _ = figures::embed_pending(

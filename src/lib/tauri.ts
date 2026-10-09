@@ -562,6 +562,11 @@ export interface NoteViewResult {
 export const openNote = (target: string): Promise<NoteViewResult> =>
   invoke<NoteViewResult>("open_note", { target });
 
+/** K5/P1.2：以系統預設應用程式開啟本機檔案（PDF → 預設 PDF 閱讀器）。
+ *  來源：員工回覆「來源文件」段的 `原論文 PDF：<絕對路徑>` 行。 */
+export const openPath = (path: string): Promise<void> =>
+  invoke<void>("open_path", { path });
+
 /** 同步某腦：scope "all" | "one"（one 需 sourceId）。逐行串流。 */
 export async function brainSync(
   brainId: string,

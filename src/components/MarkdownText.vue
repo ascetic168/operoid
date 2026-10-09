@@ -1,10 +1,29 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { openNote, openPath } from '../lib/tauri'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 const props = defineProps<{ text: string }>()
+
+// 點擊 wikilink → 後端把該筆記轉 HTML 用系統瀏覽器開啟（同 OperationsView.openLink）；
+// 點擊 PDF 連結（K5/P1.2「來源文件」段）→ open_path 以系統預設程式開檔。
+// 事件委派掛在容器上——v-html 內容無法逐節點綁 handler。
+const rootEl = ref<HTMLElement>()
+function onWikiClick(e: MouseEvent): void {
+  const wiki = (e.target as HTMLElement).closest?.('.wikilink') as HTMLElement | null
+  const target = wiki?.getAttribute('title')
+  if (target) {
+    openNote(target).catch((err) => console.warn('[wikilink] openNote failed', target, err))
+    return
+  }
+  const pdf = (e.target as HTMLElement).closest?.('.pdf-link') as HTMLElement | null
+  const path = pdf?.getAttribute('data-path')
+  if (path) openPath(path).catch((err) => console.warn('[pdf-link] openPath failed', path, err))
+}
+onMounted(() => rootEl.value?.addEventListener('click', onWikiClick))
+onBeforeUnmount(() => rootEl.value?.removeEventListener('click', onWikiClick))
 
 // gbrain 引用格式的行內 tokenizer——規則同原 KnowledgeAskView.linkSegments：
 // `[[dir/slug]]`／`[[dir/slug|name]]` 與單括 `[dir/slug]`（須含 `/` 且後不接 `(`，
@@ -58,10 +77,19 @@ marked.use({
   ],
 })
 
-/** K5：知識檢索的圖片指標行（「圖檔：<絕對路徑>」）→ 以 asset protocol 的圖片語法呈現。 */
+/** K5：知識檢索的圖片指標行（「圖檔：<絕對路徑>」）→ 以 asset protocol 的圖片語法呈現。
+ *  K5/P1.2：來源文件行（「原論文 PDF：<絕對路徑>」）→ 可點的開檔連結（data-path 由
+ *  點擊委派交給 open_path；路徑經屬性編碼，開檔後由系統預設 PDF 閱讀器承接）。 */
 const FIGFILE_RE = /^圖檔：(.+?\.(?:jpe?g|png|gif|webp))\s*$/gm
+const PDFFILE_RE = /^原論文 PDF：(.+?\.pdf)\s*$/gm
 const processed = computed(() =>
-  props.text.replace(FIGFILE_RE, (_m, p1: string) => `![檢索圖片](${convertFileSrc(p1)})`),
+  props.text
+    .replace(FIGFILE_RE, (_m, p1: string) => `![檢索圖片](${convertFileSrc(p1)})`)
+    .replace(
+      PDFFILE_RE,
+      (_m, p1: string) =>
+        `<span class="pdf-link" data-path="${escapeHtml(p1)}">📄 開啟原論文 PDF</span>`,
+    ),
 )
 
 /** Markdown → HTML（消毒）。聊天語境下單一換行視為斷行（breaks）。 */
@@ -70,7 +98,7 @@ const html = computed(() => DOMPurify.sanitize(marked.parse(processed.value) as 
 
 <template>
   <!-- eslint-disable-next-line vue/no-v-html —— 內容經 DOMPurify 消毒 -->
-  <div class="chat-md" v-html="html"></div>
+  <div ref="rootEl" class="chat-md" v-html="html"></div>
 </template>
 
 <style>
@@ -97,5 +125,7 @@ const html = computed(() => DOMPurify.sanitize(marked.parse(processed.value) as 
 .chat-md blockquote { border-left: 3px solid color-mix(in oklab, currentColor 30%, transparent); margin: 0.4em 0; padding-left: 0.8em; opacity: 0.85; }
 .chat-md a { color: inherit; text-decoration: underline; }
 .chat-md hr { border: 0; border-top: 1px solid color-mix(in oklab, currentColor 20%, transparent); margin: 0.6em 0; }
-.chat-md .wikilink { color: var(--accent, currentColor); font-weight: 600; }
+.chat-md .wikilink { color: var(--accent, currentColor); font-weight: 600; cursor: pointer; text-decoration: underline dotted; }
+.chat-md .pdf-link { display: inline-block; margin: 0.15em 0; padding: 0.2em 0.6em; border: 1px solid color-mix(in oklab, currentColor 30%, transparent); border-radius: 0.4rem; cursor: pointer; font-weight: 600; }
+.chat-md .pdf-link:hover { background: color-mix(in oklab, currentColor 10%, transparent); }
 </style>

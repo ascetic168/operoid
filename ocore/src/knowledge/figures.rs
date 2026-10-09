@@ -129,7 +129,11 @@ impl Sidecar {
                  source_id TEXT,
                  vec BLOB
              );
-             CREATE INDEX IF NOT EXISTS idx_figures_doc ON figures(doc_id);",
+             CREATE INDEX IF NOT EXISTS idx_figures_doc ON figures(doc_id);
+             CREATE TABLE IF NOT EXISTS figure_docs (
+                 doc_id TEXT PRIMARY KEY,
+                 pdf_path TEXT NOT NULL
+             );",
         )?;
         // 舊版（K1 初版無 figure_no/source_id）冪等補欄。
         for col in ["figure_no", "source_id"] {
@@ -196,6 +200,39 @@ impl Sidecar {
             "UPDATE figures SET source_id = ?2 WHERE doc_id = ?1",
             rusqlite::params![doc_id, source_id],
         )?)
+    }
+
+    /// K5/P1.2：doc 層來源 PDF 歸檔（冪等 upsert）——回覆附加「來源文件」開檔連結用。
+    pub fn tag_doc_source(&self, doc_id: &str, pdf_path: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO figure_docs (doc_id, pdf_path) VALUES (?1, ?2)
+             ON CONFLICT(doc_id) DO UPDATE SET pdf_path = excluded.pdf_path",
+            rusqlite::params![doc_id, pdf_path],
+        )?;
+        Ok(())
+    }
+
+    /// K5/P1.2：批次查 doc → 來源 PDF 路徑（缺登記的 doc 不在回傳映射中）。
+    pub fn pdf_paths_for_docs(&self, doc_ids: &[String]) -> Result<Vec<(String, String)>> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for doc in doc_ids {
+            let p: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT pdf_path FROM figure_docs WHERE doc_id = ?1",
+                    [doc],
+                    |r| r.get(0),
+                )
+                .map(Some)
+                .or_else(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                })?;
+            if let Some(p) = p {
+                out.push((doc.clone(), p));
+            }
+        }
+        Ok(out)
     }
 
     /// 清空全部向量（升級重嵌——如補裝 mmproj 後由 TextOnly 升 Multimodal；

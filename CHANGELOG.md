@@ -15,6 +15,29 @@
 
 ## [Unreleased]
 
+### Chat replies carry retrieved figures and the source PDF
+
+- Employee chat replies now deterministically append what retrieval
+  actually hit - no longer dependent on the model choosing to copy
+  paths: a **檢索圖片** section (figure wikilinks + `圖檔：` path lines
+  rendered as inline images) and a **來源文件** section linking the
+  original PDF. Same append for the operations console: think output
+  ends with the same lines (sidecar lookup from citation slugs; the
+  KnowledgeService-routed ops emit them from `source_docs` metadata).
+- Source-PDF provenance: the figure sidecar gains a doc-level table
+  (`doc_id → pdf_path`); both ingest routes (factory run and
+  `POST /api/knowledge/ingest-pdf`) record it, and retrieval results
+  carry a `source_docs` map.
+- Desktop chat rendering: `[[wikilinks]]` in chat are now clickable
+  (open the note in the system browser, same as the operations console)
+  and `原論文 PDF：` lines render as an open-file button (new
+  `open_path` command). Operations log lines render `圖檔：` as inline
+  images and `原論文 PDF：` as open-file buttons - still no v-html.
+- Citation prompt fix: the system prompts used a literal
+  `[[doc/figN-pP]]` example that models copied verbatim into broken
+  slugs; they now instruct using the actual slug from the retrieval
+  block header (e.g. `[[mueller2016/fig4-p4]]`).
+
 ### K8 - VLM caption enrichment for short-caption figures
 
 - New `ocore::knowledge::enrich`: figures whose captions are too short

@@ -277,6 +277,7 @@ async fn run_think_json(
     program: &str,
     args: &[&str],
     env: &[(&'static str, std::ffi::OsString)],
+    figures_db: Option<&str>,
 ) -> i32 {
     ch(CliLine { stream: "step".into(), text: "think：合成中…".into() });
     let (code, stdout, stderr) = match run_capture(program, args, env).await {
@@ -350,6 +351,27 @@ async fn run_think_json(
             push_stdout(ch, &format!("- {}", citation_line(c)));
         }
     }
+    // K5/P1.1＋P1.2：引用 slug → doc → sidecar 反查，補串「檢索圖片／來源文件」
+    // 行——操作頁與員工對話同一套確定性附加（OperationsView 渲染行內圖與
+    // 開檔連結）。無 sidecar 或查不到時不出現，不影響 think 本體。
+    if let Some(db) = figures_db {
+        let mut docs: Vec<String> = parsed
+            .citations
+            .iter()
+            .filter_map(|c| c.page_slug.split('/').next().map(|d| d.to_string()))
+            .collect();
+        docs.sort();
+        docs.dedup();
+        if !docs.is_empty() {
+            if let Ok(sc) = crate::knowledge::figures::Sidecar::open(db) {
+                let hits = sc.figures_for_docs(&docs, None, 4).unwrap_or_default();
+                let pdfs = sc.pdf_paths_for_docs(&docs).unwrap_or_default();
+                for line in sidecar_append_lines(&hits, &pdfs) {
+                    push_stdout(ch, &line);
+                }
+            }
+        }
+    }
     // 隱去行內/結構化引註比對警告：中文 slug 不符合 gbrain 行內標記的 ASCII
     // regex，且 glm-4-flash 常在本文留下 `[slug#N]` 佔位標記，兩個方向的
     // 比對警告對本應用恆為雜訊；引註已由下方清單完整列出。
@@ -378,6 +400,40 @@ fn citation_line(c: &ThinkCitation) -> String {
         Some(n) => format!("[[{}]]（take #{n}）", c.page_slug),
         None => format!("[[{}]]", c.page_slug),
     }
+}
+
+/// K5/P1.1＋P1.2：由 sidecar 反查結果組出「檢索圖片／來源文件」附加行。
+/// 行格式與員工對話的確定性附加一致：圖片為 `[doc/figN-pP]`（linkSegments 可點）
+/// ＋`圖檔：<絕對路徑>`（前端渲染為行內圖）；來源文件為 `原論文 PDF：<路徑>`
+/// （前端渲染為開檔按鈕）。無原圖的命中不收。
+fn sidecar_append_lines(
+    hits: &[crate::knowledge::figures::FigureHit],
+    pdfs: &[(String, String)],
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let with_img: Vec<&crate::knowledge::figures::FigureHit> = hits
+        .iter()
+        .filter(|h| h.image_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false))
+        .take(4)
+        .collect();
+    if !with_img.is_empty() {
+        out.push("**檢索圖片**".to_string());
+        for h in with_img {
+            let Some(p) = h.image_path.as_deref() else { continue };
+            match h.figure_no {
+                Some(n) => out.push(format!("[{}/fig{}-p{}]", h.doc_id, n, h.page)),
+                None => out.push(format!("[{}/p{}]", h.doc_id, h.page)),
+            }
+            out.push(format!("圖檔：{p}"));
+        }
+    }
+    if !pdfs.is_empty() {
+        out.push("**來源文件**".to_string());
+        for (_, p) in pdfs {
+            out.push(format!("原論文 PDF：{p}"));
+        }
+    }
+    out
 }
 
 /// git add -A + commit（best-effort：非零退出碼＝無新變更，不視為錯誤）。
@@ -590,7 +646,13 @@ pub async fn op_run_core(
             // OperationsView 的 linkSegments 會將其渲染成可點擊連結。
             args.push("--json".into());
             let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let code = run_think_json(ch, exe, &refs, &env).await;
+            // K5/P1.1＋P1.2：帶 sidecar 路徑——think 收尾反查引用文件的圖檔與來源 PDF。
+            let figures_db = cfg.figures_db_path.clone().unwrap_or_else(|| {
+                crate::knowledge::ingest::default_figures_db(notes_path)
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            let code = run_think_json(ch, exe, &refs, &env, Some(figures_db.as_str())).await;
             Ok(OpResult::from_code(code))
         }
         "sync" => run_sync(ch, exe, notes_path, &env, cfg).await,
@@ -619,5 +681,38 @@ mod tests {
         assert_eq!(citation_line(&bare), "[[林家豪]]");
         let take = ThinkCitation { page_slug: "meetings/2026-06-15".into(), row_num: Some(3) };
         assert_eq!(citation_line(&take), "[[meetings/2026-06-15]]（take #3）");
+    }
+
+    /// K5/P1.1＋P1.2：sidecar 反查附加行——圖片為 `[slug]`＋`圖檔：` 路徑對、
+    /// 來源文件為 `原論文 PDF：` 行；無原圖的命中不收。
+    #[test]
+    fn sidecar_append_lines_format() {
+        use crate::knowledge::figures::FigureHit;
+        let hit = FigureHit {
+            doc_id: "mueller2016".into(),
+            page: 4,
+            figure_no: Some(4),
+            caption: "Different options.".into(),
+            section: "IV.A".into(),
+            image_path: Some(r"C:\assets\a.jpg".into()),
+            source_id: Some("gbrain-demo".into()),
+            score: 0.0,
+            attached: true,
+        };
+        let no_img = FigureHit { image_path: None, ..hit.clone() };
+        let lines = sidecar_append_lines(
+            &[hit, no_img],
+            &[("mueller2016".into(), r"C:\papers\mueller2016.pdf".into())],
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "**檢索圖片**".to_string(),
+                "[mueller2016/fig4-p4]".to_string(),
+                format!("圖檔：{}", r"C:\assets\a.jpg"),
+                "**來源文件**".to_string(),
+                format!("原論文 PDF：{}", r"C:\papers\mueller2016.pdf"),
+            ]
+        );
     }
 }

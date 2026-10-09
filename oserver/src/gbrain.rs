@@ -894,6 +894,24 @@ async fn api_op_run(
             let res = match svc.retrieve(&tctx.access, kind, &q, None, 10, &tctx).await {
                 Ok(o) => {
                     sink(ocore::gbrain_cli::CliLine { stream: "stdout".into(), text: o.text });
+                    // K5/P1.2：meta `source_docs` →「來源文件」行（OperationsView
+                    // 渲染為開檔按鈕；與員工對話的確定性附加同一套行格式）。
+                    if let Some(docs) = o.meta.get("source_docs").and_then(|v| v.as_object()) {
+                        if !docs.is_empty() {
+                            sink(ocore::gbrain_cli::CliLine {
+                                stream: "stdout".into(),
+                                text: "**來源文件**".into(),
+                            });
+                            for (_d, p) in docs {
+                                if let Some(p) = p.as_str() {
+                                    sink(ocore::gbrain_cli::CliLine {
+                                        stream: "stdout".into(),
+                                        text: format!("原論文 PDF：{p}"),
+                                    });
+                                }
+                            }
+                        }
+                    }
                     Ok(ocore::gbrain_cli::OpResult::from_code(0))
                 }
                 Err(e) => Err(ocore::i18n::AppError::new("op.runFailed").p("detail", e.to_string())),

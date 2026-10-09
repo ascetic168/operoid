@@ -167,6 +167,13 @@ pub async fn ingest_pdf(
 
     // 4) git commit＋gbrain sync --no-extract（best-effort——失敗記警告）。
     let mut warnings = Vec::new();
+    // K5/P1.2：doc 層來源 PDF 歸檔（回覆「來源文件」開檔連結用；失敗記警告）。
+    if let Err(e) = (|| {
+        let sc = Sidecar::open(figures_db)?;
+        sc.tag_doc_source(&doc_id, &pdf.to_string_lossy())
+    })() {
+        warnings.push(format!("來源 PDF 歸檔失敗（略過）：{e}"));
+    }
     let mut synced = false;
     let env = crate::proc::env_for_brain(gbrain_home);
     let sink = crate::gbrain_cli::noop_sink();

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   BarChart3,
   RefreshCw,
@@ -20,6 +21,7 @@ import {
   formatError,
   tL10n,
   openNote,
+  openPath,
   type CliLine,
   type OpName,
 } from "@/lib/tauri";
@@ -144,6 +146,28 @@ async function openLink(target: string) {
   }
 }
 
+// K5/P1.1＋P1.2：think 收尾的 sidecar 附加行——「圖檔：<img>」渲染為行內圖、
+// 「原論文 PDF：<path>」渲染為開檔按鈕（open_path 以系統預設程式開檔）。
+// 一則 CliLine 可能是整段多行文字（fusion 檢索）——先切行再逐行分類。
+const IMG_RE = /^圖檔：(.+?\.(?:jpe?g|png|gif|webp))\s*$/;
+const PDF_RE = /^原論文 PDF：(.+?\.pdf)\s*$/;
+function entryLines(text: string): string[] {
+  return text.length === 0 ? [""] : text.split(/\r?\n/);
+}
+function imagePathOf(text: string): string | null {
+  return IMG_RE.exec(text.trim())?.[1] ?? null;
+}
+function pdfPathOf(text: string): string | null {
+  return PDF_RE.exec(text.trim())?.[1] ?? null;
+}
+async function openPdf(path: string) {
+  try {
+    await openPath(path);
+  } catch (e) {
+    await push({ stream: "stderr", text: t("operations.errLine", { e: formatError(e) }) });
+  }
+}
+
 async function rebuildCompanies() {
   running.value = "companies-extract";
   await push({ stream: "step", text: t("operations.stepRebuild") });
@@ -243,15 +267,32 @@ async function rebuildCompanies() {
             'text-sky-400': entry.stream === 'step',
           }"
         >
-          <template v-for="(seg, j) in linkSegments(entry.text)" :key="j">
-            <span
-              v-if="seg.kind === 'link'"
-              class="cursor-pointer font-medium text-sky-400 underline-offset-2 hover:underline"
-              :title="seg.target"
-              @click="openLink(seg.target!)"
-              >{{ seg.text }}</span
+          <template v-for="(ln, k) in entryLines(entry.text)" :key="k">
+            <img
+              v-if="imagePathOf(ln)"
+              :src="convertFileSrc(imagePathOf(ln)!)"
+              class="my-1 max-w-md rounded border border-border"
+              alt="檢索圖片"
+            />
+            <button
+              v-else-if="pdfPathOf(ln)"
+              class="my-1 inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 font-medium text-sky-400 hover:bg-muted"
+              @click="openPdf(pdfPathOf(ln)!)"
             >
-            <template v-else>{{ seg.text }}</template>
+              📄 開啟原論文 PDF
+            </button>
+            <div v-else>
+              <template v-for="(seg, j) in linkSegments(ln)" :key="j">
+                <span
+                  v-if="seg.kind === 'link'"
+                  class="cursor-pointer font-medium text-sky-400 underline-offset-2 hover:underline"
+                  :title="seg.target"
+                  @click="openLink(seg.target!)"
+                  >{{ seg.text }}</span
+                >
+                <template v-else>{{ seg.text }}</template>
+              </template>
+            </div>
           </template>
         </div>
       </div>
