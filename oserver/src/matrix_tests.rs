@@ -145,8 +145,10 @@ const INVENTORY: &[(&str, &str)] = &[
     ("POST", "/api/knowledge/ingest-pdf"),
     ("GET", "/api/knowledge/ingest-pdf/{id}"),
     ("GET", "/api/knowledge/figure-image"),
-    // K5/P1：媒體簽名（POST=Req::User；GET=Public+簽名驗證，不收矩陣）
+    // K5/P1：媒體面（Req::User——簽發／來源 PDF 串流；GET /api/media/figure=
+    // Public+簽名驗證，不收矩陣）
     ("POST", "/api/media/figure-urls"),
+    ("GET", "/api/media/source-pdf"),
     // K6 精簡能力狀態（Req::User——上傳面提示）
     ("GET", "/api/knowledge/caps"),
     // R3 新增
@@ -257,6 +259,134 @@ async fn ingest_pdf_validates_input() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// K5/P1.2：來源 PDF 串流參數面——缺 `doc_id`/`path` 或兩者都給 → 400
+/// `media.paramsRequired`；未登記 doc → 404 `figure.docNotRegistered`（sidecar
+/// 缺檔同樣視為未登記——fail-closed）。
+#[tokio::test]
+async fn source_pdf_validates_input() {
+    let dir = temp_dir("sourcepdf");
+    let app = test_router(&dir);
+    // 都缺 → 400
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/media/source-pdf")
+        .header("authorization", "Bearer adm")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["code"], "media.paramsRequired");
+    // 都給 → 400
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/media/source-pdf?doc_id=a&path=b")
+        .header("authorization", "Bearer adm")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // 未登記 doc → 404
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/media/source-pdf?doc_id=mueller2016")
+        .header("authorization", "Bearer adm")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let bytes = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(v["code"], "figure.docNotRegistered");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// K5/P1.2：來源 PDF 串流資料面——`doc_id` 與 `path` 皆可達已登記 PDF（200＋
+/// `application/pdf`＋`Content-Disposition: inline`）；doc 帶 figures source 而請求者
+/// 知識面無授權（空 plan）→ 403 `media.sourceDenied`（M1 與角色層級無關——admin 亦擋）。
+#[tokio::test]
+async fn source_pdf_serves_registered_doc_and_enforces_m1() {
+    use ocore::knowledge::figures::Sidecar;
+
+    let dir = temp_dir("sourcepdf2");
+    let figdb = dir.join("figures.sqlite");
+    // 庫內登記路徑一律正斜線——與 URI 查詢字串相容（Windows 讀檔亦接受）。
+    let pdf_str = format!("{}/mueller2016.pdf", dir.to_string_lossy().replace('\\', "/"));
+    std::fs::write(&pdf_str, b"%PDF-1.4 test").unwrap();
+    // sidecar：只登記 figure_docs（純文字命中——無 figures 列，僅登記查驗）
+    let sc = Sidecar::open(&figdb).unwrap();
+    sc.tag_doc_source("mueller2016", &pdf_str).unwrap();
+    drop(sc);
+    // load_cfg 讀 settings_dir 的 app-settings.json → 指到測試 sidecar
+    std::fs::write(
+        dir.join("app-settings.json"),
+        format!(
+            r#"{{"app_config": {{"notes_repo_path": "C:/notes", "gbrain_exe_path": "C:/gbrain.exe", "figures_db_path": "{}"}}}}"#,
+            figdb.to_string_lossy().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    // M1 面：企業 db schema 先建好（空授權 → 任何 source 都拒）
+    ocore::domain::SqliteStore::open(&dir.join("matrix.db")).unwrap();
+    let app = test_router(&dir);
+
+    // ① doc_id 查詢 → 200＋application/pdf＋inline
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri("/api/media/source-pdf?doc_id=mueller2016")
+        .header("authorization", "Bearer adm")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers().get("content-type").unwrap(), "application/pdf");
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(cd.starts_with("inline"), "Content-Disposition 應為 inline：{cd}");
+    let bytes = axum::body::to_bytes(resp.into_body(), 100_000).await.unwrap();
+    assert_eq!(&bytes[..], b"%PDF-1.4 test");
+
+    // ② path 查詢（精確比對 figure_docs.pdf_path 登記值）→ 同樣 200
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(format!("/api/media/source-pdf?path={pdf_str}"))
+        .header("authorization", "Bearer usr")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // ③ doc 帶 figures source（srcA）→ 空授權 plan → 403 media.sourceDenied
+    let db = rusqlite::Connection::open(&figdb).unwrap();
+    db.execute(
+        "INSERT INTO figures (doc_id, page, image_path, caption, source_id)
+         VALUES ('mueller2016', 4, 'x.png', 'c', 'srcA')",
+        [],
+    )
+    .unwrap();
+    drop(db);
+    for token in ["adm", "usr"] {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/media/source-pdf?doc_id=mueller2016")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{token} 應被 M1 擋");
+        let bytes = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["code"], "media.sourceDenied");
+    }
     std::fs::remove_dir_all(&dir).ok();
 }
 
