@@ -180,6 +180,9 @@ first-class retrievable items by caption, section, and page. The app detects
 and surfaces which mode you are in, and upgrading only re-embeds the (small)
 figure sidecar.
 
+![Employee chat answering a question about a paper figure — the retrieved
+figure is displayed inline, found via joint caption+image embedding](assets/operoid-mmproj-example.jpg)
+
 ## Core concepts
 
 | Concept | One-line role |
