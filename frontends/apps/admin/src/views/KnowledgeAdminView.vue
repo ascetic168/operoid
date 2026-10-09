@@ -30,6 +30,31 @@ interface TokenRow {
 interface PolicyRule {
   [key: string]: unknown
 }
+// K6 知識管線能力（/api/knowledge/health——admin 面完整形狀）
+interface MineruHealth {
+  resolved: boolean
+  tier: string | null
+  program: string | null
+  version: string | null
+  hint: string | null
+}
+interface EmbeddingHealth {
+  reachable: boolean
+  model: string | null
+  vision: boolean
+  long_input_ok: boolean
+  dimensions: number | null
+  error: string | null
+}
+interface VlmHealth {
+  capable: boolean | null
+  model: string
+}
+interface PipelineHealth {
+  embedding: EmbeddingHealth
+  vlm: VlmHealth
+  mineru: MineruHealth
+}
 
 const principals = ref<PrincipalRow[]>([])
 const scopes = ref<ScopeRow[]>([])
@@ -40,6 +65,9 @@ const error = ref('')
 const actionError = ref('')
 const okMsg = ref('')
 const busyId = ref('')
+// K6 能力狀態（載入失敗＝未知，區塊隱藏）
+const health = ref<PipelineHealth | null>(null)
+const healthError = ref(false)
 
 // principal 建立
 const pId = ref('')
@@ -176,13 +204,68 @@ async function revokeAllTokens(id: string): Promise<void> {
 
 const humanPrincipals = computed(() => principals.value.filter((p) => p.principal_type === 'human'))
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  // 能力狀態（admin 完整面：MinerU／嵌入 vision／chat VLM）；失敗＝未知不顯示。
+  void api
+    .get<PipelineHealth>('/api/knowledge/health')
+    .then((h) => {
+      health.value = h
+    })
+    .catch(() => {
+      healthError.value = true
+    })
+})
 </script>
 
 <template>
   <div>
     <ErrorBox :message="offline ? t('login.offline') : error || actionError" />
     <p v-if="okMsg" class="okline">{{ okMsg }}</p>
+
+    <!-- K6 知識管線能力（缺項不阻斷——fallback 已內建；顯示影響與解鎖條件） -->
+    <h2 class="sec">{{ t('ka.capsTitle') }}</h2>
+    <p v-if="healthError" class="muted">{{ t('ka.capsUnavailable') }}</p>
+    <div v-else-if="health" class="grid">
+      <div class="card">
+        <h2>{{ t('ka.capsMineru') }} {{ health.mineru.resolved ? '✓' : '✗' }}</h2>
+        <p class="muted" style="font-size: 0.8rem">
+          {{ health.mineru.resolved ? t('ka.capsMineruOk') : t('ka.capsMineruMissing') }}
+        </p>
+        <p
+          v-if="health.mineru.resolved && health.mineru.program"
+          class="muted"
+          style="font-size: 0.72rem; font-family: monospace"
+        >
+          {{ health.mineru.program }}<template v-if="health.mineru.version"> · {{ health.mineru.version }}</template>
+        </p>
+      </div>
+      <div class="card">
+        <h2>{{ t('ka.capsEmbedding') }} {{ !health.embedding.reachable ? '?' : health.embedding.vision ? '✓' : '✗' }}</h2>
+        <p class="muted" style="font-size: 0.8rem">
+          {{
+            !health.embedding.reachable
+              ? t('ka.capsEmbeddingDown')
+              : health.embedding.vision
+                ? t('ka.capsEmbeddingMm')
+                : t('ka.capsEmbeddingTextOnly')
+          }}
+        </p>
+        <p
+          v-if="health.embedding.reachable && !health.embedding.long_input_ok"
+          class="muted"
+          style="font-size: 0.8rem; color: var(--danger, #b45309)"
+        >
+          {{ t('ka.capsBatchFlag') }}
+        </p>
+      </div>
+      <div class="card">
+        <h2>{{ t('ka.capsVlm') }} {{ health.vlm.capable === null ? '–' : health.vlm.capable ? '✓' : '✗' }}</h2>
+        <p class="muted" style="font-size: 0.8rem">
+          {{ health.vlm.capable === null ? t('ka.capsVlmUnknown') : health.vlm.capable ? t('ka.capsVlmOk') : t('ka.capsVlmNo') }}
+        </p>
+      </div>
+    </div>
 
     <!-- 帳號主體（ai_employee 服務型 principal）＋ token -->
     <h2 class="sec">{{ t('ka.principals') }}</h2>

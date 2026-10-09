@@ -258,7 +258,9 @@
     "close": "Close",
     "targetBar": "Conversion target",
     "targetHintConvert": "Defaults to the enterprise default source (synced by the system); picking a department/project or a higher level auto-provisions the matching scope and source and graphs the pages right after conversion (author needs the matching clearance).",
-    "targetCaptureNote": "The capture pipeline does not write to any repository — a conversion target does not apply to this type."
+    "targetCaptureNote": "The capture pipeline does not write to any repository — a conversion target does not apply to this type.",
+    "capsMineruMissing": "MinerU not detected - only very simple PDFs (plain text, no figures) can be processed at full quality. Two-column papers, scans and figure-heavy PDFs will degrade; ask your administrator to install MinerU.",
+    "capsNoVision": "Embedding model has no multimodal support - PDF figures are indexed by caption text only, limiting image-content retrieval."
   },
   "factory": {
     "csvOnly": "people factory only accepts .csv: {file}",

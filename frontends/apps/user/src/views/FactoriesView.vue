@@ -11,6 +11,23 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const { t } = useI18n()
 
+// ── K6 知識管線能力狀態（上傳面提示）──降級不阻斷（後端有 fallback），但使用者
+//    應在上傳前就知道品質上限：MinerU 缺＝僅簡單 PDF、無 vision＝圖片僅 caption 索引。
+interface PipelineCaps {
+  mineru_resolved: boolean
+  embedding_reachable: boolean
+  embedding_vision: boolean
+}
+const caps = ref<PipelineCaps | null>(null)
+const capsNotices = computed<string[]>(() => {
+  const c = caps.value
+  if (!c) return []
+  const out: string[] = []
+  if (!c.mineru_resolved) out.push(t('factories.capsMineruMissing'))
+  if (c.embedding_reachable && !c.embedding_vision) out.push(t('factories.capsNoVision'))
+  return out
+})
+
 // ── 後端契約形狀（鏡像 ocore factories／classifier 的 serde 輸出）──
 interface L10n {
   code: string
@@ -462,6 +479,13 @@ function closeEditor(): void {
 
 onMounted(() => {
   void loadTypes()
+  // 能力狀態（便宜探測：/v1/models＋檔案存在性）；失敗＝未知，不提示。
+  void api
+    .get<PipelineCaps>('/api/knowledge/caps')
+    .then((c) => {
+      caps.value = c
+    })
+    .catch(() => {})
 })
 onBeforeUnmount(() => {
   cleanupStaging()
@@ -474,6 +498,7 @@ onBeforeUnmount(() => {
     <h2 class="sec">{{ t('factories.title') }}</h2>
     <p class="muted">{{ t('factories.desc') }}</p>
 
+    <div v-for="(n, i) in capsNotices" :key="`caps${i}`" class="hintwarn">{{ n }}</div>
     <div v-if="v2Hint" class="hintwarn">{{ v2Hint }}</div>
 
     <!-- 轉換寫入目標（C13c 圈子×等級）：套用於拖放轉換與自動分類；預設＝企業預設來源 -->

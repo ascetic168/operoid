@@ -65,6 +65,8 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         ("POST", Some("/api/commitments/{id}/satisfy")) => Req::Manager,
         // R3：服務狀態唯讀（顯示列出——語意即 admin）
         ("GET", Some("/api/service/status")) => Req::Admin,
+        // K6：知識管線精簡能力狀態（user 上傳面提示——精簡面，不含內部路徑／端點等管理資訊）
+        ("GET", Some("/api/knowledge/caps")) => Req::User,
 
         // 一般使用者可操作（限自身——handler 裁定）
         ("POST", Some("/api/employees/deploy"))

@@ -80,6 +80,8 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         // K6 知識管線健康（admin——路由未列於 RBAC 表 → fail-closed 預設 admin-only；
         // 會跑網路／spawn 探測，勿掛啟動路徑）
         .route("/api/knowledge/health", get(api_knowledge_health))
+        // K6 精簡能力狀態（Req::User——user 上傳面提示；便宜探測：無 spawn、只打 /v1/models）
+        .route("/api/knowledge/caps", get(api_knowledge_caps))
         .layer(crate::routes::cors_layer())
 }
 
@@ -1652,4 +1654,23 @@ async fn api_knowledge_health(
     let health =
         ocore::knowledge::doctor::check(&embed_base, chat, &cfg.convert_config()).await;
     ok_json(serde_json::to_value(&health).unwrap_or_default())
+}
+
+
+/// `GET /api/knowledge/caps`——使用者層級的精簡能力狀態（企業版 user 前端上傳面）。
+/// 只回答「複雜 PDF 能否完整轉換／圖片索引有無多模態」，不含管理資訊。
+async fn api_knowledge_caps(State(state): State<Arc<ServerState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let cfg = match load_cfg(&state) {
+        Ok(c) => c,
+        Err(e) => return err_response(&e),
+    };
+    let caps = ocore::knowledge::doctor::quick_status(
+        ocore::knowledge::doctor::DEFAULT_EMBEDDING_BASE,
+        &cfg.convert_config(),
+    )
+    .await;
+    ok_json(serde_json::to_value(&caps).unwrap_or_default())
 }

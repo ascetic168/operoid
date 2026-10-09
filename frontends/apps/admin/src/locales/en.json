@@ -95,7 +95,21 @@
     "policy": "Policy rules",
     "policySave": "Save policy (version+1)",
     "policyInvalidJson": "Invalid policy JSON",
-    "policySaved": "Policy saved"
+    "policySaved": "Policy saved",
+    "capsTitle": "Knowledge pipeline capabilities",
+    "capsUnavailable": "Unable to fetch capability status.",
+    "capsMineru": "MinerU (complex PDF conversion)",
+    "capsMineruOk": "Ready - complex PDFs go through full MinerU conversion (section chunking + figure notes).",
+    "capsMineruMissing": "Not installed - PDFs take the fast path (plain text, no image-side data). Unlock: install MinerU on the server (uv tool install mineru) or set [knowledge] mineru_command.",
+    "capsEmbedding": "Embedding endpoint (llama-server)",
+    "capsEmbeddingDown": "Unreachable - knowledge retrieval and PDF conversion need the embedding service (default 127.0.0.1:8080).",
+    "capsEmbeddingMm": "Multimodal embedding available - images can get joint caption+image vectors.",
+    "capsEmbeddingTextOnly": "Text-only embedding - images are indexed by caption + section + page. Unlock: add --mmproj to the llama-server launch flags.",
+    "capsBatchFlag": "Long input rejected - llama-server needs -b 8192 -ub 8192 launch flags (default 512 rejects long chunks).",
+    "capsVlm": "Chat endpoint VLM (generation-side image reading)",
+    "capsVlmUnknown": "Not probed - configure a chat endpoint to evaluate read-image answering.",
+    "capsVlmOk": "Can read images - the generator reads the original figure when retrieval hits one.",
+    "capsVlmNo": "Cannot read images - the generator degrades to locator mode (points at the figure instead of guessing pixel content)."
   },
   "brains": {
     "heading": "Brains",

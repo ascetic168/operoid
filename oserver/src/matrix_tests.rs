@@ -141,6 +141,8 @@ const INVENTORY: &[(&str, &str)] = &[
     ("GET", "/api/prereq"),
     // K6 知識管線健康（未列 rbac 矩陣 → Admin fail-closed——探測面屬管理資訊）
     ("GET", "/api/knowledge/health"),
+    // K6 精簡能力狀態（Req::User——上傳面提示）
+    ("GET", "/api/knowledge/caps"),
     // R3 新增
     ("POST", "/api/commitments/{id}/satisfy"),
     ("GET", "/api/stream"),

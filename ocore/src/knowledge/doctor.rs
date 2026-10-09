@@ -75,6 +75,57 @@ pub struct KnowledgeHealth {
     pub mineru: MineruHealth,
 }
 
+/// 使用者層級的**精簡能力狀態**（企業版 user 前端的上傳面提示用）。
+/// 只回答使用者能感知的兩件事：「複雜 PDF 能不能完整轉換」「圖片索引有沒有多模態」——
+/// 不含內部路徑／端點 URL／版本等管理資訊。
+#[derive(Debug, Clone, Serialize)]
+pub struct QuickStatus {
+    /// false＝MinerU 未偵測到，PDF 走快速路徑（僅非常簡單的 PDF 有完整品質）。
+    pub mineru_resolved: bool,
+    pub embedding_reachable: bool,
+    /// false＝圖片僅以文字說明索引（caption＋章節＋頁碼）。
+    pub embedding_vision: bool,
+}
+
+impl QuickStatus {
+    /// 上傳面是否該提示（任一降級成立）。
+    pub fn degraded(&self) -> bool {
+        !self.mineru_resolved || (self.embedding_reachable && !self.embedding_vision)
+    }
+}
+
+/// 精簡探測——刻意便宜：MinerU 只做檔案存在性（不 spawn、不打遠端）；
+/// 嵌入只 GET `/v1/models`（不做長輸入實測）。適合每次上傳面載入呼叫。
+pub async fn quick_status(embedding_base: &str, mineru_cfg: &ConvertConfig) -> QuickStatus {
+    let mineru_resolved = ladder::resolve(mineru_cfg).resolved();
+    let models_url = format!("{}/models", embedding_base.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok();
+    let (embedding_reachable, embedding_vision) = match client
+        .map(|c| c.get(&models_url).send())
+    {
+        Some(fut) => match fut.await {
+            Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
+                Ok(v) => {
+                    let (_, mods, _) = parse_models(&v);
+                    (true, mods.iter().any(|m| m.eq_ignore_ascii_case("image")))
+                }
+                Err(_) => (true, false),
+            },
+            Ok(_) => (true, false),
+            Err(_) => (false, false),
+        },
+        None => (false, false),
+    };
+    QuickStatus {
+        mineru_resolved,
+        embedding_reachable,
+        embedding_vision,
+    }
+}
+
 // ── 探測 ─────────────────────────────────────────────────────────────────
 
 /// 完整健康檢查。`chat`為 Some 時才探 VLM（無 chat 端點的環境跳過——K5 略過讀圖）。
@@ -384,6 +435,20 @@ mod tests {
         assert!(h.resolved);
         assert_eq!(h.tier.as_deref(), Some("local"));
         assert!(h.hint.is_none());
+    }
+
+    /// 精簡狀態的提示判定：MinerU 缺、或（嵌入可達但無 vision）→ 提示；
+    /// 嵌入離線＝未知，**不**誤報 vision 缺（unknown ≠ missing）。
+    #[test]
+    fn quick_status_degraded_semantics() {
+        let s = QuickStatus { mineru_resolved: false, embedding_reachable: true, embedding_vision: true };
+        assert!(s.degraded(), "MinerU 缺應提示");
+        let s = QuickStatus { mineru_resolved: true, embedding_reachable: true, embedding_vision: false };
+        assert!(s.degraded(), "無 vision 應提示");
+        let s = QuickStatus { mineru_resolved: true, embedding_reachable: true, embedding_vision: true };
+        assert!(!s.degraded());
+        let s = QuickStatus { mineru_resolved: true, embedding_reachable: false, embedding_vision: false };
+        assert!(!s.degraded(), "嵌入離線是未知不是缺失——不提示");
     }
 
     /// **K6 實機**（#[ignore]：需本機 llama-server；手動跑）：

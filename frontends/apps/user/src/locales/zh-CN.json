@@ -258,7 +258,9 @@
     "close": "关闭",
     "targetBar": "转换写入目标",
     "targetHintConvert": "默认写入企业默认来源（同步由系统管理）；指定部门／项目或更高保密等级时，系统自动创建对应范围与来源、转换完成立即入图（需具备该等级 clearance）。",
-    "targetCaptureNote": "速记（capture）管线不落盘——写入目标对此类型不适用。"
+    "targetCaptureNote": "速记（capture）管线不落盘——写入目标对此类型不适用。",
+    "capsMineruMissing": "未检测到 MinerU——目前仅能完整处理非常简单的 PDF（纯文字、无图表）；双栏论文／扫描／含图 PDF 的转换质量将下降，请联系管理员安装 MinerU。",
+    "capsNoVision": "嵌入模型未启用多模态——PDF 图片仅以文字说明索引，图片内容的检索能力受限。"
   },
   "factory": {
     "csvOnly": "people 工厂只接受 .csv：{file}",

@@ -95,7 +95,21 @@
     "policy": "授权政策（policy rules）",
     "policySave": "保存政策（version+1）",
     "policyInvalidJson": "政策 JSON 格式错误",
-    "policySaved": "政策已保存"
+    "policySaved": "政策已保存",
+    "capsTitle": "知识管线能力",
+    "capsUnavailable": "无法取得能力状态。",
+    "capsMineru": "MinerU（复杂 PDF 转换）",
+    "capsMineruOk": "已就绪——复杂 PDF 经 MinerU 完整转换（章节切块＋图片笔记）。",
+    "capsMineruMissing": "未安装——PDF 仅走快速路径（纯文字、无图片侧数据）。解锁：服务器安装 MinerU（uv tool install mineru）或设定 [knowledge] mineru_command。",
+    "capsEmbedding": "嵌入端点（llama-server）",
+    "capsEmbeddingDown": "无法连接——知识检索与 PDF 转换需要嵌入服务（默认 127.0.0.1:8080）。",
+    "capsEmbeddingMm": "多模态嵌入可用——图片可做「caption＋原图」联合向量。",
+    "capsEmbeddingTextOnly": "纯文字嵌入——图片仅以 caption＋章节＋页码索引。解锁：llama-server 启动旗标加 --mmproj。",
+    "capsBatchFlag": "长输入被拒——llama-server 启动旗标需加 -b 8192 -ub 8192（默认 512 拒收长 chunk）。",
+    "capsVlm": "chat 端点 VLM（生成端读图）",
+    "capsVlmUnknown": "未探测——配置 chat 端点后可评估读图作答能力。",
+    "capsVlmOk": "可读图作答——命中图片时生成端可读原图回答。",
+    "capsVlmNo": "不可读图——生成端降级为「定位者」模式（指出图片位置，不推测像素内容）。"
   },
   "brains": {
     "heading": "脑",

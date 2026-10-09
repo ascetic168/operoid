@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### Capability status reaches the enterprise user tier (upload surface)
+
+- New `GET /api/knowledge/caps` (Req::User in the RBAC matrix): a
+  sanitized, cheap capability probe for non-admin roles - MinerU
+  resolved (file-existence only, no spawn) and embedding endpoint
+  reachable/vision (`/v1/models` only, no long-input embed). No internal
+  paths or endpoint URLs leak to user roles.
+- User frontend (factory upload view): warning strips before upload when
+  MinerU is missing ("only very simple PDFs at full quality - ask your
+  administrator") or images are caption-only indexed. Silent when the
+  status is unknown (server unreachable).
+- Admin frontend (knowledge admin view): capability matrix card
+  (MinerU tier/program/version, embedding vision + batch-flag
+  discipline, chat VLM) from the existing admin-only health endpoint,
+  with unlock instructions.
+- ocore: `doctor::quick_status` + degraded semantics tests (offline
+  embedding is "unknown", never reported as "missing vision").
+
 ### Capability awareness UI - MinerU / multimodal embedding not detected
 
 - The K1 fallback chain (MinerU missing -> fast path, no multimodal
