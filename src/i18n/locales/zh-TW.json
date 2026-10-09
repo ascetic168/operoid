@@ -107,7 +107,7 @@
   "app": {
     "nav": {
       "factories": "工廠",
-      "operations": "操作",
+      "operations": "知識庫",
       "brains": "腦",
       "config": "設定",
       "employeeTemplate": "員工模板",
@@ -349,7 +349,7 @@
     }
   },
   "operations": {
-    "title": "操作 — GBrain CLI",
+    "title": "知識庫 — GBrain CLI",
     "desc": "包裝 gbrain 指令並串流輸出。",
     "askPlaceholder": "ask / think 的問題（think 可用 anchor:slug 換行後接問題）",
     "slugPlaceholder": "slug（graph-query）",

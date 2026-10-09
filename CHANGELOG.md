@@ -15,6 +15,15 @@
 
 ## [Unreleased]
 
+### Desktop nav: rename the gbrain console entry to 知識庫 (Knowledge Base)
+
+- The left-nav entry for `/operations` (direct gbrain knowledge
+  queries: ask/query/think plus maintenance ops) read 操作/Operations
+  and was easily misread as "run/execute"; it is now 知識庫 /
+  知识库 / Knowledge Base, and the page title is aligned to
+  「知識庫 — GBrain CLI」. Label-only i18n change - no route or view
+  changes.
+
 ### Enterprise web: inline retrieved figures and source-PDF links
 
 - The three enterprise web frontends now render the deterministic

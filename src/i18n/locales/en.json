@@ -107,7 +107,7 @@
   "app": {
     "nav": {
       "factories": "Factories",
-      "operations": "Operations",
+      "operations": "Knowledge Base",
       "brains": "Brains",
       "config": "Settings",
       "employeeTemplate": "Templates",
@@ -349,7 +349,7 @@
     }
   },
   "operations": {
-    "title": "Operations — GBrain CLI",
+    "title": "Knowledge Base — GBrain CLI",
     "desc": "Wraps gbrain commands and streams their output.",
     "askPlaceholder": "Question for ask / think (think may use anchor:slug on a new line)",
     "slugPlaceholder": "slug (graph-query)",
