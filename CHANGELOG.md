@@ -50,6 +50,22 @@
   rendered; figures now display too).
 - ocore::knowledge::media: MediaSigner + percent_encode; tamper/expiry
   tests.
+- **Route wiring fix**: the two endpoints existed only as handlers -
+  they were never registered on the router, the RBAC table, or
+  `is_public()`, so every request 404'd (and the build carried
+  dead-code warnings). `gbrain_routes()` now serves both routes,
+  `POST /api/media/figure-urls` is listed as Req::User in the RBAC
+  matrix, and `GET /api/media/figure` is allowlisted as public (the
+  handler itself performs the HMAC + sidecar validation).
+
+### Dev server binds IPv4 so `tauri dev` stops hanging
+
+- On Windows, Node 17+ resolves `localhost` per OS DNS order, so vite
+  bound `::1` (IPv6) only, while the Tauri CLI polled
+  `http://localhost:1420` via `127.0.0.1` - dev start stalled forever
+  at "Waiting for your frontend dev server". vite now binds
+  `127.0.0.1` explicitly (`TAURI_DEV_HOST` still takes precedence) and
+  `devUrl` pins `http://127.0.0.1:1420`.
 
 ### Mixed batches route per-file
 

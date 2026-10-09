@@ -8,7 +8,7 @@
 //!   ——媒體層繼承 M1 鐵律，不繞過（C4）。
 //! - serve 端再雙重查驗：簽名驗證＋sidecar allowlist（路徑必須登記過）。
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 

@@ -17,7 +17,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    // 固定綁 IPv4：Node 17+ 對 "localhost" 依 OS DNS 序解析，Windows 上常解析成
+    // ::1 只綁 IPv6，而 Tauri CLI 以 127.0.0.1 輪詢 devUrl → 永遠 Waiting。
+    // TAURI_DEV_HOST（行動裝置實機測試）設定時仍優先採用。
+    host: host || "127.0.0.1",
     hmr: host
       ? { protocol: "ws", host, port: 1421 }
       : undefined,

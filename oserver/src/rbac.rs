@@ -91,6 +91,10 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         // 維運／診斷 ops 留在 Req::Manager 的 /api/operations）
         ("POST", Some("/api/knowledge/ask")) => Req::User,
 
+        // K5/P1：媒體簽發（Req::User——簽名前 handler 內再過知識織網 M1 授權；
+        // 對應的 GET /api/media/figure 為 Public＋HMAC 簽名即驗證，走 is_public 放行）
+        ("POST", Some("/api/media/figure-urls")) => Req::User,
+
         // 高階經理人（營運視圖＋治理動作；承諾核可「限自身」由 handler 細化）
         ("GET", Some("/api/registry"))
         | ("POST", Some("/api/operations"))
@@ -111,10 +115,13 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
 }
 
 /// 公開路徑（免 authn）——OPTIONS preflight 另於中介層放行。
+/// `/api/media/figure` 為帶簽圖片服務：免 Bearer（<img> 帶不了 header），
+/// 由 handler 查驗 HMAC 簽名（綁 path＋principal＋過期）＋sidecar allowlist。
 pub fn is_public(path: &str) -> bool {
     path == "/healthz"
         || path == "/"
         || path == "/api/auth/login"
+        || path == "/api/media/figure"
         || path.starts_with("/admin")
         || path.starts_with("/manager")
         || path.starts_with("/user")

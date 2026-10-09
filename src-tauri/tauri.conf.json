@@ -4,7 +4,7 @@
   "identifier": "com.operoid.studio",
   "build": {
     "beforeDevCommand": "npm run dev:all",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build && node scripts/prepare-obridge.mjs",
     "frontendDist": "../dist"
   },

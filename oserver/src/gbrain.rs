@@ -90,6 +90,10 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         )
         // K5/P1：檢索命中圖片的安全服務（Req::User——只服務 sidecar 登記過的路徑）
         .route("/api/knowledge/figure-image", get(api_knowledge_figure_image))
+        // K5/P1：媒體簽名（POST=Req::User，RBAC 表明列；GET=Public——簽名即驗證，
+        // <img> 標籤帶不了 Bearer，is_public 放行後由 handler 查驗 HMAC＋sidecar）
+        .route("/api/media/figure-urls", post(api_media_sign_figure_urls))
+        .route("/api/media/figure", get(api_media_figure))
         .layer(crate::routes::cors_layer())
 }
 
