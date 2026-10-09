@@ -15,6 +15,14 @@
 
 ## [Unreleased]
 
+### Mixed batches route per-file
+
+- The previous all-PDF gate left mixed batches (PDF + txt/md/csv)
+  handling PDFs through the naive extractor. `run_core` now partitions
+  per file: PDFs go to the knowledge pipeline, everything else follows
+  the original factory dispatch; results merge (counts, written, pages,
+  files, errors).
+
 ### Drag-and-drop does everything: the factory PDF flow now runs the knowledge pipeline
 
 - `run_core` routes all-PDF batches to the knowledge pipeline

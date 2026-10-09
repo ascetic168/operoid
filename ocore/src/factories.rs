@@ -204,27 +204,50 @@ pub async fn run_core(
 ) -> Result<PreviewResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
 
-    // 多模態檢索升級（K1～K5）：全 PDF 批次 → 知識管線（複雜度分流 → MinerU/
-    // 快速路徑 → 章節切塊筆記＋圖片筆記 → sidecar → 向量回填）——拖 PDF 進工廠
-    // 即自動完成，不需要單獨的按鈕。混合批次仍走原分流（逐檔處理）。
-    let all_pdf = !paths.is_empty()
-        && paths.iter().all(|p| {
+    // 多模態檢索升級（K1～K5）：PDF 逐檔分流——PDF 進知識管線（複雜度分流 →
+    // MinerU/快速路徑 → 章節切塊筆記＋圖片筆記 → sidecar → 向量回填），其餘檔案
+    // 走原工廠分流。拖 PDF 進工廠即自動完成，混合批次也逐檔正確。
+    let (pdfs, others): (Vec<String>, Vec<String>) = paths
+        .iter()
+        .cloned()
+        .partition(|p| {
             Path::new(p)
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.eq_ignore_ascii_case("pdf"))
                 .unwrap_or(false)
         });
-    if all_pdf {
-        return run_pdf_knowledge(cfg, &notes, paths).await;
-    }
 
-    let (pack, spec) = spec_for(cfg, factory)?;
-    match spec.pipeline {
-        Pipeline::People => run_people(pack, spec, cfg, &notes, paths).await,
-        Pipeline::Textual => run_textual(pack, spec, cfg, &notes, paths).await,
-        Pipeline::Capture => run_inbox(spec, cfg, &notes, paths),
+    let mut results: Vec<PreviewResult> = Vec::new();
+    if !pdfs.is_empty() {
+        results.push(run_pdf_knowledge(cfg, &notes, &pdfs).await?);
     }
+    if !others.is_empty() {
+        let (pack, spec) = spec_for(cfg, factory)?;
+        results.push(match spec.pipeline {
+            Pipeline::People => run_people(pack, spec, cfg, &notes, &others).await?,
+            Pipeline::Textual => run_textual(pack, spec, cfg, &notes, &others).await?,
+            Pipeline::Capture => run_inbox(spec, cfg, &notes, &others)?,
+        });
+    }
+    Ok(merge_previews(results))
+}
+
+/// 合併多個分流結果（逐檔分流的總合）：清單延伸、計數累加；單一結果原樣返回。
+fn merge_previews(mut results: Vec<PreviewResult>) -> PreviewResult {
+    if results.len() == 1 {
+        return results.pop().expect("len checked");
+    }
+    let mut it = results.into_iter();
+    let mut first = it.next().expect("len checked");
+    for r in it {
+        first.total += r.total;
+        first.written.extend(r.written);
+        first.errors.extend(r.errors);
+        first.files.extend(r.files);
+        first.sample.extend(r.sample);
+    }
+    first
 }
 
 /// PDF 知識管線（K1～K5 整合）：每個 PDF 經複雜度分流轉換為知識筆記（章節切塊
