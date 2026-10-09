@@ -18,6 +18,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 
 use crate::knowledge::service::RETRIEVAL_QUERY_PREFIX;
@@ -224,6 +225,17 @@ impl Sidecar {
             rusqlite::params![doc_id, page, description],
         )?;
         Ok(())
+    }
+
+    /// 依圖檔路徑查來源 source_id（媒體簽名的授權檢查用）。
+    pub fn source_of_path(&self, path: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source_id FROM figures WHERE image_path = ?1 LIMIT 1")?;
+        let v = stmt
+            .query_row([path], |r| r.get::<_, Option<String>>(0))
+            .optional()?;
+        Ok(v.flatten())
     }
 
     /// 文件統計：（列數、其中已有向量的列數）——入庫報告／測試用。

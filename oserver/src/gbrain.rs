@@ -1842,6 +1842,41 @@ async fn api_knowledge_figure_image(
         )
             .into_response();
     };
+    serve_registered_figure(&state, &path).await
+}
+
+
+// ── K5/P1：媒體簽名 URL（企業瀏覽器讀圖的認證面擴充）────────────────────
+
+static MEDIA_SIGNER: std::sync::LazyLock<ocore::knowledge::media::MediaSigner> =
+    std::sync::LazyLock::new(|| {
+        ocore::knowledge::media::MediaSigner::from_random().expect("os entropy")
+    });
+
+const MEDIA_URL_TTL_SECS: u64 = 300;
+
+/// `POST /api/media/figure-urls`——批量簽發圖片短時 URL。
+/// **簽名前先過知識織網授權**（M1 鐵律）：圖的 source 必須在請求者 principal
+/// 的 authorized_sources 內，否則拒簽。
+async fn api_media_sign_figure_urls(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(identity) = require_identity(&state, &headers, None) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "auth.unauthorized"})),
+        )
+            .into_response();
+    };
+    let Some(paths) = body["paths"].as_array() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": "media.pathsRequired"})),
+        )
+            .into_response();
+    };
     let cfg = match load_cfg(&state) {
         Ok(c) => c,
         Err(e) => return err_response(&e),
@@ -1856,13 +1891,124 @@ async fn api_knowledge_figure_image(
             .to_string_lossy()
             .into_owned()
         });
-    // 登記查驗（allowlist）。
+
+    // M1 授權面：以請求者 principal 評估 authorized_sources（複用 KnowledgeService 鐵律）。
+    let store = match ocore::domain::SqliteStore::open(&state.db_path) {
+        Ok(s) => s,
+        Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
+    };
+    let access = ocore::knowledge::types::AccessContext {
+        principal_id: identity.name.clone(),
+        principal_type: ocore::knowledge::types::PrincipalType::Human,
+        employee_id: None,
+        workspace_id: ocore::runtime::AGENT_WS.into(),
+        roles: identity.roles.clone(),
+        departments: vec![],
+        projects: vec![],
+        task_id: None,
+        purpose: Some("media-sign".into()),
+        clearance: None,
+    };
+    let svc = ocore::knowledge::service::KnowledgeService::new(&state.db_path);
+    let plan = match svc.plan(&store, &access) {
+        Ok(p) => p,
+        Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
+    };
+
+    let sidecar = ocore::knowledge::figures::Sidecar::open(&figures_db).ok();
+    let exp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + MEDIA_URL_TTL_SECS;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for p in paths {
+        let Some(path) = p.as_str() else { continue };
+        // 授權：圖的 source ∈ 請求者 authorized_sources（未登記/未授權 → 拒簽）。
+        let authorized = sidecar
+            .as_ref()
+            .and_then(|s| s.source_of_path(path).ok().flatten())
+            .map(|src| plan.source_ids.iter().any(|a| a == &src))
+            .unwrap_or(false);
+        if !authorized {
+            out.push(json!({ "path": path, "authorized": false }));
+            continue;
+        }
+        let sig = MEDIA_SIGNER.sign(path, &identity.name, exp);
+        let url = format!(
+            "/api/media/figure?path={}&principal={}&exp={}&sig={}",
+            ocore::knowledge::media::percent_encode(path),
+            ocore::knowledge::media::percent_encode(&identity.name),
+            exp,
+            sig
+        );
+        out.push(json!({ "path": path, "authorized": true, "url": url, "exp": exp }));
+    }
+    ok_json(json!({ "urls": out }))
+}
+
+/// `GET /api/media/figure`——帶簽圖片服務：簽名驗證＋sidecar allowlist
+/// （路徑必須登記過）雙重查驗後回圖位元組。路由為 Public——簽名即驗證
+/// （綁 path＋principal＋過期，開機隨機金鑰）。
+async fn api_media_figure(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // 帶 Bearer 者（個人 GUI／程式化客戶端）直接走既有認證。
+    if headers.get("authorization").is_some() {
+        if let Err(r) = require_auth(&state, &headers) {
+            return r;
+        }
+    }
+    let (Some(path), Some(principal), Some(exp_s), Some(sig)) = (
+        q.get("path").cloned(),
+        q.get("principal").cloned(),
+        q.get("exp").and_then(|v| v.parse::<u64>().ok()),
+        q.get("sig").cloned(),
+    ) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": "media.paramsRequired"})),
+        )
+            .into_response();
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    if !MEDIA_SIGNER.verify(&path, &principal, exp_s, now, &sig) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"code": "media.badSignature"})),
+        )
+            .into_response();
+    }
+    serve_registered_figure(&state, &path).await
+}
+
+/// 共用：sidecar allowlist 查驗＋讀檔回圖。
+async fn serve_registered_figure(state: &Arc<ServerState>, path: &str) -> Response {
+    let cfg = match load_cfg(state) {
+        Ok(c) => c,
+        Err(e) => return err_response(&e),
+    };
+    let figures_db = cfg
+        .figures_db_path
+        .clone()
+        .unwrap_or_else(|| {
+            ocore::knowledge::ingest::default_figures_db(std::path::Path::new(
+                cfg.notes_repo_path.trim_end_matches('/'),
+            ))
+            .to_string_lossy()
+            .into_owned()
+        });
     let registered = std::path::Path::new(&figures_db).is_file()
         && rusqlite::Connection::open(&figures_db)
             .and_then(|db| {
                 db.query_row(
                     "SELECT COUNT(*) FROM figures WHERE image_path = ?1",
-                    [&path],
+                    [path],
                     |r| r.get::<_, i64>(0),
                 )
             })
@@ -1875,7 +2021,7 @@ async fn api_knowledge_figure_image(
         )
             .into_response();
     }
-    let p = std::path::Path::new(&path);
+    let p = std::path::Path::new(path);
     let mime = match p
         .extension()
         .and_then(|e| e.to_str())

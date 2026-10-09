@@ -35,6 +35,22 @@
 - Degradation: VLM rejection/empty response/non-JSON are recorded as
   skipped-with-warning - the pipeline never fails on enrichment.
 
+### Media signing - enterprise browsers can now read retrieved figures
+
+- `POST /api/media/figure-urls` (Req::User): batch-signs figure paths
+  into short-lived URLs (HMAC-SHA256 over path+principal+expiry, 5-min
+  TTL, per-boot random key). **Signing goes through the M1 knowledge
+  fabric first**: a figure's source must be in the requesting
+  principal's authorized_sources, or signing is refused - the media
+  layer inherits the permission fabric instead of bypassing it.
+- `GET /api/media/figure` (Public + signature verification): serves the
+  registered image bytes after HMAC validation AND the sidecar
+  allowlist - no Bearer header needed, so `<img>` tags work in
+  enterprise browser conversations (the text citation links already
+  rendered; figures now display too).
+- ocore::knowledge::media: MediaSigner + percent_encode; tamper/expiry
+  tests.
+
 ### Mixed batches route per-file
 
 - The previous all-PDF gate left mixed batches (PDF + txt/md/csv)

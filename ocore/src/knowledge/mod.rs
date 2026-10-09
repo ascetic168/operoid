@@ -23,6 +23,7 @@ pub mod figures;
 pub mod fusion;
 pub mod grants;
 pub mod ingest;
+pub mod media;
 pub mod service;
 pub mod identity;
 pub mod planner;

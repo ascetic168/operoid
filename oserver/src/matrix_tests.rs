@@ -145,6 +145,8 @@ const INVENTORY: &[(&str, &str)] = &[
     ("POST", "/api/knowledge/ingest-pdf"),
     ("GET", "/api/knowledge/ingest-pdf/{id}"),
     ("GET", "/api/knowledge/figure-image"),
+    // K5/P1：媒體簽名（POST=Req::User；GET=Public+簽名驗證，不收矩陣）
+    ("POST", "/api/media/figure-urls"),
     // K6 精簡能力狀態（Req::User——上傳面提示）
     ("GET", "/api/knowledge/caps"),
     // R3 新增
