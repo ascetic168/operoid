@@ -32,6 +32,9 @@
   with unlock instructions.
 - ocore: `doctor::quick_status` + degraded semantics tests (offline
   embedding is "unknown", never reported as "missing vision").
+- Manager frontend (dashboard): same capability strip - managers direct
+  team file flows and should know the pipeline ceiling too; the
+  Req::User endpoint already covers the manager role.
 
 ### Capability awareness UI - MinerU / multimodal embedding not detected
 

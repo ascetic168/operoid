@@ -46,7 +46,9 @@
   "dash": {
     "employeesByState": "Employees by state",
     "registry": "Registry divergence",
-    "inboxHint": "Pending proposals are in the inbox."
+    "inboxHint": "Pending proposals are in the inbox.",
+    "capsMineruMissing": "MinerU not detected - PDFs uploaded by the team can currently be processed at full quality only if very simple (plain text, no figures). Complex PDFs will degrade; ask your system administrator to install MinerU.",
+    "capsNoVision": "Embedding model has no multimodal support - PDF figures are indexed by caption text only, limiting image-content retrieval."
   },
   "grants": {
     "grantHeading": "Grant a TTL knowledge authorization",

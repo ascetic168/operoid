@@ -46,7 +46,9 @@
   "dash": {
     "employeesByState": "員工狀態總覽",
     "registry": "登記表分歧摘要",
-    "inboxHint": "待核可提案請到收件匣。"
+    "inboxHint": "待核可提案請到收件匣。",
+    "capsMineruMissing": "未偵測到 MinerU——團隊上傳的 PDF 目前僅能完整處理非常簡單的文件（純文字、無圖表）；複雜 PDF 的轉換品質將下降，請聯絡系統管理員安裝 MinerU。",
+    "capsNoVision": "嵌入模型未啟用多模態——PDF 圖片僅以文字說明索引，圖片內容的檢索能力受限。"
   },
   "grants": {
     "grantHeading": "發放 TTL 知識授權",

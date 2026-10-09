@@ -55,4 +55,5 @@ watch(
 .nav a { color: var(--muted); text-decoration: none; font-size: 0.92rem; }
 .nav a.router-link-active { color: var(--accent); font-weight: 600; }
 .main { padding: 1.5rem; max-width: 72rem; margin: 0 auto; }
+.hintwarn { margin-top: 0.8rem; padding: 0.6rem 0.8rem; border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border)); border-radius: 0.5rem; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); color: var(--danger); font-size: 0.85rem; }
 </style>

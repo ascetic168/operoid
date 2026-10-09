@@ -6,6 +6,23 @@ import { computed, onMounted, ref } from 'vue'
 
 const { t } = useI18n()
 
+// ── K6 知識管線能力狀態（精簡面，/api/knowledge/caps——Req::User 涵蓋 manager）──
+//    管理人檔案流程的管理者應知道管線目前的上限；降級不阻斷（後端有 fallback）。
+interface PipelineCaps {
+  mineru_resolved: boolean
+  embedding_reachable: boolean
+  embedding_vision: boolean
+}
+const caps = ref<PipelineCaps | null>(null)
+const capsNotices = computed<string[]>(() => {
+  const c = caps.value
+  if (!c) return []
+  const out: string[] = []
+  if (!c.mineru_resolved) out.push(t('dash.capsMineruMissing'))
+  if (c.embedding_reachable && !c.embedding_vision) out.push(t('dash.capsNoVision'))
+  return out
+})
+
 interface EmployeeRow {
   id: string
   name: string
@@ -32,6 +49,12 @@ const byState = computed(() => {
 })
 
 onMounted(async () => {
+  // 能力狀態（便宜探測）；失敗＝未知，不提示。
+  try {
+    caps.value = await api.get<PipelineCaps>('/api/knowledge/caps')
+  } catch {
+    caps.value = null
+  }
   try {
     employees.value = await api.get<EmployeeRow[]>('/api/employees')
   } catch (e) {
@@ -53,6 +76,7 @@ onMounted(async () => {
 <template>
   <div>
     <ErrorBox :message="offline ? t('login.offline') : loadError" />
+    <div v-for="(n, i) in capsNotices" :key="`caps${i}`" class="hintwarn">{{ n }}</div>
     <div class="grid">
       <div class="card wide">
         <h2>{{ t('dash.employeesByState') }}（{{ employees.length }}）</h2>
