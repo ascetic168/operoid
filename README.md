@@ -282,7 +282,12 @@ Optional — for the document pipeline (complex PDFs → knowledge):
 |---|---|---|
 | **llama-server** (EmbeddingGemma 2) | local embedding backend for retrieval; launch flags in [DEPLOYMENT.md](DEPLOYMENT.md) | retrieval degrades to keyword-only |
 | **mmproj projector** (optional) | joint caption+image vectors for figures | figures indexed by caption text |
-| **MinerU** (optional) | complex-PDF parsing (two-column / scanned / figures) — `uv tool install mineru` | simple PDFs only, via the fast path |
+| **MinerU** (optional, **strongly recommended**; version > 4.0) | complex-PDF parsing (two-column / scanned / figures) — `uv tool install "mineru>4.0"` | simple PDFs only, via the fast path; figures inside documents never enter the knowledge base |
+
+**Why MinerU is strongly recommended**: complex-PDF parsing goes through
+MinerU. Everything still runs without it, but only simpler, well-formed
+documents parse correctly, and the figures inside those documents — needed
+for multimodal retrieval — never make it into the knowledge base.
 
 Everything is detected and surfaced in-app: a capability matrix under
 **Settings → Services** (personal edition) and across the enterprise
