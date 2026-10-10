@@ -41,3 +41,7 @@ bun.lock
 # R4: 企業前端 monorepo
 frontends/**/node_modules/
 frontends/**/dist/
+
+# 執行期／測試產物（不入版控）
+blobs/
+gui-test-screenshots/
