@@ -32,6 +32,11 @@
   the Action Registry; the hero author line links to the section.
 - Minor typo fixes from the hand edit: "IM 直達" spacing, space
   before the Claude Code link.
+- Convert the line-per-statement pseudo-lists to real bullets so
+  they render as lists on GitHub (manager's three questions,
+  capability/accountability/legitimacy, knowledge guarantees,
+  identity guarantees, the wake-on-trigger sequence); the IEEE
+  benchmark result now sits on its own line.
 
 ### README repositioned around organizational trust (marketing-first rewrite)
 
