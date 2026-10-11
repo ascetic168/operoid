@@ -412,3 +412,28 @@ macOS：`/Library/LaunchDaemons` 的 launchd LaunchDaemon）。安裝注意事�
   請改從你的帳號以 `sudo` 安裝。
 - 移除服務：`sudo oserver uninstall`。
 - Linux／macOS 的服務路徑已實作但**尚未實機驗證**（Windows 已驗證）。
+
+### 11.4 egress 揭露與責任分界（個人版）
+
+個人版的程序與資料都在本機：腦資料是本機檔案（預設 `~/.gbrain` 的 PGLite）、嵌入
+走本機 llama-server（127.0.0.1）、Claude Code handoff 以 **stdio 子程序**啟動
+`gbrain serve`（無監聽 port、無第三方遙測）。會離開這台機器的只有模型推論，且
+端點皆由使用者自行設定：
+
+| 通道 | 送往哪裡 | 送什麼 |
+|---|---|---|
+| 內建對話／agent 任務 | 腦設定的 chat model 端點（如 zhipu；gbrain 的 think／advisor 同） | 對話內容＋檢索到的知識片段 |
+| 文件轉換（K 管線） | 依 §10.3 信任分層；`public` 層預設擋 | 待轉換文件內容 |
+| Claude Code handoff | Claude 服務端點（Anthropic 或 `ANTHROPIC_BASE_URL`） | 對話內容＋檢索到的知識片段 |
+
+**責任分界**：個人版的使用者就是資料擁有者，「能否把資料送上雲端 LLM」屬公司
+IT 政策，不是 Operoid 的管制對象——不裝 Operoid，同樣的管道依然存在（本機腦
+資料對本機工具本來就是全開的）。Operoid 的義務是**揭露**（本節與啟動對話框的
+提示），不是**管制**。管制在企業模式：知識範圍於檢索前強制執行（fail-closed），
+且 `claude_code_handoff_enabled=false` 可整個退役 handoff。
+
+**handoff 通道的能力範圍（設計如此）**：啟動的 Claude Code 對所選腦有**完整讀寫**
+（stdio MCP 全量操作，含 `put_page`／`delete_page`／`submit_job` 等寫入類），
+不受知識範圍限制——對單人本機場景這是合理預設，代價是完整性風險（agent 誤改
+腦內容），以 gbrain 版本歷史（`revert_version`）與備份因應。企業場景不應依賴
+此通道，請改用受治理的員工能力。

@@ -15,6 +15,31 @@
 
 ## [Unreleased]
 
+### Claude Code handoff: egress disclosure + personal-edition responsibility boundary
+
+- The Claude Code launch dialog now states up front the two things a
+  user accepts when opening the handoff: the channel reads and writes
+  the whole brain (knowledge scopes do not apply), and conversation
+  plus retrieved knowledge content are sent to the Claude endpoint in
+  the cloud (zh-TW / zh-CN / en).
+- DEPLOYMENT.md §11.4 (new): a personal-edition egress inventory —
+  what stays local (PGLite brain file, local llama-server embedding,
+  stdio transport with no listening ports, no third-party telemetry)
+  and what leaves (the user-configured chat-model endpoint, the
+  §10.3-gated document pipeline, and the Claude endpoint when handoff
+  is used) — plus the responsibility boundary: personal edition
+  *discloses* egress but does not gate it (whether cloud LLMs may
+  touch company data is an IT-policy question; the same pipe exists
+  with or without Operoid). Enforcement belongs to enterprise mode:
+  fail-closed knowledge scopes before retrieval, and
+  `claude_code_handoff_enabled=false` retires the handoff entirely.
+- Documents that the handoff's full-brain read/write (stdio MCP
+  exposes write ops such as `put_page` / `delete_page` /
+  `submit_job`) is by design for the single-principal local case —
+  local brain data is already fully readable by any local agent —
+  with the integrity risk (an agent bulk-editing the brain) handled
+  by gbrain version history (`revert_version`) and backups.
+
 ### README founder style pass + About-the-author section
 
 - Founder's hand edits to the zh-TW README adopted as the house style
