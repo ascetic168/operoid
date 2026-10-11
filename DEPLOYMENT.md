@@ -370,3 +370,45 @@ llama-server --embedding \
 **gbrain 版本紀律**：chunking/slug 規則屬 gbrain 內部行為——本管線以 gbrain **0.60.105.0**
 驗證（12 查詢 hit@5 12/12、MRR 0.958）；升級 gbrain 後應重跑端到端評測
 （`cargo test -p ocore real_k7 -- --ignored --nocapture`）再上線。
+
+## 11. 個人版（桌面）：元件偵測、前置需求與降級行為
+
+桌面安裝檔即是個人版，安裝即用。知識相關功能依賴若干外部元件，全部自動偵測、
+缺了會在介面上明說（能力矩陣：個人版在「設定 → 服務」；企業版在
+admin／manager／user 三個網頁前端）。
+
+### 11.1 知識圖譜（gbrain）
+
+| 工具 | 用途 | 安裝 |
+|---|---|---|
+| **git** | sync 流程會在更新圖譜前先 commit | <https://git-scm.com/downloads> |
+| **bun** | `gbrain` 透過 bun 安裝與執行 | <https://bun.com/docs/installation#installation> |
+| **gbrain** | GBrain 知識圖譜引擎 | <https://github.com/garrytan/gbrain> |
+
+路徑會自動偵測（Windows 為 `~/.bun/bin/gbrain.exe`）；必要時可在「設定」頁覆寫。
+
+### 11.2 文件管線（嵌入與複雜 PDF）
+
+| 工具 | 用途 | 沒有它 |
+|---|---|---|
+| **llama-server**（EmbeddingGemma 2） | 本機嵌入後端（檢索用）；啟動旗標見第 10.1 節 | 檢索退為僅關鍵字 |
+| **mmproj 投影器**（選配） | 圖片的「圖說＋原圖」聯合向量 | 圖片以圖說文字索引 |
+| **MinerU**（選配，**強烈建議**；版本須 > 4.0） | 複雜 PDF 解析（雙欄／掃描／圖表）——`uv tool install "mineru>4.0"` | 僅簡單 PDF（走快速路徑）；文件內圖片無法進入知識庫 |
+
+**MinerU 為何強烈建議**：要解析複雜 PDF，本專案採用 MinerU。不裝它也能跑，但只能
+正確處理格式較為簡單的文件，且多模態檢索所需的文件內圖片無法進入知識庫。
+egress 信任分層見第 10.3 節。
+
+### 11.3 開機服務（Linux / macOS）
+
+Linux 與 macOS 的開機服務在**任何使用者登入前**就會啟動
+（Linux：`/etc/systemd/system` 的 systemd system unit；
+macOS：`/Library/LaunchDaemons` 的 launchd LaunchDaemon）。安裝注意事項：
+
+- 請**從你自己的帳號透過 `sudo` 安裝**（例如 `sudo oserver install`）。
+  提權只用在寫入系統位置的 unit/plist 檔；服務本身以**安裝者的身分**執行，
+  因此資料庫與設定檔的屬主和桌面 app 一致。
+- 若安裝程式無法判定安裝使用者（例如直接在 root shell 執行），會直接報錯拒絕——
+  請改從你的帳號以 `sudo` 安裝。
+- 移除服務：`sudo oserver uninstall`。
+- Linux／macOS 的服務路徑已實作但**尚未實機驗證**（Windows 已驗證）。

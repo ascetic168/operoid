@@ -15,6 +15,27 @@
 
 ## [Unreleased]
 
+### README repositioned around organizational trust (marketing-first rewrite)
+
+- All three READMEs (EN / zh-TW / zh-CN) rewritten with a
+  decision-maker-first narrative: "AI employees your company can
+  actually trust." Continuous execution is now framed as table
+  stakes; the differentiator is governance as architecture — the
+  human-drawn delegation boundary (Action Registry), fail-closed
+  knowledge permissions enforced before retrieval, and employee
+  identity with an audit receipt for every privileged act.
+- New category-level comparison table (no competitor named):
+  personal AI assistants / developer agent tools / cloud "AI
+  employee" SaaS / Operoid.
+- Slimmed from ~420 to ~200 lines per README: the document-pipeline
+  deep dive, prerequisites tables, and boot-service install notes
+  moved to DEPLOYMENT.md (new §11 "個人版（桌面）：元件偵測、前置
+  需求與降級行為"); the core-concepts table now lives behind the
+  Architecture Handbook link; developer build notes compressed.
+- Screenshots reduced to the two most communicative (manager inbox,
+  employee chat with visible tool calls).
+- Status line updated v0.4.3 → v0.5.0.
+
 ## [v0.5.0] - 2026-10-10
 
 ### Desktop nav: rename the gbrain console entry to 知識庫 (Knowledge Base)
