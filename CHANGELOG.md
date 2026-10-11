@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### README founder style pass + About-the-author section
+
+- Founder's hand edits to the zh-TW README adopted as the house style
+  and synced to EN / zh-CN: one statement per source line (no
+  mid-sentence wrapping), enumerable claims as lists (the manager's
+  three questions; the consultant's three lacks), the knowledge
+  heading noun aligned (知識 → 知識庫), trigger sources now include
+  messages from other human employees, and the IEEE benchmark line
+  simplified to "a real IEEE paper as the example: 12/12 top-5,
+  MRR 0.90".
+- New "About the author / 關於作者 / 关于作者" section at the end:
+  founder bio in first person (30 years in the optoelectronic
+  semiconductor industry, engineer → senior executive, now an
+  AI-adoption consultant), tied to the manufacturing-case origin of
+  the Action Registry; the hero author line links to the section.
+- Minor typo fixes from the hand edit: "IM 直達" spacing, space
+  before the Claude Code link.
+
 ### README repositioned around organizational trust (marketing-first rewrite)
 
 - All three READMEs (EN / zh-TW / zh-CN) rewritten with a
