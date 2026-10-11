@@ -132,6 +132,7 @@
     "title": "Open Claude Code",
     "brain": "Brain",
     "brainHint": "think / search covers all sources of this brain",
+    "egressNote": "This channel reads and writes the whole brain (knowledge scopes do not apply); conversation and retrieved knowledge content are sent to the Claude endpoint in the cloud.",
     "terminal": "Terminal",
     "terminalCustom": "Custom command template",
     "terminalTemplateHint": "Use {cwd} (working dir) and {cmd} (claude launch command) placeholders; e.g. wt -d \"{cwd}\" cmd /k {cmd}",

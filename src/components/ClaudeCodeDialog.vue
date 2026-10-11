@@ -243,6 +243,14 @@ async function launch() {
             <code class="break-all">{{ cwd || t("claude.cwdNone") }}</code>
           </div>
         </div>
+
+        <!-- egress 揭露：整腦讀寫＋對話內容上雲 -->
+        <div
+          class="flex items-start gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-[11px] text-warning"
+        >
+          <AlertTriangle :size="13" class="mt-0.5 shrink-0" />
+          <span>{{ t("claude.egressNote") }}</span>
+        </div>
       </div>
 
       <!-- error -->

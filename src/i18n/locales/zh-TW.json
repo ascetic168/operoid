@@ -132,6 +132,7 @@
     "title": "開啟 Claude Code",
     "brain": "腦",
     "brainHint": "think / search 涵蓋此腦全部來源",
+    "egressNote": "此通道可讀寫整顆腦（不受知識範圍限制）；對話與檢索到的知識內容會送往雲端的 Claude 端點。",
     "terminal": "終端機",
     "terminalCustom": "自訂指令範本",
     "terminalTemplateHint": "可用 {cwd}（工作目錄）與 {cmd}（claude 啟動指令）佔位字元；例：wt -d \"{cwd}\" cmd /k {cmd}",
