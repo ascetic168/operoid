@@ -5,17 +5,53 @@
 //! cfg 由呼叫端載入傳入；事件 emit 經 `Option<&AppState>`（殼層持有）。
 //! `#[tauri::command]` 層與 factory_open_dir（open crate／VS Code）在桌面殼。
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::agent_state::{AppState, EventKind, InboundEvent};
 use crate::app_config::AppConfig;
 use crate::converters::{csv_people, extract_companies, pdf_text, text_to_md};
+use crate::factory_sched::FactoryGate;
 use crate::factory_types::{self, FactoryTypeSpec, Pack, Pipeline};
 use crate::gbrain_config;
 use crate::i18n::{AppError, L10n};
-use crate::proc::no_console;
+
+/// 企業版公平調度閘門的引用形：`Some((閘門, 使用者 id))`＝逐檔過閘（oserver——
+/// 全域 ≤ `factory_concurrency` 名額、飽和時每位遠端使用者 1 線程）；
+/// `None`＝本地並發（桌面／個人版——單一批次內 `factory_concurrency` 檔並發）。
+pub type Gate<'a> = Option<(&'a FactoryGate, &'a str)>;
+
+/// 逐檔並發上限（防呆：0 視為 1）。
+fn file_concurrency(cfg: &AppConfig) -> usize {
+    cfg.factory_concurrency.max(1)
+}
+
+/// 逐檔驅動器（多工核心）：把 `paths` 逐檔丟給 `f` 並發執行、按輸入序收集結果。
+/// - `gate=None`：本地 `buffered(n)`——批次內 n 檔並發（個人版形）。
+/// - `gate=Some`：每檔包進 `FactoryGate::run`——並發由閘門全域裁定（企業版形，
+///   跨請求公平調度）；本地不再限流。
+async fn run_all<T, FU, F>(paths: Vec<String>, gate: Gate<'_>, local_max: usize, f: F) -> Vec<T>
+where
+    F: Fn(String) -> FU,
+    FU: Future<Output = T> + Send,
+    T: Send,
+{
+    match gate {
+        Some((g, user)) => {
+            futures::stream::iter(paths.into_iter().map(|p| g.run(user, local_max, f(p))))
+                .buffered(usize::MAX)
+                .collect::<Vec<T>>()
+                .await
+        }
+        None => futures::stream::iter(paths.into_iter().map(f))
+            .buffered(local_max)
+            .collect::<Vec<T>>()
+            .await,
+    }
+}
 
 /// 單檔轉換/寫入失敗的在地化訊息（code=factory.fileError，含 file+detail）。
 fn file_err(file: impl ToString, detail: impl ToString) -> L10n {
@@ -202,7 +238,20 @@ pub async fn run_core(
     paths: &[String],
     target_repo: Option<&str>,
 ) -> Result<PreviewResult, AppError> {
+    run_core_sched(cfg, factory, paths, target_repo, None).await
+}
+
+/// [`run_core`] 的多工版：`gate=Some` 時逐檔經企業公平閘門（oserver 接線）；
+/// `None` 與 `run_core` 完全等價（本地 `factory_concurrency` 檔並發）。
+pub async fn run_core_sched(
+    cfg: &AppConfig,
+    factory: &str,
+    paths: &[String],
+    target_repo: Option<&str>,
+    gate: Gate<'_>,
+) -> Result<PreviewResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
+    let max = file_concurrency(cfg);
 
     // 多模態檢索升級（K1～K5）：PDF 逐檔分流——PDF 進知識管線（複雜度分流 →
     // MinerU/快速路徑 → 章節切塊筆記＋圖片筆記 → sidecar → 向量回填），其餘檔案
@@ -220,14 +269,14 @@ pub async fn run_core(
 
     let mut results: Vec<PreviewResult> = Vec::new();
     if !pdfs.is_empty() {
-        results.push(run_pdf_knowledge(cfg, &notes, &pdfs).await?);
+        results.push(run_pdf_knowledge(cfg, &notes, &pdfs, gate, max).await?);
     }
     if !others.is_empty() {
         let (pack, spec) = spec_for(cfg, factory)?;
         results.push(match spec.pipeline {
-            Pipeline::People => run_people(pack, spec, cfg, &notes, &others).await?,
-            Pipeline::Textual => run_textual(pack, spec, cfg, &notes, &others).await?,
-            Pipeline::Capture => run_inbox(spec, cfg, &notes, &others)?,
+            Pipeline::People => run_people(pack, spec, cfg, &notes, &others, gate, max).await?,
+            Pipeline::Textual => run_textual(pack, spec, cfg, &notes, &others, gate, max).await?,
+            Pipeline::Capture => run_inbox(spec, cfg, &others, gate, max).await?,
         });
     }
     Ok(merge_previews(results))
@@ -255,15 +304,22 @@ fn merge_previews(mut results: Vec<PreviewResult>) -> PreviewResult {
 /// 生產庫（`figures_db_path` 或 notes repo 伴隨檔）、向量回填 best-effort。
 /// 來源歸檔：以 notes repo 比對 `sources list` 解析 source id（K4 授權鐵律；
 /// 解析失敗記警告——圖列暫不可見，事後補 tag 即可）。
+///
+/// 多工切分：**轉換**（MinerU/快速路徑子行程——重活）逐檔並發（本地上限或公平
+/// 閘門）；**sidecar 合併／向量回填／notes 複製**共享 sqlite 與覆寫語意，由
+/// 轉換完成後在父端按輸入序循序做（便宜步驟，序列化換正確性）。
 async fn run_pdf_knowledge(
     cfg: &AppConfig,
     notes: &Path,
     paths: &[String],
+    gate: Gate<'_>,
+    max: usize,
 ) -> Result<PreviewResult, AppError> {
     use crate::knowledge::figures::{self, Sidecar};
     use crate::knowledge::ingest::{default_figures_db, resolve_source_id};
 
     let conv = cfg.convert_config();
+    let conv = &conv; // 閉包以借用共享（async move 不得搬走——Fn 多次呼叫）
     let figures_db =
         cfg.figures_db_path.clone().unwrap_or_else(|| {
             default_figures_db(notes).to_string_lossy().into_owned()
@@ -282,32 +338,44 @@ async fn run_pdf_knowledge(
         // 不阻擋：筆記照寫（gbrain 文字路可檢），圖列待歸檔（事後補 tag）。
     }
 
+    // ── 階段一：逐檔並發轉換（重活；暫存目錄保留給階段二合併用）──
+    let converted: Vec<(String, PathBuf, Result<crate::converters::mineru::ConversionOutcome, L10n>)> =
+        run_all(paths.to_vec(), gate, max, |p| async move {
+            let work = std::env::temp_dir().join(format!(
+                "pdf-factory-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                PDF_WORK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            let _ = std::fs::create_dir_all(&work);
+            let outcome = match crate::converters::mineru::convert(Path::new(&p), &work, &conv).await {
+                Ok(o) => Ok(o),
+                Err(e) => Err(L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string())),
+            };
+            (p, work, outcome)
+        })
+        .await;
+
+    // ── 階段二：共享寫入（循序；與多工前逐檔行為一致）──
     let mut pages: Vec<PreviewPage> = Vec::new();
     let mut written: Vec<String> = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
     let mut files: Vec<ProcessedFile> = Vec::new();
     let mut total_notes = 0usize;
 
-    for (i, p) in paths.iter().enumerate() {
+    for (p, work, outcome) in converted {
         let mut pf = ProcessedFile {
             path: p.clone(),
             ok: true,
             message: None,
             pages: vec![],
         };
-        let work = std::env::temp_dir().join(format!(
-            "pdf-factory-{}-{}-{i}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::create_dir_all(&work);
-        let outcome = match crate::converters::mineru::convert(Path::new(p), &work, &conv).await {
+        let outcome = match outcome {
             Ok(o) => o,
-            Err(e) => {
-                let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
+            Err(m) => {
                 pf.ok = false;
                 pf.message = Some(m.clone());
                 errors.push(m);
@@ -328,7 +396,7 @@ async fn run_pdf_knowledge(
                 errors.push(m);
             }
             // K5/P1.2：doc 層來源 PDF 歸檔（回覆「來源文件」開檔連結用；best-effort）。
-            if let Err(e) = production.tag_doc_source(&doc_id, p) {
+            if let Err(e) = production.tag_doc_source(&doc_id, &p) {
                 let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
                 errors.push(m);
             }
@@ -346,6 +414,7 @@ async fn run_pdf_knowledge(
         // 筆記寫入 notes repo（doc 子目錄；冪等覆寫）。
         let src_notes = work.join("notes").join(&doc_id);
         let dst_notes = notes.join(&doc_id);
+        let mut doc_pages: Vec<PreviewPage> = Vec::new();
         if src_notes.exists() {
             let _ = std::fs::create_dir_all(&dst_notes);
             for entry in std::fs::read_dir(&src_notes).into_iter().flatten().flatten() {
@@ -372,7 +441,7 @@ async fn run_pdf_knowledge(
             let p2 = entry.path();
             if let Some(stem) = p2.file_stem().and_then(|s| s.to_str()) {
                 if let Ok(md) = std::fs::read_to_string(&p2) {
-                    pages.push(PreviewPage {
+                    doc_pages.push(PreviewPage {
                         slug: stem.into(),
                         target_dir: format!("{doc_id}/"),
                         name: stem.into(),
@@ -381,12 +450,8 @@ async fn run_pdf_knowledge(
                 }
             }
         }
-        let doc_dir = format!("{doc_id}/");
-        pf.pages = pages
-            .iter()
-            .filter(|pg| pg.target_dir == doc_dir)
-            .cloned()
-            .collect();
+        pages.extend(doc_pages.iter().cloned());
+        pf.pages = doc_pages;
         files.push(pf);
         std::fs::remove_dir_all(&work).ok();
     }
@@ -404,12 +469,17 @@ async fn run_pdf_knowledge(
     })
 }
 
+/// 並發轉換的暫存目錄序號（pid＋nanos 之外的去重——多工同拍建立不碰撞）。
+static PDF_WORK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 async fn run_people(
     pack: &'static Pack,
     spec: &'static FactoryTypeSpec,
     cfg: &AppConfig,
     notes: &Path,
     paths: &[String],
+    gate: Gate<'_>,
+    max: usize,
 ) -> Result<PreviewResult, AppError> {
     // 僅當含 txt/md 才載 LLM endpoint(純 CSV 批次不要求 API key)。
     let has_text = paths.iter().any(|p| {
@@ -431,32 +501,24 @@ async fn run_people(
     } else {
         None
     };
+    // 閉包以借用共享 endpoint（Copy 的 Option<&_>——async move 不搬走原值）。
+    let endpoint = endpoint.as_ref();
+    let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
 
-    let mut files: Vec<ProcessedFile> = Vec::new();
-    let mut all_pages: Vec<PreviewPage> = Vec::new();
-    let mut written: Vec<String> = Vec::new();
-    let mut errors: Vec<L10n> = Vec::new();
-    let mut rows = 0usize;
-    let mut merged = 0usize;
-
-    for p in paths {
-        let path = Path::new(p);
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let mut pf = ProcessedFile {
-            path: p.clone(),
-            ok: true,
-            message: None,
-            pages: vec![],
-        };
-
-        // 逐檔依副檔名分流:csv→結構化解析(一檔多人);txt/md→LLM 結構化(一檔一人)。
-        let parsed: Result<Vec<PreviewPage>, L10n> = if ext.eq_ignore_ascii_case("csv") {
-            match read_text(path) {
-                Ok(text) => match csv_people::parse(&text, true) {
+    // ── 階段一：逐檔並發解析/LLM 結構化（重活；不落盤）──
+    // 回傳（路徑, 解析結果(頁面們, csv 列數, 合併數)）。
+    let parsed: Vec<(String, Result<(Vec<PreviewPage>, usize, usize), L10n>)> =
+        run_all(paths.to_vec(), gate, max, |p| async move {
+            let path = Path::new(&p);
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let res: Result<(Vec<PreviewPage>, usize, usize), L10n> = if ext.eq_ignore_ascii_case("csv") {
+                // csv→結構化解析(一檔多人)。
+                match read_text(path)
+                    .map_err(|e| file_err(&p, e))
+                    .and_then(|text| csv_people::parse(&text, true).map_err(|e| file_err(&p, e)))
+                {
                     Ok(imp) => {
-                        rows += imp.rows_read;
-                        merged += imp.groups_merged;
-                        Ok(imp
+                        let pages = imp
                             .pages
                             .iter()
                             .map(|pg| PreviewPage {
@@ -465,36 +527,59 @@ async fn run_people(
                                 name: pg.name.clone(),
                                 markdown: pg.markdown.clone(),
                             })
-                            .collect())
+                            .collect();
+                        Ok((pages, imp.rows_read, imp.groups_merged))
                     }
-                    Err(e) => Err(file_err(p, e)),
-                },
-                Err(e) => Err(file_err(p, e)),
-            }
-        } else if ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("md") {
-            let ep = endpoint.as_ref().expect("has_text ⇒ endpoint loaded");
-            let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
-            match read_text(path) {
-                Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, ep).await {
-                    Ok(sp) => {
-                        let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
-                        Ok(vec![PreviewPage {
-                            slug,
-                            target_dir: spec.dir.into(),
-                            name: sp.title,
-                            markdown,
-                        }])
-                    }
-                    Err(e) => Err(file_err(p, e)),
-                },
-                Err(e) => Err(file_err(p, e)),
-            }
-        } else {
-            Err(L10n::new("factory.csvOnly").p("file", p))
-        };
+                    Err(m) => Err(m),
+                }
+            } else if ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("md") {
+                // txt/md→LLM 結構化(一檔一人)。
+                let ep = endpoint.as_ref().expect("has_text ⇒ endpoint loaded");
+                match read_text(path).map_err(|e| file_err(&p, e)) {
+                    Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, ep).await {
+                        Ok(sp) => {
+                            let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
+                            Ok((
+                                vec![PreviewPage {
+                                    slug,
+                                    target_dir: spec.dir.into(),
+                                    name: sp.title,
+                                    markdown,
+                                }],
+                                0,
+                                0,
+                            ))
+                        }
+                        Err(e) => Err(file_err(&p, e)),
+                    },
+                    Err(m) => Err(m),
+                }
+            } else {
+                Err(L10n::new("factory.csvOnly").p("file", &p))
+            };
+            (p, res)
+        })
+        .await;
 
+    // ── 階段二：按輸入序循序寫入（覆寫語意與多工前一致）──
+    let mut files: Vec<ProcessedFile> = Vec::new();
+    let mut all_pages: Vec<PreviewPage> = Vec::new();
+    let mut written: Vec<String> = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
+    let mut rows = 0usize;
+    let mut merged = 0usize;
+
+    for (p, parsed) in parsed {
+        let mut pf = ProcessedFile {
+            path: p,
+            ok: true,
+            message: None,
+            pages: vec![],
+        };
         match parsed {
-            Ok(pages) => {
+            Ok((pages, r, m)) => {
+                rows += r;
+                merged += m;
                 for page in &pages {
                     match write_page(notes, &page.target_dir, &page.slug, &page.markdown) {
                         Ok(f) => written.push(f.to_string_lossy().into_owned()),
@@ -541,6 +626,8 @@ async fn run_textual(
     cfg: &AppConfig,
     notes: &Path,
     paths: &[String],
+    gate: Gate<'_>,
+    max: usize,
 ) -> Result<PreviewResult, AppError> {
     let loaded = gbrain_config::load_for(cfg.active_env_home())?;
     let endpoint = gbrain_config::resolve_endpoint(&loaded.config)?;
@@ -551,32 +638,41 @@ async fn run_textual(
     }
     let target_dir = spec.dir.to_string();
     let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
+    // 閉包以借用共享 endpoint（Copy 的 &LlmEndpoint——async move 不搬走原值）。
+    let endpoint = &endpoint;
 
+    // ── 階段一：逐檔並發抽文字＋LLM 結構化（重活；不落盤）──
+    // 回傳（路徑, 結果(slug, 標題, markdown)）。
+    let converted: Vec<(String, Result<(String, String, String), L10n>)> =
+        run_all(paths.to_vec(), gate, max, |p| async move {
+            let path = Path::new(&p);
+            let res = match extract_raw(path).map_err(|e| file_err(&p, e)) {
+                Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, &endpoint).await {
+                    Ok(sp) => {
+                        let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
+                        Ok((slug, sp.title, markdown))
+                    }
+                    Err(e) => Err(file_err(&p, e)),
+                },
+                Err(m) => Err(m),
+            };
+            (p, res)
+        })
+        .await;
+
+    // ── 階段二：按輸入序循序寫入（覆寫語意與多工前一致）──
     let mut files: Vec<ProcessedFile> = Vec::new();
     let mut written = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
-    for p in paths {
-        let path = Path::new(p);
+    for (p, converted) in converted {
         let mut pf = ProcessedFile {
-            path: p.clone(),
+            path: p,
             ok: true,
             message: None,
             pages: vec![],
         };
-        let raw = match extract_raw(path) {
-            Ok(t) => t,
-            Err(e) => {
-                let m = file_err(p, e);
-                pf.ok = false;
-                pf.message = Some(m.clone());
-                errors.push(m);
-                files.push(pf);
-                continue;
-            }
-        };
-        match text_to_md::text_to_page(spec, &raw, cfg, &endpoint).await {
-            Ok(sp) => {
-                let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
+        match converted {
+            Ok((slug, title, markdown)) => {
                 match write_page(notes, &target_dir, &slug, &markdown) {
                     Ok(f) => written.push(f.to_string_lossy().into_owned()),
                     Err(e) => {
@@ -589,12 +685,11 @@ async fn run_textual(
                 pf.pages.push(PreviewPage {
                     slug,
                     target_dir: target_dir.clone(),
-                    name: sp.title,
+                    name: title,
                     markdown,
                 });
             }
-            Err(e) => {
-                let m = file_err(p, e);
+            Err(m) => {
                 pf.ok = false;
                 pf.message = Some(m.clone());
                 errors.push(m);
@@ -616,31 +711,44 @@ async fn run_textual(
     })
 }
 
-fn run_inbox(
+async fn run_inbox(
     spec: &'static FactoryTypeSpec,
     cfg: &AppConfig,
-    _notes: &Path,
     paths: &[String],
+    gate: Gate<'_>,
+    max: usize,
 ) -> Result<PreviewResult, AppError> {
     // capture 型直接走 gbrain capture(寫入知識庫內部儲存),不走 notes repo。
+    // 逐檔並發子行程（tokio::process；公平閘門照樣節流——capture 也是工作）。
+    let results: Vec<(String, Result<(String, String), L10n>)> =
+        run_all(paths.to_vec(), gate, max, |p| async move {
+            let name = Path::new(&p).file_name().and_then(|s| s.to_str()).unwrap_or("note").to_string();
+            let mut cmd = tokio::process::Command::new(&cfg.gbrain_exe_path);
+            cmd.args(["capture", "--file", &p, "--type", "note", "--quiet"])
+                .env("PYTHONUTF8", "1");
+            crate::proc::no_console_async(&mut cmd);
+            if let Some(h) = cfg.active_env_home() {
+                cmd.env("GBRAIN_HOME", h);
+            }
+            let res = match cmd.output().await {
+                Ok(o) if o.status.success() => {
+                    let slug = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    Ok((if slug.is_empty() { p.clone() } else { slug }, name))
+                }
+                Ok(o) => Err(file_err(&p, String::from_utf8_lossy(&o.stderr).trim())),
+                Err(e) => Err(file_err(&p, e)),
+            };
+            (p, res)
+        })
+        .await;
+
     let mut sample = Vec::new();
     let mut written = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
-    for p in paths {
-        let path = Path::new(p);
-        let mut cmd = std::process::Command::new(&cfg.gbrain_exe_path);
-        cmd.args(["capture", "--file", p, "--type", "note", "--quiet"])
-            .env("PYTHONUTF8", "1");
-        no_console(&mut cmd);
-        if let Some(h) = cfg.active_env_home() {
-            cmd.env("GBRAIN_HOME", h);
-        }
-        let out = cmd.output();
-        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("note").to_string();
-        match out {
-            Ok(o) if o.status.success() => {
-                let slug = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                written.push(if slug.is_empty() { p.clone() } else { slug.clone() });
+    for (_, r) in results {
+        match r {
+            Ok((slug, name)) => {
+                written.push(slug.clone());
                 sample.push(PreviewPage {
                     slug,
                     target_dir: format!("{}/", spec.dir),
@@ -648,8 +756,7 @@ fn run_inbox(
                     markdown: String::new(),
                 });
             }
-            Ok(o) => errors.push(file_err(p, String::from_utf8_lossy(&o.stderr).trim())),
-            Err(e) => errors.push(file_err(p, e)),
+            Err(m) => errors.push(m),
         }
     }
     let total = written.len();
@@ -878,8 +985,9 @@ pub async fn authored_to_scope_core(
 }
 
 /// 工廠批次轉換寫入**指定圈子×等級**（企業版 user 級工廠頁的轉換目標）——
-/// 與 [`authored_to_scope_core`] 同一供給與入圖序列，寫入端換成 `run_core`
-/// （各工廠管線寫進供給目錄的 `<type>/<slug>.md`）。回傳（轉換預覽, 寫入目標）。
+/// 與 [`authored_to_scope_core`] 同一供給與入圖序列，寫入端換成 `run_core_sched`
+/// （各工廠管線寫進供給目錄的 `<type>/<slug>.md`；`gate=Some` 時逐檔過企業
+/// 公平閘門）。回傳（轉換預覽, 寫入目標）。
 pub async fn run_to_scope_core(
     cfg: &AppConfig,
     store: &crate::domain::SqliteStore,
@@ -889,9 +997,10 @@ pub async fn run_to_scope_core(
     circle: &str,
     level: crate::knowledge::types::SecurityLevel,
     owner_principal: &str,
+    gate: Gate<'_>,
 ) -> Result<(PreviewResult, crate::knowledge::provision::WriteTarget), AppError> {
     let target = scope_target_checked(store, cfg, kind, circle, level, owner_principal).await?;
-    let preview = run_core(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref())).await?;
+    let preview = run_core_sched(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref()), gate).await?;
     commit_and_sync_scope(cfg, &target).await?;
     Ok((preview, target))
 }

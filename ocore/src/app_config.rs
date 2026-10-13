@@ -145,6 +145,11 @@ pub struct AppConfig {
     /// LLM 並發上限（全域 Semaphore permit 數；節流「全部喚醒」的尖峰並發 LLM 呼叫）。
     #[serde(default = "default_llm_concurrency")]
     pub llm_concurrency: usize,
+    /// 工廠文件轉換的多工上限——同時轉換的檔案數（可設定；預設 4）。
+    /// 個人版＝單一批次的並發上限；企業版＝oserver 全域執行緒預算，搭配公平
+    /// 調度（飽和時每位遠端使用者至多 1 線程——見 `factory_sched`）。
+    #[serde(default = "default_factory_concurrency")]
+    pub factory_concurrency: usize,
     /// 工廠寫檔後是否觸發員工 review（Event 匯流排開關；Phase 7c）。
     #[serde(default = "default_true")]
     pub event_review_enabled: bool,
@@ -240,6 +245,9 @@ fn default_temp() -> f64 {
     0.2
 }
 fn default_llm_concurrency() -> usize {
+    4
+}
+fn default_factory_concurrency() -> usize {
     4
 }
 fn default_server_port() -> u16 {
@@ -423,6 +431,7 @@ impl Default for AppConfig {
             claude_terminal_template: None,
             agent_os_enabled: false,
             llm_concurrency: default_llm_concurrency(),
+            factory_concurrency: default_factory_concurrency(),
             event_review_enabled: true,
             event_ingress_port: None,
             event_ingress_secret: None,
@@ -460,6 +469,19 @@ mod tests {
         assert!(c.brains.iter().any(|b| b.is_default()));
         assert_eq!(c.active_brain_id.as_deref(), Some(DEFAULT_BRAIN_ID));
         assert!(c.gbrain_home_override.is_none()); // 已被 normalize 清掉
+    }
+
+    /// P4 工廠多工：預設 4 線程；缺欄位的舊 app-settings.json 無痛載入。
+    #[test]
+    fn factory_concurrency_defaults_to_four() {
+        let c = AppConfig::default();
+        assert_eq!(c.factory_concurrency, 4);
+        // serde 預設路徑：缺欄位 → 4（不要求呼叫端補寫設定檔）。
+        let v = serde_json::json!({
+            "notes_repo_path": "C:/notes", "gbrain_exe_path": "C:/gbrain.exe"
+        });
+        let c2: AppConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(c2.factory_concurrency, 4);
     }
 
     #[test]

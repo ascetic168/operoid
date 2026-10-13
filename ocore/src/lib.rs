@@ -21,6 +21,7 @@ pub mod event_bus;
 pub mod gbrain_config;
 pub mod i18n;
 pub mod factories;
+pub mod factory_sched;
 pub mod factory_types;
 pub mod gbrain_cfg;
 pub mod gbrain_cli;

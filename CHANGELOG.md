@@ -15,6 +15,36 @@
 
 ## [Unreleased]
 
+### Factory conversion: parallel multi-tasking with per-user fair scheduling
+
+- Factory document conversion is no longer one-file-at-a-time. Files
+  inside a conversion batch now run concurrently — the expensive step
+  (LLM structuring, MinerU PDF conversion, gbrain capture subprocess)
+  goes parallel while the shared-write steps (sidecar merge, vector
+  backfill, note writes) stay sequential in input order, so overwrite
+  semantics and result ordering are unchanged from the serial path.
+- The concurrency cap is user-configurable via the new
+  `factory_concurrency` setting (`app-settings.json` / operoid.toml
+  `[factory] concurrency`), default **4**.
+- Enterprise (oserver) adds **fair scheduling** across remote users
+  (new `ocore::factory_sched` gate, one per server): at most
+  `factory_concurrency` file jobs run globally, and when the pool is
+  saturated a starving user — one with no running job — is always
+  granted the next slot before any already-running user may widen.
+  With four or more users competing this converges to the specified
+  "one thread per remote user" rule; a lone user still expands to the
+  full cap so capacity is never idled. Running jobs are never
+  preempted; grants are decided at admission time.
+- Cancelled requests (browser disconnect, task abort) are swept from
+  the queue and release their slots — no leaks, no stuck waiters.
+- Desktop (personal edition) needs no scheduler: each batch runs up to
+  `factory_concurrency` files wide locally, same default of 4.
+- operoid.toml gains the `[factory]` section (hot-reloaded like
+  `[gbrain]`/`[ingress]`); DEPLOYMENT.md §3 and the example template
+  document it. Tests: gate fairness unit tests (global cap, starving-
+  first, widening-only-without-competition, cancellation sweep) and a
+  config-default test.
+
 ### Claude Code handoff: egress disclosure + personal-edition responsibility boundary
 
 - The Claude Code launch dialog now states up front the two things a

@@ -21,3 +21,7 @@ key = "./certs/server.key"
 [ingress]                    # 可省；obridge 投遞口組態
 # port = 7341
 # secret = "..."
+
+[factory]                    # 可省；工廠文件轉換的多工
+# concurrency = 4            # 全域同時轉換的檔案數上限（預設 4）；
+                             # 公平調度：飽和時每位遠端使用者至多 1 線程

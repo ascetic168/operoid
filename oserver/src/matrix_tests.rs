@@ -50,6 +50,7 @@ fn test_state(dir: &std::path::Path) -> Arc<ServerState> {
         settings_dir: dir.to_path_buf(),
         server_token: Some("master-token".into()),
         server_port: 7340,
+        factory_gate: Arc::new(ocore::factory_sched::FactoryGate::new()),
     })
 }
 
@@ -498,6 +499,7 @@ fn real_state(dir: &std::path::Path) -> Arc<ServerState> {
         settings_dir: dir.to_path_buf(),
         server_token: Some("master-token".into()),
         server_port: 7340,
+        factory_gate: Arc::new(ocore::factory_sched::FactoryGate::new()),
     })
 }
 

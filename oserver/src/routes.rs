@@ -42,6 +42,9 @@ pub struct ServerState {
     pub server_token: Option<String>,
     /// 本服務實際 bind 的 port（obridge managed 模式推導 ingress_url 用）。
     pub server_port: u16,
+    /// 工廠轉換的公平調度閘門（多工核心）：全域 ≤ `factory_concurrency` 名額、
+    /// 飽和時每位遠端使用者 1 線程（`ocore::factory_sched`）。
+    pub factory_gate: Arc<ocore::factory_sched::FactoryGate>,
 }
 
 /// 統一錯誕回應：`AppError` → JSON＋status 映射。

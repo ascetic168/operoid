@@ -26,11 +26,15 @@
 //! [ingress]                    # 可省；覆寫 event_ingress_port / event_ingress_secret
 //! port = 7341
 //! secret = "..."
+//!
+//! [factory]                    # 可省；工廠文件轉換的多工（P4）
+//! concurrency = 4              # 全域同時轉換的檔案數上限（預設 4）；搭配公平調度——
+//!                              # 飽和時每位遠端使用者至多 1 線程
 //! ```
 //!
 //! 熱生效邊界：`host`/`port`/`tls`/`frontends_dir` 屬**啟動期**（改檔須重啟服務）；
-//! `[llm] env`／`[gbrain]`／`[ingress]` 經 `config::load_effective` 隨 scheduler
-//! 每輪重讀（與 app-settings.json 同一批）。
+//! `[llm] env`／`[gbrain]`／`[ingress]`／`[factory]` 經 `config::load_effective` 隨
+//! scheduler 每輪重讀（與 app-settings.json 同一批）。
 
 use std::path::Path;
 
@@ -48,6 +52,7 @@ pub struct OperoidToml {
     pub gbrain: GbrainSection,
     pub ingress: IngressSection,
     pub knowledge: KnowledgeSection,
+    pub factory: FactorySection,
 }
 
 /// `[server]`——bind 位址／port／master token／前端靜態檔目錄。
@@ -124,6 +129,18 @@ pub struct IngressSection {
     pub secret: Option<String>,
 }
 
+/// `[factory]`——工廠文件轉換的多工（P4）。
+///
+/// ```toml
+/// [factory]
+/// concurrency = 4   # 全域同時轉換的檔案數上限（預設 4）；公平調度：飽和時每位遠端使用者至多 1 線程
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FactorySection {
+    pub concurrency: Option<usize>,
+}
+
 /// 讀 settings 目錄下的 `operoid.toml`。檔案不存在 → None（個人模式）；
 /// **存在但解析失敗 → Err**（啟動期明確報錯，不靜默退預設）。
 pub fn load(settings_dir: &Path) -> anyhow::Result<Option<OperoidToml>> {
@@ -166,6 +183,10 @@ pub fn apply_overrides(cfg: &mut AppConfig, t: Option<&OperoidToml>) {
     }
     if let Some(p) = &t.knowledge.pdf_convert_policy {
         cfg.pdf_convert_policy = Some(p.clone());
+    }
+    // P4：工廠轉換多工上限（防呆：0 視為 1——與使用端 file_concurrency 一致）。
+    if let Some(c) = t.factory.concurrency {
+        cfg.factory_concurrency = c.max(1);
     }
 }
 
@@ -216,6 +237,9 @@ pdf_convert_policy = "always_mineru"
 [ingress]
 port = 7341
 secret = "ing-secret"
+
+[factory]
+concurrency = 8
 "#;
 
     #[test]
@@ -239,6 +263,8 @@ secret = "ing-secret"
         );
         assert_eq!(t.knowledge.allow_public_egress, Some(true));
         assert_eq!(t.knowledge.pdf_convert_policy.as_deref(), Some("always_mineru"));
+        // P4：工廠多工節。
+        assert_eq!(t.factory.concurrency, Some(8));
     }
 
     /// round-trip（驗收條件）：serialize → deserialize 恆等。
@@ -294,6 +320,11 @@ secret = "ing-secret"
         assert_eq!(cfg.gbrain_exe_path, "C:/gbrain/gbrain.exe");
         assert_eq!(cfg.event_ingress_port, Some(7341));
         assert_eq!(cfg.event_ingress_secret.as_deref(), Some("ing-secret"));
+        // P4：工廠多工覆寫（0 防呆成 1）。
+        assert_eq!(cfg.factory_concurrency, 8);
+        let zero: OperoidToml = toml::from_str("[factory]\nconcurrency = 0").unwrap();
+        apply_overrides(&mut cfg, Some(&zero));
+        assert_eq!(cfg.factory_concurrency, 1);
         // None → 零改動。
         let mut cfg2 = AppConfig::default();
         let before = cfg2.gbrain_exe_path.clone();

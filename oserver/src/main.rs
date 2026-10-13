@@ -342,6 +342,8 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         // obridge managed 模式用（ingress secret 寫入 obridge 設定檔；不出 API）。
         server_token: Some(token),
         server_port: port,
+        // 工廠轉換公平調度閘門（全域一個；上限隨每次請求讀熱設定）。
+        factory_gate: Arc::new(ocore::factory_sched::FactoryGate::new()),
     });
 
     // 驗 DB（spawn_blocking——rusqlite 同步 API）。

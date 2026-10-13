@@ -127,10 +127,14 @@ allow_public_egress = false  # 預設（public 第三方雲預設擋）
 [ingress]                    # 可省；obridge 投遞口
 port = 7341
 secret = "<ingress-secret>"
+
+[factory]                    # 可省；工廠文件轉換的多工
+concurrency = 4              # 全域同時轉換的檔案數上限（預設 4）；
+                             # 公平調度：飽和時每位遠端使用者至多 1 線程
 ```
 
 設定優先序：`OSERVER_*` 環境變數 > operoid.toml > app-settings.json（個人模式回落）。
-`[llm] env`／`[gbrain]`／`[ingress]` 改檔熱生效；`host`/`port`/`[tls]`/`frontends_dir` 改後須重啟服務。
+`[llm] env`／`[gbrain]`／`[ingress]`／`[factory]` 改檔熱生效；`host`/`port`/`[tls]`/`frontends_dir` 改後須重啟服務。
 
 ---
 

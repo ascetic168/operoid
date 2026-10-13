@@ -21,7 +21,7 @@ use ocore::brains::{
 };
 use ocore::classifier::classify_one;
 use ocore::factories::{
-    extract_companies_core, run_core, save_authored_core, write_pages_core, WritePage,
+    extract_companies_core, run_core_sched, save_authored_core, write_pages_core, WritePage,
 };
 use ocore::gbrain_cfg;
 use ocore::gbrain_cli::op_run_core;
@@ -1133,14 +1133,16 @@ async fn api_factory_run(
     };
     let st = state.clone();
     let b = body.0;
-    // run_core 含 LLM 子行程——非 SQLite，直接 async。
+    // run_core 含 LLM 子行程——非 SQLite，直接 async。逐檔經公平閘門：
+    // 全域 ≤ factory_concurrency 名額（預設 4），飽和時每位遠端使用者 1 線程。
     let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
+        let gate = st.factory_gate.clone();
         let (pack, _) = ocore::factory_types::active_pack(&cfg);
         let writes_repo = pack.spec(&b.factory).map(|s| !s.is_capture()).unwrap_or(false);
         let scoped = writes_repo && b.target.is_some();
         if !writes_repo {
-            let preview = run_core(&cfg, &b.factory, &b.paths, None).await?;
+            let preview = run_core_sched(&cfg, &b.factory, &b.paths, None, Some((&gate, &owner))).await?;
             return serde_json::to_value(preview)
                 .map_err(|e| AppError::new("server.internal").p("detail", e.to_string()));
         }
@@ -1150,6 +1152,7 @@ async fn api_factory_run(
             let (kind, circle, level) = parse_authored_target(&t)?;
             let (preview, target) = ocore::factories::run_to_scope_core(
                 &cfg, &store, &b.factory, &b.paths, kind, &circle, level, &owner,
+                Some((&gate, &owner)),
             )
             .await?;
             let mut v = serde_json::to_value(preview)
@@ -1166,7 +1169,7 @@ async fn api_factory_run(
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
             ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
         }
-        let preview = run_core(&cfg, &b.factory, &b.paths, Some(&repo)).await?;
+        let preview = run_core_sched(&cfg, &b.factory, &b.paths, Some(&repo), Some((&gate, &owner))).await?;
         serde_json::to_value(preview).map_err(|e| AppError::new("server.internal").p("detail", e.to_string()))
     })
     .await;
