@@ -15,6 +15,8 @@
 
 ## [Unreleased]
 
+## [v0.5.1] - 2026-10-13
+
 ### Factory conversion: parallel multi-tasking with per-user fair scheduling
 
 - Factory document conversion is no longer one-file-at-a-time. Files
