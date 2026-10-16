@@ -265,8 +265,8 @@
   "factory": {
     "csvOnly": "people factory only accepts .csv: {file}",
     "fileError": "{file}: {detail}",
-    "peopleSummary": "CSV rows: {rows}　merged groups: {merged}　people pages written: {written}",
-    "writtenN": "Wrote {n} {factory} page(s)",
+    "peopleSummary": "CSV rows: {rows}　merged groups: {merged}　people pages written: {written}　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
+    "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
     "inboxCaptured": "Captured {n} note(s) to inbox/",
     "unknown": "Unknown factory: {factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",

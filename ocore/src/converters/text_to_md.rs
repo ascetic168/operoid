@@ -39,9 +39,10 @@ pub struct TimelineEntry {
     pub detail: String,
 }
 
-/// 產出：slug + 合規 markdown。`person_dir` = 該 pack 人物頁目錄（mentioned_names
-/// wikilink 用；v2=person、legacy=people）。
-pub fn render(spec: &FactoryTypeSpec, person_dir: &str, sp: &StructuredPage) -> (String, String) {
+/// 產出：(slug, 合規 markdown, 因日期非法被丟棄的 timeline 事件數)。
+/// `person_dir` = 該 pack 人物頁目錄（mentioned_names wikilink 用；v2=person、
+/// legacy=people）。
+pub fn render(spec: &FactoryTypeSpec, person_dir: &str, sp: &StructuredPage) -> (String, String, usize) {
     let dir = spec.dir;
     let title = if sp.title.trim().is_empty() {
         "未命名".to_string()
@@ -82,11 +83,16 @@ pub fn render(spec: &FactoryTypeSpec, person_dir: &str, sp: &StructuredPage) -> 
         b.push(String::new());
     }
 
-    // timeline（用 <!-- timeline --> sentinel；gbrain 才會視為 timeline）
-    if !sp.timeline.is_empty() {
+    // timeline（用 <!-- timeline --> sentinel；gbrain 才會視為 timeline）。
+    // 日期只收 YYYY-MM-DD：LLM 偶發 `2026/6/20` 這類格式 gbrain 解析不到，寫出去
+    // 會被靜默漏事件——不合者丟棄並計數，由呼叫端回報。
+    let valid_timeline: Vec<&TimelineEntry> =
+        sp.timeline.iter().filter(|t| is_yyyy_mm_dd(t.date.trim())).collect();
+    let dropped_timeline = sp.timeline.len() - valid_timeline.len();
+    if !valid_timeline.is_empty() {
         b.push("<!-- timeline -->".to_string());
         b.push(String::new());
-        for t in &sp.timeline {
+        for t in &valid_timeline {
             let d = t.date.trim();
             let ttl = t.title.trim();
             b.push(format!("### {d} — {ttl}"));
@@ -115,7 +121,16 @@ pub fn render(spec: &FactoryTypeSpec, person_dir: &str, sp: &StructuredPage) -> 
     }
     let fm = frontmatter::build(&fm_entries);
     let joined = b.join("\n").trim_end().to_string();
-    (slug, format!("{fm}{joined}\n"))
+    (slug, format!("{fm}{joined}\n"), dropped_timeline)
+}
+
+/// gbrain 的 timeline 解析器只認 `YYYY-MM-DD`；嚴格檢查格式（不驗語義上的日）。
+fn is_yyyy_mm_dd(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b.iter().enumerate().all(|(i, c)| (i == 4 || i == 7) || c.is_ascii_digit())
 }
 
 /// 把 LLM 回應去掉 ```json / ``` 圍欄，取出 JSON 物件。
@@ -306,7 +321,7 @@ mod tests {
             timeline: vec![],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let (slug, md) = render(spec(Some("gbrain-base"), "companies"), "people", &sp);
+        let (slug, md, _) = render(spec(Some("gbrain-base"), "companies"), "people", &sp);
         assert_eq!(slug, "acme-corp");
         assert!(md.starts_with(
             "---\ntype: company\nsubtype: company\norigin: operoid-factory\ntitle: 'Acme Corp'\ntags: [companies, contact]\n---"
@@ -325,7 +340,7 @@ mod tests {
             timeline: vec![],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let (slug, md) = render(spec(None, "company"), "person", &sp);
+        let (slug, md, _) = render(spec(None, "company"), "person", &sp);
         assert_eq!(slug, "acme-corp");
         assert!(md.starts_with("---\ntype: company\norigin: operoid-factory"));
         assert!(!md.contains("subtype"));
@@ -343,7 +358,7 @@ mod tests {
             timeline: vec![],
             mentioned_names: vec![],
         };
-        let (_, md) = render(spec(Some("gbrain-base"), "people"), "people", &sp);
+        let (_, md, _) = render(spec(Some("gbrain-base"), "people"), "people", &sp);
         assert!(md.starts_with("---\ntype: person\norigin: operoid-factory\ntitle: '王大明'"));
         assert!(!md.contains("subtype"));
     }
@@ -362,11 +377,62 @@ mod tests {
             }],
             mentioned_names: vec!["Jane Doe".into()],
         };
-        let (slug, md) = render(spec(Some("gbrain-base"), "meeting"), "people", &sp);
+        let (slug, md, dropped) = render(spec(Some("gbrain-base"), "meeting"), "people", &sp);
         assert_eq!(slug, "q3-review");
+        assert_eq!(dropped, 0);
         assert!(md.contains("<!-- timeline -->"));
         assert!(md.contains("### 2026-06-15 — Q3 Review"));
         assert!(md.contains("## 與會者"));
+    }
+
+    #[test]
+    fn render_drops_invalid_timeline_dates() {
+        let sp = StructuredPage {
+            title: "Q3 Review".into(),
+            page_type: "meeting".into(),
+            tags: vec![],
+            body_markdown: "檢視 Q3 進度。".into(),
+            timeline: vec![
+                TimelineEntry { date: "2026-06-15".into(), title: "ok".into(), detail: String::new() },
+                TimelineEntry { date: "2026/6/20".into(), title: "slash".into(), detail: String::new() },
+                TimelineEntry { date: "2026-6-21".into(), title: "nopad".into(), detail: String::new() },
+            ],
+            mentioned_names: vec![],
+        };
+        let (_, md, dropped) = render(spec(Some("gbrain-base"), "meeting"), "people", &sp);
+        assert_eq!(dropped, 2);
+        assert!(md.contains("### 2026-06-15 — ok"));
+        assert!(!md.contains("slash"));
+        assert!(!md.contains("nopad"));
+    }
+
+    #[test]
+    fn render_all_invalid_timeline_omits_sentinel() {
+        let sp = StructuredPage {
+            title: "Q4".into(),
+            page_type: "meeting".into(),
+            tags: vec![],
+            body_markdown: "x".into(),
+            timeline: vec![TimelineEntry {
+                date: "2026.6.20".into(),
+                title: "dot".into(),
+                detail: String::new(),
+            }],
+            mentioned_names: vec![],
+        };
+        let (_, md, dropped) = render(spec(Some("gbrain-base"), "meeting"), "people", &sp);
+        assert_eq!(dropped, 1);
+        assert!(!md.contains("<!-- timeline -->"));
+    }
+
+    #[test]
+    fn timeline_date_format_check() {
+        assert!(is_yyyy_mm_dd("2026-06-20"));
+        assert!(!is_yyyy_mm_dd("2026/6/20"));
+        assert!(!is_yyyy_mm_dd("2026-6-20"));
+        assert!(!is_yyyy_mm_dd("20260620"));
+        assert!(!is_yyyy_mm_dd("2026-06-2 "));
+        assert!(!is_yyyy_mm_dd(""));
     }
 
     #[test]

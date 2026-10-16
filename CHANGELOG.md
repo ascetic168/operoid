@@ -15,6 +15,30 @@
 
 ## [Unreleased]
 
+### Factory timeline integrity: date validation + overwrite protection
+
+- Timeline events extracted by the LLM are validated in Rust: entries
+  whose `date` is not exactly `YYYY-MM-DD` (e.g. `2026/6/20`) are now
+  dropped before the page is written, instead of landing in the page in
+  a form gbrain's timeline parser silently ignores. The dropped count
+  is reported in the factory result summary (`dropped`), and an
+  all-invalid timeline no longer emits an empty `<!-- timeline -->`
+  sentinel.
+- Batch factory writes (people CSV/TXT, textual factories) no longer
+  blindly overwrite existing pages: a page is skipped ("frozen", now
+  shown in the summary) when it carries an enriched marker
+  (`enriched: true` / `<!-- enriched -->`, same as the companies
+  factory) or when its frontmatter `origin` is not `operoid-factory`
+  (a hand-made page that happens to share the slug). Re-runs therefore
+  no longer steamroll human edits or gbrain-written timeline rows. The
+  hand-written editor save path and the user-confirmed preview
+  write-back remain unconditional by design.
+- Tests: timeline date-format checks, drop/sentinel behavior, and
+  guarded-write semantics (overwrite factory-owned, freeze enriched,
+  freeze foreign, create missing). Factory summaries gain
+  `frozen`/`dropped` params across en/zh-TW/zh-CN locales (backend
+  i18n + user frontend).
+
 ## [v0.5.1] - 2026-10-13
 
 ### Factory conversion: parallel multi-tasking with per-user fair scheduling

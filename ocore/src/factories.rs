@@ -135,6 +135,38 @@ fn write_page(notes: &Path, target_dir: &str, slug: &str, markdown: &str) -> std
     Ok(file)
 }
 
+/// 批次工廠寫入（凍結保護）：目標已存在且 (a) 帶 enriched 凍結標記（frontmatter
+/// `enriched: true` 或 `<!-- enriched -->`，同 companies 工廠），或 (b) frontmatter
+/// `origin` ≠ `operoid-factory`（人手或其他工具建立的頁面）→ 跳過不覆寫，回
+/// `Ok(None)`。避免批次重跑洗掉頁面上的非工廠內容（人工編輯、gbrain 寫回的
+/// timeline 列）；工廠自產且未凍結的頁面照常覆寫（重跑＝以來源最新內容更新）。
+/// 手寫編輯器存檔（`authored`）與預覽後確認寫回（`write_pages_core`）屬人類明確
+/// 指令，不走此保護。
+fn write_page_guarded(
+    notes: &Path,
+    target_dir: &str,
+    slug: &str,
+    markdown: &str,
+) -> std::io::Result<Option<PathBuf>> {
+    let file = notes.join(target_dir).join(format!("{slug}.md"));
+    if file.exists() {
+        if let Ok(existing) = std::fs::read_to_string(&file) {
+            let factory_owned = crate::converters::frontmatter::split(&existing)
+                .0
+                .and_then(|fm| crate::converters::frontmatter::get(Some(fm), "origin"))
+                .map(|o| o == "operoid-factory")
+                .unwrap_or(false);
+            if !factory_owned || extract_companies::is_enriched(&existing) {
+                return Ok(None);
+            }
+        }
+    }
+    let dir = notes.join(target_dir);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(&file, markdown)?;
+    Ok(Some(file))
+}
+
 /// 從 markdown frontmatter 抽出 title(已產品化頁面的檔名來源)。
 fn extract_title(markdown: &str) -> String {
     let (fm, _) = crate::converters::frontmatter::split(markdown);
@@ -506,12 +538,12 @@ async fn run_people(
     let person_dir = pack.id_of_kind("people").map(|id| pack.spec(id).unwrap().dir).unwrap_or("person");
 
     // ── 階段一：逐檔並發解析/LLM 結構化（重活；不落盤）──
-    // 回傳（路徑, 解析結果(頁面們, csv 列數, 合併數)）。
-    let parsed: Vec<(String, Result<(Vec<PreviewPage>, usize, usize), L10n>)> =
+    // 回傳（路徑, 解析結果(頁面們, csv 列數, 合併數, 丟棄的非法日期事件數)）。
+    let parsed: Vec<(String, Result<(Vec<PreviewPage>, usize, usize, usize), L10n>)> =
         run_all(paths.to_vec(), gate, max, |p| async move {
             let path = Path::new(&p);
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            let res: Result<(Vec<PreviewPage>, usize, usize), L10n> = if ext.eq_ignore_ascii_case("csv") {
+            let res: Result<(Vec<PreviewPage>, usize, usize, usize), L10n> = if ext.eq_ignore_ascii_case("csv") {
                 // csv→結構化解析(一檔多人)。
                 match read_text(path)
                     .map_err(|e| file_err(&p, e))
@@ -528,7 +560,7 @@ async fn run_people(
                                 markdown: pg.markdown.clone(),
                             })
                             .collect();
-                        Ok((pages, imp.rows_read, imp.groups_merged))
+                        Ok((pages, imp.rows_read, imp.groups_merged, 0))
                     }
                     Err(m) => Err(m),
                 }
@@ -536,22 +568,23 @@ async fn run_people(
                 // txt/md→LLM 結構化(一檔一人)。
                 let ep = endpoint.as_ref().expect("has_text ⇒ endpoint loaded");
                 match read_text(path).map_err(|e| file_err(&p, e)) {
-                    Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, ep).await {
-                        Ok(sp) => {
-                            let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
-                            Ok((
-                                vec![PreviewPage {
-                                    slug,
-                                    target_dir: spec.dir.into(),
-                                    name: sp.title,
-                                    markdown,
-                                }],
-                                0,
-                                0,
-                            ))
-                        }
-                        Err(e) => Err(file_err(&p, e)),
-                    },
+                Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, ep).await {
+                    Ok(sp) => {
+                        let (slug, markdown, dropped) = text_to_md::render(spec, person_dir, &sp);
+                        Ok((
+                            vec![PreviewPage {
+                                slug,
+                                target_dir: spec.dir.into(),
+                                name: sp.title,
+                                markdown,
+                            }],
+                            0,
+                            0,
+                            dropped,
+                        ))
+                    }
+                    Err(e) => Err(file_err(&p, e)),
+                },
                     Err(m) => Err(m),
                 }
             } else {
@@ -561,13 +594,15 @@ async fn run_people(
         })
         .await;
 
-    // ── 階段二：按輸入序循序寫入（覆寫語意與多工前一致）──
+    // ── 階段二：按輸入序循序寫入（覆寫語意與多工前一致；已凍結/非工廠頁跳過）──
     let mut files: Vec<ProcessedFile> = Vec::new();
     let mut all_pages: Vec<PreviewPage> = Vec::new();
     let mut written: Vec<String> = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
     let mut rows = 0usize;
     let mut merged = 0usize;
+    let mut frozen = 0usize;
+    let mut dropped_timeline = 0usize;
 
     for (p, parsed) in parsed {
         let mut pf = ProcessedFile {
@@ -577,12 +612,14 @@ async fn run_people(
             pages: vec![],
         };
         match parsed {
-            Ok((pages, r, m)) => {
+            Ok((pages, r, m, d)) => {
                 rows += r;
                 merged += m;
+                dropped_timeline += d;
                 for page in &pages {
-                    match write_page(notes, &page.target_dir, &page.slug, &page.markdown) {
-                        Ok(f) => written.push(f.to_string_lossy().into_owned()),
+                    match write_page_guarded(notes, &page.target_dir, &page.slug, &page.markdown) {
+                        Ok(Some(f)) => written.push(f.to_string_lossy().into_owned()),
+                        Ok(None) => frozen += 1,
                         Err(e) => errors.push(file_err(format!("{}/{}", page.target_dir, page.slug), e)),
                     }
                 }
@@ -605,8 +642,14 @@ async fn run_people(
             .p("rows", rows)
             .p("merged", merged)
             .p("written", written.len())
+            .p("frozen", frozen)
+            .p("dropped", dropped_timeline)
     } else {
-        L10n::new("factory.writtenN").p("factory", spec.id).p("n", written.len())
+        L10n::new("factory.writtenN")
+            .p("factory", spec.id)
+            .p("n", written.len())
+            .p("frozen", frozen)
+            .p("dropped", dropped_timeline)
     };
 
     Ok(PreviewResult {
@@ -642,15 +685,15 @@ async fn run_textual(
     let endpoint = &endpoint;
 
     // ── 階段一：逐檔並發抽文字＋LLM 結構化（重活；不落盤）──
-    // 回傳（路徑, 結果(slug, 標題, markdown)）。
-    let converted: Vec<(String, Result<(String, String, String), L10n>)> =
+    // 回傳（路徑, 結果(slug, 標題, markdown, 丟棄的非法日期事件數)）。
+    let converted: Vec<(String, Result<(String, String, String, usize), L10n>)> =
         run_all(paths.to_vec(), gate, max, |p| async move {
             let path = Path::new(&p);
             let res = match extract_raw(path).map_err(|e| file_err(&p, e)) {
                 Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, &endpoint).await {
                     Ok(sp) => {
-                        let (slug, markdown) = text_to_md::render(spec, person_dir, &sp);
-                        Ok((slug, sp.title, markdown))
+                        let (slug, markdown, dropped) = text_to_md::render(spec, person_dir, &sp);
+                        Ok((slug, sp.title, markdown, dropped))
                     }
                     Err(e) => Err(file_err(&p, e)),
                 },
@@ -660,10 +703,12 @@ async fn run_textual(
         })
         .await;
 
-    // ── 階段二：按輸入序循序寫入（覆寫語意與多工前一致）──
+    // ── 階段二：按輸入序循序寫入（覆寫語意與多工前一致；已凍結/非工廠頁跳過）──
     let mut files: Vec<ProcessedFile> = Vec::new();
     let mut written = Vec::new();
     let mut errors: Vec<L10n> = Vec::new();
+    let mut frozen = 0usize;
+    let mut dropped_timeline = 0usize;
     for (p, converted) in converted {
         let mut pf = ProcessedFile {
             path: p,
@@ -672,9 +717,11 @@ async fn run_textual(
             pages: vec![],
         };
         match converted {
-            Ok((slug, title, markdown)) => {
-                match write_page(notes, &target_dir, &slug, &markdown) {
-                    Ok(f) => written.push(f.to_string_lossy().into_owned()),
+            Ok((slug, title, markdown, dropped)) => {
+                dropped_timeline += dropped;
+                match write_page_guarded(notes, &target_dir, &slug, &markdown) {
+                    Ok(Some(f)) => written.push(f.to_string_lossy().into_owned()),
+                    Ok(None) => frozen += 1,
                     Err(e) => {
                         let m = file_err(format!("{target_dir}/{slug}"), e);
                         pf.ok = false;
@@ -699,7 +746,11 @@ async fn run_textual(
     }
     let sample: Vec<PreviewPage> = files.iter().flat_map(|f| f.pages.iter().cloned()).take(10).collect();
     let total: usize = files.iter().map(|f| f.pages.len()).sum();
-    let summary = L10n::new("factory.writtenN").p("factory", spec.id).p("n", written.len());
+    let summary = L10n::new("factory.writtenN")
+        .p("factory", spec.id)
+        .p("n", written.len())
+        .p("frozen", frozen)
+        .p("dropped", dropped_timeline);
     Ok(PreviewResult {
         factory: spec.id.into(),
         summary,
@@ -1020,4 +1071,74 @@ pub async fn write_pages_to_scope_core(
     let res = write_pages_core(&target.dir, pages);
     commit_and_sync_scope(cfg, &target).await?;
     Ok((res, target))
+}
+#[cfg(test)]
+mod write_guard_tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("operoid-factory-guard-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn guarded_overwrites_factory_owned_page() {
+        let notes = tmpdir("overwrite");
+        let first =
+            write_page_guarded(&notes, "people", "jane", "---\ntype: person\norigin: operoid-factory\n---\n# Jane\n").unwrap();
+        assert!(first.is_some());
+        let again =
+            write_page_guarded(&notes, "people", "jane", "---\ntype: person\norigin: operoid-factory\n---\n# Jane v2\n")
+                .unwrap();
+        assert!(again.is_some());
+        let text = std::fs::read_to_string(notes.join("people").join("jane.md")).unwrap();
+        assert!(text.contains("Jane v2"));
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn guarded_freezes_enriched_page() {
+        let notes = tmpdir("enriched");
+        std::fs::create_dir_all(notes.join("people")).unwrap();
+        std::fs::write(
+            notes.join("people").join("jane.md"),
+            "---\ntype: person\norigin: operoid-factory\nenriched: true\n---\n# Jane\n curated\n",
+        )
+        .unwrap();
+        let r = write_page_guarded(&notes, "people", "jane", "---\ntype: person\n---\n# new\n").unwrap();
+        assert!(r.is_none());
+        let text = std::fs::read_to_string(notes.join("people").join("jane.md")).unwrap();
+        assert!(text.contains("enriched: true"));
+        assert!(text.contains("curated"));
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn guarded_freezes_foreign_page() {
+        // 人手建立的頁面（無 origin）——即使 slug 撞名也不得被批次工廠覆寫。
+        let notes = tmpdir("foreign");
+        std::fs::create_dir_all(notes.join("people")).unwrap();
+        std::fs::write(
+            notes.join("people").join("jane.md"),
+            "---\ntype: person\ntitle: 'Jane'\n---\n# Jane\n手寫內容\n",
+        )
+        .unwrap();
+        let r = write_page_guarded(&notes, "people", "jane", "---\ntype: person\n---\n# new\n").unwrap();
+        assert!(r.is_none());
+        let text = std::fs::read_to_string(notes.join("people").join("jane.md")).unwrap();
+        assert!(text.contains("手寫內容"));
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn guarded_writes_missing_page() {
+        let notes = tmpdir("missing");
+        let r = write_page_guarded(&notes, "meeting", "m1", "---\ntype: meeting\norigin: operoid-factory\n---\n# M1\n")
+            .unwrap();
+        assert!(r.is_some());
+        assert!(notes.join("meeting").join("m1.md").exists());
+        let _ = std::fs::remove_dir_all(&notes);
+    }
 }

@@ -265,8 +265,8 @@
   "factory": {
     "csvOnly": "people 工厂只接受 .csv：{file}",
     "fileError": "{file}：{detail}",
-    "peopleSummary": "CSV 列：{rows}　合并群组：{merged}　已写入 people 页：{written}",
-    "writtenN": "已写入 {factory} 页：{n}",
+    "peopleSummary": "CSV 列：{rows}　合并群组：{merged}　已写入 people 页：{written}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
+    "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
     "inboxCaptured": "已 capture {n} 笔到 inbox/",
     "unknown": "未知工厂：{factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",
