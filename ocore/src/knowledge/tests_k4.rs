@@ -142,7 +142,6 @@ async fn real_k4_fusion_and_attribution() {
     // ── KnowledgeService＋sidecar 接線＋policy（operator 全權）──
     let store_db = dir.join("operoid.db");
     {
-        use crate::domain::Store as _;
         let store = crate::domain::SqliteStore::open(&store_db).unwrap();
         crate::knowledge::bootstrap::bootstrap_with_sources(&store, &["k7".into()]).unwrap();
     }

@@ -1075,7 +1075,6 @@ async fn run_people(
     // ── 智慧 LLM 路由（TODO 項目 1）：備註含日期訊號的頁 → LLM 富集 timeline ──
     // 兩階段：純解析頁面已全部落盤；此處僅對「備註命中日期訊號」的頁跑 LLM 富集，
     // 富集後釘回原 slug/title 覆寫（頁面為本批剛寫入的 factory-owned 頁）。
-    let mut enrich_hits = 0usize;
     let mut enrich_ok = 0usize;
     let mut enrich_failed = 0usize;
     let mut enrich_skipped = 0usize;
@@ -1088,7 +1087,7 @@ async fn run_people(
                 .unwrap_or(false)
         })
         .collect();
-    enrich_hits = hit_files.len();
+    let enrich_hits = hit_files.len();
     if !hit_files.is_empty() {
         // 命中 > 0 才需要 LLM endpoint；無 key／載入失敗 → 跳過富集（匯入本身不受影響）
         let ep = gbrain_config::load_for(cfg.active_env_home())

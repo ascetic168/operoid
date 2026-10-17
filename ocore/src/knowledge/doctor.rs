@@ -456,8 +456,7 @@ mod tests {
     /// 不 clear（全域快取的 clear 會與平行測試競態）。
     #[tokio::test]
     async fn vlm_probe_round_trip() {
-        use axum::{extract::State, routing::post, Json};
-        use std::sync::Arc as StdArc;
+        use axum::{routing::post, Json};
         // 接受圖的 stub：回 content。
         let app = axum::Router::new().route(
             "/chat/completions",

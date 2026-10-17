@@ -585,7 +585,6 @@ mod tests {
     }
 
     /// native 測試用：記錄請求體、依腳本回應（content 或 tool_calls）。
-    struct StubScript(Vec<serde_json::Value>);
     async fn spawn_script_stub(
         script: Vec<serde_json::Value>,
     ) -> (String, Arc<Mutex<VecDeque<serde_json::Value>>>) {
