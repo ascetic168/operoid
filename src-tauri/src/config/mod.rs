@@ -12,7 +12,7 @@ pub use ocore::gbrain_cfg::GBrainConfigView;
 
 use std::path::Path;
 
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::i18n::AppError;
 
@@ -119,7 +119,20 @@ pub fn get_app_config<R: Runtime>(app: AppHandle<R>) -> Result<AppConfig, AppErr
 }
 
 #[tauri::command]
-pub fn save_app_config<R: Runtime>(app: AppHandle<R>, config: AppConfig) -> Result<(), AppError> {
+pub fn save_app_config<R: Runtime>(app: AppHandle<R>, mut config: AppConfig) -> Result<(), AppError> {
+    // 防呆（2026-10-17）：`notes_repo_path` 已退役（工廠/同步改用作用中來源
+    // local_path），前端快照可能帶著過期值回寫——一律以磁碟現值釘回，
+    // 手動／部署的修正不被前端記憶體蓋掉。其余鍵照前端整份存檔。
+    if let Ok(dir) = app.path().app_data_dir() {
+        let f = dir.join("app-settings.json");
+        if let Ok(raw) = std::fs::read_to_string(&f) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(disk) = v.pointer("/app_config/notes_repo_path").and_then(|x| x.as_str()) {
+                    config.notes_repo_path = disk.to_string();
+                }
+            }
+        }
+    }
     app_config::save(&app, &config)?;
     Ok(())
 }

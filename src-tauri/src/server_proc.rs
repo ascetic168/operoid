@@ -8,6 +8,8 @@
 //! 前端以 `server_info()` 指令取得 `{port, token, running}`（桌面殼是本地 process，
 //! token 不出本機）。
 
+use std::path::Path;
+
 use tauri::{AppHandle, Runtime};
 
 use crate::config::app_config;
@@ -31,6 +33,54 @@ fn probe(port: u16) -> bool {
 }
 
 /// 解析 oserver 執行檔：設定欄位 → app exe 同目錄 → dev target/debug。
+/// A3 舊碼防護：跑 `<exe> --version` 解析 build hash（5s 逾時防卡）。None＝無法判定。
+fn oserver_file_build_hash(exe: &Path) -> Option<String> {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(exe)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .spawn()
+        .ok()?;
+    let start = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {
+                if start.elapsed() > std::time::Duration::from_secs(5) {
+                    let _ = child.kill();
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let mut out = String::new();
+    if let Some(mut so) = child.stdout.take() {
+        let _ = so.read_to_string(&mut out);
+    }
+    // 格式：`oserver <ver> (build <hash> <time>)`
+    out.split("build ").nth(1)?.split([' ', ')']).next().map(String::from)
+}
+
+/// Some(訊息)＝確定不一致（拒絕帶起）；None＝一致或無法判定（不誤報）。
+fn oserver_build_mismatch(exe: &Path) -> Option<String> {
+    let child_hash = oserver_file_build_hash(exe)?;
+    let own = env!("OPEROID_BUILD_HASH");
+    if child_hash == own || child_hash == "unknown" || own == "unknown" {
+        return None;
+    }
+    Some(format!(
+        "oserver build {child_hash}，桌面殼為 {own}（請重跑 `npm run tauri dev` 或 scripts/dev-rebuild.ps1）"
+    ))
+}
+
 fn resolve_oserver(exe_hint: Option<&str>) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
     if let Some(p) = exe_hint.filter(|s| !s.trim().is_empty()) {
@@ -119,6 +169,13 @@ pub fn ensure_server<R: Runtime>(app: &AppHandle<R>) {
         );
         return;
     };
+    // A3 舊碼防護：exe 的 build hash 與桌面殼不一致（編譯期被鎖/被換）→ 拒絕帶起，
+    // 寧可明確失敗也不要靜默服務舊碼（2026-10-17 事故：8/30 舊 oserver.exe 被帶起，
+    // 新 API 路由全 404 → 前端「本地服務通訊失敗」）。
+    if let Some(msg) = oserver_build_mismatch(&exe) {
+        eprintln!("[server] ✗ 拒絕帶起過期的 oserver：{msg}");
+        return;
+    }
 
     let mut cmd = std::process::Command::new(&exe);
     cmd.env("OSERVER_PORT", port.to_string())

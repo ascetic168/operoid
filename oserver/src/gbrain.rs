@@ -107,6 +107,31 @@ fn load_cfg(st: &ServerState) -> Result<AppConfig, AppError> {
     Ok(load_config(&st.settings_dir))
 }
 
+/// A1 修復（2026-10-17）：工廠寫入根改用「作用中來源」的 local_path（與桌面 GUI
+/// 的 target_repo 同源）——`notes_repo_path` 是保留欄位，殘留舊值時不得再當寫入根。
+/// 解析不到（CLI 失敗／無作用中來源且來源數 ≠ 1）→ 回落 `notes_repo_path`。
+async fn resolve_default_repo(cfg: &AppConfig) -> String {
+    let brain_id = cfg
+        .active_brain_id
+        .clone()
+        .unwrap_or_else(|| "__default__".into());
+    if let Ok(sources) = ocore::brains::list_sources(cfg, &brain_id).await {
+        if let Some(sid) = cfg.active_source_id.as_deref() {
+            if let Some(s) = sources.iter().find(|x| x.id == sid) {
+                if let Some(p) = &s.local_path {
+                    return p.clone();
+                }
+            }
+        }
+        if sources.len() == 1 {
+            if let Some(p) = &sources[0].local_path {
+                return p.clone();
+            }
+        }
+    }
+    cfg.notes_repo_path.clone()
+}
+
 fn save_cfg(st: &ServerState, cfg: &AppConfig) -> Result<(), AppError> {
     save_config(&st.settings_dir, cfg)
         .map_err(|e| AppError::new("server.cfgSaveFail").p("detail", e.to_string()))
@@ -1170,8 +1195,11 @@ async fn api_factory_run(
             }
             return Ok::<_, AppError>(v);
         }
-        // 預設來源流：天花板按有效 repo。
-        let repo = b.target_repo.clone().unwrap_or_else(|| cfg.notes_repo_path.clone());
+        // 預設來源流：寫入根＝作用中來源 local_path（A1）；天花板按有效 repo。
+        let repo = match b.target_repo.clone() {
+            Some(r) => r,
+            None => resolve_default_repo(&cfg).await,
+        };
         {
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
             ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
@@ -1179,7 +1207,12 @@ async fn api_factory_run(
         let preview =
             run_core_sched(&cfg, &b.factory, &b.paths, Some(&repo), Some((&gate, &owner)), b.annotations.as_deref())
                 .await?;
-        serde_json::to_value(preview).map_err(|e| AppError::new("server.internal").p("detail", e.to_string()))
+        let mut v = serde_json::to_value(preview)
+            .map_err(|e| AppError::new("server.internal").p("detail", e.to_string()))?;
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("repo".into(), json!(repo));
+        }
+        Ok(v)
     })
     .await;
     finish(res)
