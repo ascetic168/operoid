@@ -384,9 +384,12 @@ pub async fn add_source_core(c: &AppConfig, req: &SourceAdd) -> Result<(), AppEr
     let entry = brain_entry(c, &req.brain_id)?;
     let exe = exe_path(c)?;
     let env = env_for_brain(entry.env_home());
+    // --federated：gbrain 預設新來源 non-federated，而 MCP 傳輸的檢索（員工
+    // 工具／知識庫 ops）只准查 federated 來源——漏帶＝該來源在知識庫靜默查不到
+    // （2026-10-18 gbrain-demo 回歸：permission_denied 只進 meta）。
     let (code, _out, err) = run_capture(
         &exe,
-        &["sources", "add", &req.source_id, "--path", &req.path],
+        &["sources", "add", &req.source_id, "--path", &req.path, "--federated"],
         &env,
     )
     .await

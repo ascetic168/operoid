@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### Knowledge retrieval now covers non-federated sources (demo-source silent miss)
+
+- Asking the knowledge page returned only default-source hits while
+  gbrain-demo content was invisible. Root cause chain, diagnosed with a new
+  real-path probe (real_retrieve_sources_diag prints per-source MCP queries
+  and meta.sources_with_errors):
+  1. gbrain-demo was registered non-federated (gbrain's default) — MCP-
+     transport retrieval is only granted federated sources, so its per-source
+     query failed with permission_denied while the direct CLI worked;
+  2. the per-source error was invisible — it lives in meta only, and the MCP
+     client reduced it to four generic characters.
+- Fixes: sources registered by Operoid are now added with --federated;
+  the existing gbrain-demo source was federated on this machine (verified:
+  the fused result interleaves both sources, with the etch-event answer at
+  rank 2); the MCP client surfaces the tool's error text instead of a
+  generic message; and the ops think/search console now prints a
+  "source X query failed" warning line per failing source.
+
 ### Source removal catches up with gbrain's destructive-deletion semantics
 
 - gbrain 0.60 refuses a bare `sources remove` when the source has data and

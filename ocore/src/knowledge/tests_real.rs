@@ -354,3 +354,103 @@ async fn real_g5_fanout_scaling() {
     assert!(two.iter().all(|t| t.1.text.contains("beta")), "2-source 授權應見 s2");
     std::fs::remove_dir_all(&dir).ok();
 }
+// ── 逐源診斷（#[ignore]）——走與產品相同的路徑（真實 db＋MCP transport），印出
+// meta.sources_with_errors：回答「某來源的答案為何沒出現」這類問題用。 ──
+#[ignore = "真實環境診斷：需本機 gbrain、既有授權 scope 與 principal-operator；會在 db 留一筆 receipt"]
+#[tokio::test]
+async fn real_retrieve_sources_diag() {
+    use crate::app_config::AppConfig;
+    use crate::domain::SqliteStore;
+    use crate::gbrain_mcp::GbrainMcpClient;
+    use crate::knowledge::identity::access_context_for_principal;
+    use crate::runtime::AGENT_WS;
+
+    let db = std::env::var("KNOWLEDGE_DIAG_DB").unwrap_or_else(|_| {
+        dirs::data_local_dir()
+            .expect("無 data-local 目錄")
+            .join("com.operoid.studio")
+            .join("operoid.db")
+            .to_string_lossy()
+            .into_owned()
+    });
+    eprintln!("[diag] db = {db}");
+    let cfg = AppConfig::default();
+    let exe = if std::path::Path::new(&cfg.gbrain_exe_path).exists() {
+        cfg.gbrain_exe_path.clone()
+    } else {
+        "gbrain".into()
+    };
+    eprintln!(
+        "[diag] gbrain = {exe} | home = {:?} | transport = {:?}",
+        cfg.active_env_home(),
+        cfg.gbrain_transport
+    );
+
+    let store = SqliteStore::open(&db).expect("store 開啟");
+    let access = access_context_for_principal(&store, "principal-operator", AGENT_WS)
+        .expect("principal-operator 應存在（personal bootstrap）");
+
+    let mcp = if cfg.gbrain_transport == "mcp" {
+        Some(std::sync::Arc::new(GbrainMcpClient::new(
+            exe.clone(),
+            cfg.active_env_home().map(str::to_string),
+        )))
+    } else {
+        None
+    };
+    let tctx = ToolCtx {
+        gbrain_exe: exe.clone(),
+        gbrain_home: cfg.active_env_home().map(str::to_string),
+        chat_model: None,
+        mcp,
+        allowed_tools: Default::default(),
+        employee_output_root: std::path::PathBuf::from(&cfg.employee_output_path),
+        registry: None,
+        knowledge: None,
+        access: access.clone(),
+        turn_max_steps: cfg.turn_max_steps,
+        tool_result_max_chars: cfg.tool_result_max_chars,
+    };
+    let svc = KnowledgeService::new(&db);
+    let q = std::env::var("KNOWLEDGE_DIAG_Q").unwrap_or_else(|_| "蝕刻良率降低問題的根因".into());
+    let out = svc
+        .retrieve(&access, RetrieveKind::Think, &q, None, 10, &tctx)
+        .await
+        .expect("retrieve 應成功");
+    eprintln!(
+        "\n[diag] ── text（前 600 字）──\n{}",
+        out.text.chars().take(600).collect::<String>()
+    );
+    eprintln!("\n[diag] ── meta ──\n{}", serde_json::to_string_pretty(&out.meta).unwrap());
+    let dump = std::env::temp_dir().join("knowledge_diag_text.txt");
+    std::fs::write(&dump, &out.text).unwrap();
+    eprintln!("[diag] full text -> {}", dump.display());
+
+    // 直接打 MCP query（逐源），印原始輸出——route 1 的實際輸入。
+    if let Some(mcp) = &tctx.mcp {
+        if let Some(sids) = out.meta["authorized_sources"].as_array() {
+            for sid in sids {
+                let sid = sid.as_str().unwrap_or_default();
+                match mcp
+                    .call(
+                        "query",
+                        serde_json::json!({
+                            "query": crate::knowledge::service::retrieval_query(&q),
+                            "limit": 10,
+                            "source_id": sid,
+                            "expand": false,
+                        }),
+                    )
+                    .await
+                {
+                    Ok(text) => eprintln!(
+                        "\n[diag] MCP query source={sid} → {} 字：\n{}",
+                        text.chars().count(),
+                        text.chars().take(500).collect::<String>()
+                    ),
+                    Err(e) => eprintln!("\n[diag] MCP query source={sid} → 錯誤：{e}"),
+                }
+            }
+        }
+    }
+}

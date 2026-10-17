@@ -73,8 +73,26 @@ impl GbrainMcpClient {
         };
         match result {
             Ok(res) => {
+                // 工具層錯誤：把 content 裡的錯誤文字帶出（否則逐源失敗只剩
+                // 「回報錯誤」四個字，呼叫端無從診斷——2026-10-18 demo 來源回歸）。
                 if res.is_error.unwrap_or(false) {
-                    anyhow::bail!("MCP tool {tool} 回報錯誤");
+                    let mut detail = String::new();
+                    for c in &res.content {
+                        if let ContentBlock::Text(t) = c {
+                            if !detail.is_empty() {
+                                detail.push(' ');
+                            }
+                            detail.push_str(&t.text);
+                        }
+                    }
+                    anyhow::bail!(
+                        "MCP tool {tool} 回報錯誤：{}",
+                        if detail.is_empty() {
+                            "(無錯誤內容)".to_string()
+                        } else {
+                            detail.trim().chars().take(400).collect::<String>()
+                        }
+                    );
                 }
                 let mut text = String::new();
                 for c in &res.content {

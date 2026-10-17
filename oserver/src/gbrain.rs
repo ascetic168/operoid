@@ -949,6 +949,19 @@ async fn api_op_run(
             let res = match svc.retrieve(&tctx.access, kind, &q, None, 10, &tctx).await {
                 Ok(o) => {
                     sink(ocore::gbrain_cli::CliLine { stream: "stdout".into(), text: o.text });
+                    // 逐源失敗可見化：meta `sources_with_errors` 沉為 stderr 行
+                    // （否則某來源靜默查不到，使用者與稽核面都無從得知）。
+                    if let Some(errs) = o.meta.get("sources_with_errors").and_then(|v| v.as_object()) {
+                        for (sid, e) in errs {
+                            sink(ocore::gbrain_cli::CliLine {
+                                stream: "stderr".into(),
+                                text: format!(
+                                    "⚠ 來源 {sid} 查詢失敗：{}",
+                                    e.as_str().unwrap_or_default().chars().take(300).collect::<String>()
+                                ),
+                            });
+                        }
+                    }
                     // K5/P1.2：meta `source_docs` →「來源文件」行（OperationsView
                     // 渲染為開檔按鈕；與員工對話的確定性附加同一套行格式）。
                     if let Some(docs) = o.meta.get("source_docs").and_then(|v| v.as_object()) {
