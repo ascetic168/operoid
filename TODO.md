@@ -19,6 +19,7 @@
 ### 推薦做法
 - **Heuristic gate**：CSV 解析完成後，掃描 Notes（與其他自由文字欄位）比對日期 pattern；
   命中者併入「LLM 富集佇列」，未命中者維持純解析頁面。
+- 狀態：**使用者同意（2026-10-17）**。
 - 建議 pattern（由保守到寬鬆分期）：
   1. `YYYY-MM-DD`、`YYYY/MM/DD`、`YYYY年M月D日`（年月日齊全，誤判率最低）
   2. `M月D日`（補推斷年份，需註明推斷）
@@ -58,31 +59,64 @@ CSV 匯入時要求（或預設）註解，如「從 Google Contacts 匯入的�
 - 寫入格式：timeline 區塊首位插入 `### YYYY-MM-DD — 匯入：<註解>`（gbrain timeline parser 相容）。
 - 保證每頁至少一筆 timeline 錨點（即使無任何日期事件），gbrain timeline 視圖不空白，
   且可追溯資料來源與匯入批次。
-- **與凍結保護的互動需設計**：重匯時舊頁已含上次「匯入」事件，直接覆寫會遺失舊錨點。
-  建議：匯入事件以「(匯入來源, 日期)」內容去重，重匯時保留舊錨點、只補新錨點；
-  或視為 enriched 的一種（首匯後標記，重匯 freeze）——擇一，需討論。
+- **重匯策略：採去重（使用者決定，2026-10-17）**——保留舊錨點、捨去重複、只補新錨點。
+  去重鍵建議用（錨點類型「匯入」＋來源/批次識別）而非日期，避免同日重匯不同來源時誤判。
+
+### 凍結保護互動——現況的精確描述（2026-10-17 查核）
+
+凍結判定（`factories.rs::write_page_guarded`）：目標頁已存在時，
+**(a)** frontmatter `origin ≠ operoid-factory`（人手/外來頁），或
+**(b)** 帶 `enriched: true`／`<!-- enriched -->` 標記 → 跳過不覆寫；其餘（factory-owned 未標記）→ 無條件覆寫。
+
+三個必須知道的事實：
+
+1. **gbrain 不會寫這兩個標記。** gbrain 自己的富集狀態記在 DB 欄位
+   （`enriched_at`/`enriched_by`，見 gbrain `src/commands/enrich.ts`），不動 frontmatter；
+   在 gbrain GUI 裡加 timeline 列只改頁面內容。所以 factory-owned 頁上的手工增補
+   （含 gbrain 寫入的 timeline 列）**今天就不受凍結保護**——重匯會蓋掉。標記慣例目前
+   純靠使用者/工具自律（companies 的 1,029 頁之所以安全，是因為它們沒有 origin 欄）。
+2. **去重策略會順便補掉這個缺口（僅限 timeline 區塊）**：寫入路徑從盲目覆寫改為
+   「讀舊頁 timeline → 合併（保留所有非本次來源的列）→ 寫回」。人手/gbrain 加的
+   timeline 列從此在重匯時存活。但 **body 的手工編輯仍會被覆寫**——那是 enriched
+   標記的職責，不在本項目範圍。
+3. **凍結頁完全不碰，新錨點也不會加上**——凍結頁的匯入錨點停留在它最後一次被工廠
+   寫入的時間。這是刻意取捨（凍結=不動），代價是該頁錨點可能過時。另：編輯器存檔與
+   使用者確認的預覽寫回不受凍結保護（fe082e1 明確保留無條件覆寫，明示動作優先）。
 
 ### 驗收條件
-- 帶註解匯入後，每頁 timeline 含「匯入」事件；重複匯入不產生重複錨點、不遺失舊錨點。
+- 帶註解匯入後，每頁 timeline 含「匯入」事件；重複匯入不產生重複錨點、不遺失舊錨點，
+  也不遺失人手/gbrain 加的其他 timeline 列。
 
 ---
 
-## 3. 圖片匯入（現況：完全不支援）
+## 3. 圖片匯入（調查完成：gbrain 已原生支援，缺口在 Operoid 編排層）
 
-### 現況確認（2026-10-17 查核）
-- `media` 工廠 = `Pipeline::Textual`：只收 txt/md/pdf（新聞剪報等「文字文件」），非圖片檔。
-- 全工廠／轉換器無 png/jpg/jpeg 等副檔名支援；`gbrain capture` 僅文字（inline/file/stdin）。
-- Operoid 有 `blobs/` 目錄可放附件；gbrain 有 figures 概念（PDF 內嵌圖萃取），但無獨立圖片頁型別。
+### 調查結果（2026-10-17；gbrain 原始碼 checkout v0.42.52 ＋ 本機安裝版 0.60.262.0）
+- **gbrain 原生圖片管線已存在**（v0.27.1「cherry」系列，非未來計畫而是現有功能）：
+  - 觸發：圖片檔放進 notes repo → `gbrain sync`（`sync.ts`：.md 或——multimodal 啟用時——
+    圖片副檔名皆 syncable）；另有 `gbrain import <dir>` 目錄匯入、`gbrain files`／`storage` 查詢。
+  - 支援格式：png/jpg/jpeg/gif/webp/heic/heif/avif，單檔上限 20MB（Voyage multimodal 限制）。
+  - 每張圖自動處理：SHA256 去重（未變即 skip）、HEIC/AVIF 轉通用編碼、EXIF 進 frontmatter、
+    OCR（選用）入 chunk_text、multimodal embedding 寫入 `embedding_image` 欄（→ 圖片搜尋）。
+  - 建立 `type: image` 資產頁（engine 內建型別，不在 schema pack 20 型清單；位元組由 gbrain
+    儲存層管理，Operoid 無須自建 blobs）。
+  - **路徑鄰近自動連結**（cherry-3）：`foo.png` 與同目錄 `foo.md` → 自動加 `image_of` edge。
+- **前提條件**：需設定 multimodal embedding 模型（`embedding_multimodal_model`；Voyage 或
+  OpenAI-compat）。本機目前**未設定**（config 查無此鍵）→ 未設定時 sync 直接跳過圖片。
+- **Operoid 側現況**：工廠只收 txt/md/pdf/csv；`gbrain capture` 明確拒絕二進位（含圖片，
+  原始碼註記「not yet supported」）；Operoid 也不會替使用者把圖片放進 repo 或生成註解頁。
 
-### 推薦做法（分期）
-- **Phase 1（最小可行）**：
-  - 圖片檔落 `blobs/`（以內容雜湊命名防重），產生 `media/<slug>.md` 頁，
-    frontmatter 帶附件相對路徑（欄位名稱需與 gbrain schema pack v2 對齊，避免自訂欄位衝突——待調查）。
-  - **強制註解**（使用者標題/描述）作為頁面 lead line＋timeline 錨點（搭配項目 2 機制）。
-- **Phase 2**：視覺 LLM 自動描述圖片內容寫入 body（明確標注 AI-generated）；
-  EXIF 拍攝日期 → timeline 事件。
-- **Phase 3**：批次拖放（資料夾）、內容雜湊去重、與 gbrain figures 整合。
-- 待調查：gbrain 對附件/圖片的 schema 演進方向（避免自訂 frontmatter 未來被打臉）。
+### 推薦做法（修正版——不自建儲存，Operoid 做編排層）
+原 Phase 1「自建 blobs/＋自訂附件 frontmatter」**作廢**：gbrain 已內建儲存/去重/轉檔/EXIF/
+OCR/向量搜尋，重造只會與其演進衝突。改為：
+- **Operoid 加 image 管線**：拖放（單/批）圖片 → 落來源 repo（與註解頁同目錄、同名主檔，
+  以觸發 `image_of` 自動連結）→ **強制註解**（使用者決定）：生成同名 .md 註解頁
+  （lead line＝使用者標題/描述，搭配項目 2 的匯入錨點機制）→ sync 時 gbrain 自動建
+  image 頁並連結。
+- **後續**：設定 multimodal embedding 後即得圖片搜尋；EXIF 拍攝日期可由 Operoid 轉為
+  註解頁的 timeline 事件。
+- **待辦細節**：批次的 OCR/embed 費用估算與併發；把 doctor 的 multimodal 設定檢查接進
+  Operoid 前置檢查（未設定時提前提示，而非 sync 靜默跳過）。
 
 ---
 
