@@ -372,12 +372,13 @@ llama-server --embedding \
   （reachable／modalities／vision／n_ctx／**long_input_ok**／dimensions）、chat 端點 VLM
   能力（1 圖試探，按端點快取——決定生成端「讀圖作答」或「定位者」模式）、MinerU 階梯狀態。
 
-### 10.2 MinerU 取用階梯（四種安裝形態，逐級 fallback）
+### 10.2 MinerU 取用階梯（安裝形態，逐級 fallback）
 
 | 階梯 | 形態 | 設定 |
 |---|---|---|
-| 1 | **設定覆寫**（首選，venv 安裝） | `[knowledge] mineru_command`＝完整可執行路徑或命令模板。venv `Scripts/*.exe` 是 launcher——**原地以絕對路徑呼叫免 activate**；不可複製 exe 單獨攜帶、venv 搬移即失效（`Fatal error in launcher`）→ 階梯自動降級。`conda run -n m mineru-kit`／`uv run` 皆以模板涵蓋 |
-| 2 | **PATH 查找** | `uv tool install mineru`／`pipx install`／pip --user 後 PATH 上有 `mineru-kit` 即命中 |
+| 1 | **設定覆寫**（首選，venv 安裝） | `[knowledge] mineru_command`＝完整可執行路徑或命令模板。venv `Scripts/*.exe` 是 launcher——**原地以絕對路徑呼叫免 activate**；不可複製 exe 單獨攜帶、venv 搬移即失效（`Fatal error in launcher`）→ 階梯自動降級。`conda run -n m mineru-kit`／`uv run` 皆以模板涵蓋。路徑支援環境變數展開（見下） |
+| 1b | **設定目錄**（可攜首選） | `[knowledge] mineru_dir`＝安裝根目錄，程式自動探測 `mineru-kit` 於根／`Scripts\`（Windows venv）／`bin/`（Unix venv、pipx、uv tool）。**支援 `%VAR%`（Windows）／`${VAR}`（Unix）環境變數展開**——寫 `%USERPROFILE%\Documents\python\.mineru` 或 `${HOME}/.mineru` 即同一份設定字串跨機器、跨使用者成立 |
+| 2 | **PATH 查找** | `uv tool install mineru`／`pipx install`／pip --user 後 PATH 上有 `mineru-kit` 即命中（Windows 套 PATHEXT；Unix 另驗執行位） |
 | 3 | **遠端解析**（egress 分層治理，見 10.3） | `mineru_remote_url`（自架 `mineru-kit api-server`，private）／`mineru_api_key`＋`allow_public_egress=true`（mineru.net，public） |
 | 4 | **降級** | pdf_extract naive 文字抽取（無圖、品質降），轉換報告帶品質警告 |
 
@@ -385,6 +386,8 @@ llama-server --embedding \
 路由政策：`pdf_convert_policy`＝`auto`（預設；pdf_extract 毫秒級訊號 S1–S4——無文字層／字形殘片
 ／圖表引用密度／行長碎片化——任一命中即升級 MinerU）／`always_fast`／`always_mineru`。
 判定結果與訊號全量存進轉換輸出的 `conversion-report.json`（可稽核）。
+本機階梯探測（含各級落空原因與 PATH 實測）：
+`cargo test -p ocore real_ladder_probe -- --ignored --nocapture`。
 
 ### 10.3 egress 信任分層（文件外流的治理，K1/K5/K8 共用）
 

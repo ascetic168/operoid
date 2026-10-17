@@ -45,6 +45,9 @@ pub struct ConvertConfig {
     pub policy: ConvertPolicy,
     /// 階梯 1：完整可執行路徑或命令模板（venv launcher exe、`conda run …`）。
     pub mineru_command: Option<String>,
+    /// 階梯 1b：安裝根目錄（探測 `<dir>/mineru-kit`、`Scripts\`、`bin\`；支援
+    /// `%VAR%`／`${VAR}` 環境變數展開——設定字串可跨機器、跨使用者攜帶）。
+    pub mineru_dir: Option<String>,
     /// MinerU 檔位：flash／basic（預設）／standard。
     pub mineru_tier: String,
     /// 階梯 3（private）：自架 mineru-kit api-server URL——設定即同意。
@@ -60,6 +63,7 @@ impl Default for ConvertConfig {
         Self {
             policy: ConvertPolicy::Auto,
             mineru_command: None,
+            mineru_dir: None,
             mineru_tier: "basic".into(),
             mineru_remote_url: None,
             mineru_api_key: None,

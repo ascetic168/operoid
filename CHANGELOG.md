@@ -15,6 +15,21 @@
 
 ## [Unreleased]
 
+### Portable MinerU detection: configurable install directory with env expansion
+
+- New first-class ladder rung `[knowledge] mineru_dir`: point it at a MinerU
+  install root and the program probes `mineru-kit` in the root, `Scripts\`
+  (Windows venv), and `bin/` (Unix venv, pipx, uv tool). Both `mineru_dir` and
+  `mineru_command` now expand environment variables — `%VAR%` (Windows) and
+  `${VAR}` (Unix) — so `%USERPROFILE%\Documents\python\.mineru` or
+  `${HOME}/.mineru` is one portable settings string across machines and users,
+  instead of an absolute path hardcoding an account name.
+- Unix correctness: executable-bit verification for probed files (venv/pipx/uv
+  launchers carry +x); PATH lookup unchanged otherwise (PATHEXT on Windows).
+- Real-machine ladder probe: `cargo test -p ocore real_ladder_probe --
+  --ignored --nocapture` prints every rung attempt, the actual-PATH lookup
+  result, and an expansion sample (diagnostic, no assertions).
+
 ### PDF figures move to the gbrain-native image import lane; sidecar retired
 
 - Retrieval pilot (four-lane benchmark on mueller2016, 11 figure-targeted

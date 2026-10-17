@@ -209,9 +209,15 @@ pub struct AppConfig {
     #[serde(default)]
     pub pdf_convert_policy: Option<String>,
     /// K1：MinerU 取用階梯第 1 級——完整可執行路徑或命令模板（venv launcher exe、
-    /// `conda run -n m mineru-kit`）。缺省 → PATH 找 `mineru-kit` → 遠端 → 降級 pdf_extract。
+    /// `conda run -n m mineru-kit`）。缺省 → 第 1b 級 mineru_dir → PATH 找
+    /// `mineru-kit` → 遠端 → 降級 pdf_extract。
     #[serde(default)]
     pub mineru_command: Option<String>,
+    /// K1：MinerU 取用階梯第 1b 級——安裝根目錄（探測 `mineru-kit` 於根／
+    /// `Scripts\`／`bin/`）。支援 `%VAR%`／`${VAR}` 環境變數展開：寫
+    /// `%USERPROFILE%\…`／`${HOME}/…` 即同一份設定跨機器、跨使用者成立。
+    #[serde(default)]
+    pub mineru_dir: Option<String>,
     /// K1：MinerU 解析檔位 flash／basic（預設）／standard。
     #[serde(default)]
     pub mineru_tier: Option<String>,
@@ -320,6 +326,7 @@ impl AppConfig {
                 .map(crate::converters::mineru::router::ConvertPolicy::parse)
                 .unwrap_or(crate::converters::mineru::router::ConvertPolicy::Auto),
             mineru_command: self.mineru_command.clone(),
+            mineru_dir: self.mineru_dir.clone(),
             mineru_tier: self.mineru_tier.clone().unwrap_or_else(|| "basic".into()),
             mineru_remote_url: self.mineru_remote_url.clone(),
             mineru_api_key: self.mineru_api_key.clone(),
@@ -451,6 +458,7 @@ impl Default for AppConfig {
             llm_env: std::collections::BTreeMap::new(),
             pdf_convert_policy: None,
             mineru_command: None,
+            mineru_dir: None,
             mineru_tier: None,
             mineru_remote_url: None,
             mineru_api_key: None,

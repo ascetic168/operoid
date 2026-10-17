@@ -6,6 +6,10 @@
 //!    **原地以絕對路徑呼叫免 activate**；但不可複製攜帶、venv 搬移即失效
 //!    （`Fatal error in launcher`）→ 探測失敗自動降下一級。`conda run`／`uv run`／WSL
 //!    皆以模板機制涵蓋。
+//! 1b. **設定目錄**：`mineru_dir`＝安裝根目錄（環境變數展開支援 `%VAR%`／`${VAR}`），
+//!     探測 `<dir>/mineru-kit`、`<dir>/Scripts/mineru-kit`（Windows venv）、
+//!     `<dir>/bin/mineru-kit`（Unix venv/pipx/uv）。寫成 `%USERPROFILE%\…`／`${HOME}/…`
+//!     即同一份設定字串跨機器、跨使用者成立。
 //! 2. **PATH 查找**：`mineru-kit`（涵蓋 `uv tool install`／`pipx install`／pip --user）。
 //! 3. **遠端解析——依「信任層級」治理，public 預設擋**：
 //!    - `private`：自架端點（`mineru_remote_url`，區網 api-server）——**設定本身即同意**
@@ -81,13 +85,13 @@ impl LadderOutcome {
 pub fn resolve(cfg: &ConvertConfig) -> LadderOutcome {
     let mut o = LadderOutcome::default();
 
-    // 1. 設定覆寫：完整路徑或命令模板。
+    // 1. 設定覆寫：完整路徑或命令模板（支援環境變數展開——設定字串可攜）。
     if let Some(cmd) = cfg.mineru_command.as_deref().filter(|s| !s.trim().is_empty()) {
         let parts = split_template(cmd);
         if parts.is_empty() {
             o.miss("1.config", "設定為空".into());
         } else {
-            let program = resolve_executable(&parts[0]);
+            let program = resolve_executable(&expand_env(&parts[0]));
             match program {
                 Some(p) => {
                     o.ok("1.config", format!("設定覆寫命中：{}", p.display()));
@@ -111,6 +115,25 @@ pub fn resolve(cfg: &ConvertConfig) -> LadderOutcome {
                     );
                 }
             }
+        }
+    }
+
+    // 1b. 設定目錄：`mineru_dir`（安裝根目錄；跨平台候選位——根／Scripts（Windows
+    //     venv）／bin（Unix venv、pipx、uv tool））。
+    if let Some(dir) = cfg
+        .mineru_dir
+        .as_deref()
+        .map(expand_env)
+        .filter(|s| !s.trim().is_empty())
+    {
+        match probe_dir(Path::new(&dir)) {
+            Some(p) => {
+                o.ok("1.config-dir", format!("設定目錄命中：{}", p.display()));
+                o.program = Some(p.to_string_lossy().into_owned());
+                o.tier = Some(EgressTier::Local);
+                return o;
+            }
+            None => o.miss("1.config-dir", format!("目錄內無 mineru-kit：{dir}")),
         }
     }
 
@@ -192,14 +215,101 @@ pub fn split_template(cmd: &str) -> Vec<String> {
 /// 執行檔解析：存在即回；無副檔名時補 .exe 再試（Windows 慣例）。
 pub fn resolve_executable(p: &str) -> Option<PathBuf> {
     let path = Path::new(p);
-    if path.is_file() {
+    if is_executable_file(path) {
         return Some(path.to_path_buf());
     }
     let with_exe = PathBuf::from(format!("{p}.exe"));
-    if with_exe.is_file() {
+    if is_executable_file(&with_exe) {
         return Some(with_exe);
     }
     None
+}
+
+/// 設定目錄的跨平台候選位：根／`Scripts`（Windows venv）／`bin`（Unix venv、
+/// pipx、uv tool）。
+fn probe_dir(dir: &Path) -> Option<PathBuf> {
+    for sub in ["", "Scripts", "bin"] {
+        let base = if sub.is_empty() {
+            dir.to_path_buf()
+        } else {
+            dir.join(sub)
+        };
+        if let Some(p) = resolve_executable(&base.join("mineru-kit").to_string_lossy()) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// 可執行檔判定：Windows 看存在性（PATHEXT 已由呼叫端語意涵蓋）；Unix 另要求
+/// 執行位（venv/pipx/uv 的 launcher 皆帶 +x——擋掉同名非執行檔誤命中）。
+fn is_executable_file(p: &Path) -> bool {
+    if !p.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        p.metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// 展開設定值中的環境變數：`%VAR%`（Windows 慣用）與 `${VAR}`（Unix 慣用）。
+/// **未設定的變數保留原樣**（錯誤可見於 miss 訊息，不靜默清空）。
+pub fn expand_env(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    loop {
+        let pct = rest.find('%');
+        let brace = rest.find("${");
+        let (pos, kind) = match (pct, brace) {
+            (None, None) => {
+                out.push_str(rest);
+                return out;
+            }
+            (Some(a), Some(b)) => {
+                if a <= b {
+                    (a, 0)
+                } else {
+                    (b, 1)
+                }
+            }
+            (Some(a), None) => (a, 0),
+            (_, Some(b)) => (b, 1),
+        };
+        out.push_str(&rest[..pos]);
+        let tail = &rest[pos..];
+        let (name, consumed) = if kind == 0 {
+            // %VAR%（VAR 非空）
+            match tail[1..].find('%') {
+                Some(e) if e > 0 => (Some(&tail[1..1 + e]), e + 2),
+                _ => (None, 0),
+            }
+        } else {
+            // ${VAR}
+            match tail[2..].find('}') {
+                Some(e) => (Some(&tail[2..2 + e]), e + 3),
+                _ => (None, 0),
+            }
+        };
+        match name.and_then(|n| std::env::var(n).ok()) {
+            Some(v) => {
+                out.push_str(&v);
+                rest = &tail[consumed..];
+            }
+            None => {
+                // 變數未設定或模式不完整：原樣保留此一前綴字元（ASCII），繼續掃描。
+                out.push_str(&tail[..1]);
+                rest = &tail[1..];
+            }
+        }
+    }
 }
 
 /// 在 `path_var`（PATH 值）中找程式——純函式（測試可餵自訂值，不碰環境）。
@@ -217,7 +327,7 @@ pub fn find_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
     for dir in std::env::split_paths(path_var) {
         for ext in &exts {
             let cand = dir.join(format!("{program}{ext}"));
-            if cand.is_file() {
+            if is_executable_file(&cand) {
                 return Some(cand);
             }
         }
@@ -429,15 +539,90 @@ mod tests {
         );
     }
 
-    /// PATH 查找為純函式：餵自訂值不碰環境。
+    /// PATH 查找為純函式：餵自訂值不碰環境（跨平台檔名＋Unix 執行位）。
     #[test]
     fn find_on_path_is_pure() {
         let dir = std::env::temp_dir().join(format!("mineru-ladder-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("mineru-kit.exe");
+        let name = if cfg!(windows) { "mineru-kit.exe" } else { "mineru-kit" };
+        let p = dir.join(name);
         std::fs::write(&p, b"").unwrap();
+        make_executable(&p);
         let found = find_on_path("mineru-kit", &dir.to_string_lossy());
         assert_eq!(found.unwrap(), p);
         std::fs::remove_file(&p).ok();
+    }
+
+    /// 階梯 1b：設定目錄（根／Scripts／bin 候選位）→ Local。
+    #[test]
+    fn config_dir_resolves_local() {
+        let dir = std::env::temp_dir().join(format!("mineru-dir-{}", std::process::id()));
+        let (sub, name) = if cfg!(windows) {
+            (Some("Scripts"), "mineru-kit.exe")
+        } else {
+            (Some("bin"), "mineru-kit")
+        };
+        let sub_dir = dir.join(sub.unwrap());
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        let p = sub_dir.join(name);
+        std::fs::write(&p, b"").unwrap();
+        make_executable(&p);
+        let mut c = cfg();
+        c.mineru_dir = Some(dir.to_string_lossy().into_owned());
+        let o = resolve(&c);
+        assert!(o.resolved(), "attempts: {:?}", o.attempts);
+        assert_eq!(o.tier, Some(EgressTier::Local));
+        assert_eq!(o.program.as_deref(), Some(p.to_string_lossy().as_ref()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 環境變數展開：`%VAR%`（Windows）與 `${VAR}`（Unix）同效；未設定變數保留原樣。
+    #[test]
+    fn expand_env_supports_windows_and_unix_syntax() {
+        // 家目錄變數兩平台皆設（USERPROFILE＝Windows、HOME＝Unix）。
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .expect("家目錄環境變數應存在");
+        let win = expand_env(&format!("%{}%/pdf", if cfg!(windows) { "USERPROFILE" } else { "HOME" }));
+        let unix = expand_env(&format!("${{{}}}/pdf", if cfg!(windows) { "USERPROFILE" } else { "HOME" }));
+        assert_eq!(win, format!("{home}/pdf"));
+        assert_eq!(unix, format!("{home}/pdf"));
+        // 未設定的變數：保留原樣（不靜默清空）。
+        assert_eq!(expand_env("%OPEROID_NOPE_9%/x"), "%OPEROID_NOPE_9%/x");
+        assert_eq!(expand_env("${OPEROID_NOPE_9}/x"), "${OPEROID_NOPE_9}/x");
+    }
+
+    fn make_executable(p: &Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        #[cfg(not(unix))]
+        let _ = p;
+    }
+
+    /// 本機階梯探測（#[ignore]——印出各級嘗試與 PATH 實測；純診斷不斷言）。
+    /// 跑法：`cargo test -p ocore real_ladder_probe -- --ignored --nocapture`
+    #[ignore = "真實環境探測：印本機 PATH／展開／階梯解析結果"]
+    #[test]
+    fn real_ladder_probe() {
+        let o = resolve(&cfg());
+        eprintln!("[ladder] ── 階梯解析（本機環境，無設定覆寫）──");
+        for a in &o.attempts {
+            eprintln!("[ladder] {:<16} {} {}", a.step, if a.resolved { "HIT " } else { "miss" }, a.detail);
+        }
+        eprintln!(
+            "[ladder] resolved={} program={:?} tier={:?}",
+            o.resolved(),
+            o.program,
+            o.tier.map(|t| t.as_str())
+        );
+        let path_env = std::env::var("PATH").unwrap_or_default();
+        eprintln!(
+            "[ladder] find_on_path(mineru-kit, 實際 PATH) → {:?}",
+            find_on_path("mineru-kit", &path_env).map(|p| p.display().to_string())
+        );
+        let home_ref = if cfg!(windows) { "%USERPROFILE%" } else { "${HOME}" };
+        eprintln!("[ladder] expand_env({home_ref}) → {}", expand_env(home_ref));
     }
 }
