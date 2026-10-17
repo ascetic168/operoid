@@ -185,6 +185,10 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
      （已清理、無 sync 過、demo repo 淨復原）。
    - 建議：API 無 target 時改用作用中來源路徑（與 GUI 一致），或至少在回應中明示實際寫入根目錄。
    - `app-settings.json` 的 `notes_repo_path` 已手動修正為 `C:\Users\charl\notes`（2026-10-17）。
+   - **操作知識（同日二修）**：桌面 GUI 退出時會以記憶體內的 app_config 回寫檔案——
+     在 GUI 還開著時手動改檔會被蓋掉（當日 `notes_repo_path` 修正即被回寫沖銷一次，
+     `active_brain_id`/`active_source_id` 同批回寫為 demo 腦）。修檔必須在 GUI 關閉後進行；
+     修復行為本身也應涵蓋「exit-save 不得以過期記憶體值覆寫檔案內已變更的鍵」。
 2. **dev 流程帶起舊 oserver.exe**：`npm run tauri dev` 重編後 `target/debug/oserver.exe`
    可能仍是舊檔（本次為 8/30 舊檔，缺新路由 → 前端「本地服務通訊失敗」）。
    建議：`ensure_server` spawn 前比對 `deps/oserver.exe` 與 `oserver.exe` mtime/大小，
