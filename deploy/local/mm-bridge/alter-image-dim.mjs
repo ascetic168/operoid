@@ -2,13 +2,20 @@
 // vector(768)（EmbeddingGemma 2 維度）。安全前提：欄位必須全 NULL（無任何圖片
 // 向量已存）。重用 gbrain 自己的嵌入式 PGlite 資產（同版本 WASM＋pgvector extension），
 // 避免用不同版本的 pglite 開 gbrain 的資料目錄。
-// 執行前確認沒有任何 gbrain 行程在跑，且 ~/.gbrain/brain.pglite 已備份。
+// 執行前確認沒有任何 gbrain 行程在跑，且目標 brain.pglite 已備份。
+// 參數（env，皆可省）：PGLITE_DIR（預設 ~/.gbrain/brain.pglite）、TARGET_DIM
+// （預設 768）、BUN_GLOBAL_ROOT（預設 ~/.bun/install/global——gbrain 全域安裝根）。
 import { PGlite } from '@electric-sql/pglite';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const DATA_DIR = process.env.PGLITE_DIR ?? 'C:/Users/charl/.gbrain/brain.pglite';
+const DATA_DIR = process.env.PGLITE_DIR ?? join(homedir(), '.gbrain', 'brain.pglite');
 const TARGET = Number(process.env.TARGET_DIM ?? 768);
+const BUN_GLOBAL_ROOT = process.env.BUN_GLOBAL_ROOT ?? join(homedir(), '.bun', 'install', 'global');
 const GBRAIN_SRC =
-  'file:///C:/Users/charl/.bun/install/global/node_modules/gbrain/src/core/pglite-embedded-assets.ts';
+  process.env.GBRAIN_SRC ??
+  pathToFileURL(join(BUN_GLOBAL_ROOT, 'node_modules', 'gbrain', 'src', 'core', 'pglite-embedded-assets.ts')).href;
 
 const { getEmbeddedPgliteOptions } = await import(GBRAIN_SRC);
 const opts = await getEmbeddedPgliteOptions();

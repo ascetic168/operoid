@@ -9,7 +9,7 @@
 //! **E8 前置**：`sync_brain_core` 收任意 sink（含 [`noop_sink`]）——dispatch_event
 //! 日後可 fire-and-forget 呼叫，不需前端串流 channel。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -204,6 +204,17 @@ pub async fn add_brain_core(
         if let Err(e) = sync_new_brain_models(&exe, &home, &cm).await {
             return Err(AppError::new("brain.modelsSyncFailed").p("detail", e));
         }
+        // 多模態（圖片嵌入）繼承：作用中環境已啟用 → 三鍵寫入新腦（雙 plane）。
+        // 缺此步驟每個 GUI 新腦都得手動重設（2026-10-18 demo 腦回歸）。
+        if let Err(w) = inherit_multimodal(&exe, &c, Some(&home)).await {
+            eprintln!("[brains] multimodal 繼承失敗（略過）：{w}");
+        }
+        // embedding_image 維度修正：gbrain 0.60 建 schema 硬編 vector(1024)，
+        // 與 768 維嵌入模型錯位（multimodal 開了圖片 sync 仍失敗）——init 後冪等
+        // 修正（腳本：deploy/local/mm-bridge/alter-image-dim.mjs；欄位有資料即中止）。
+        if let Err(w) = fix_embedding_image_dim(&c, Some(&home), dim).await {
+            eprintln!("[brains] embedding_image 維度修正失敗（略過；圖片 sync 會失敗）：{w}");
+        }
     } else {
         // 登錄既有：驗 config.json 存在
         if !config_json.exists() {
@@ -227,6 +238,104 @@ pub async fn add_brain_core(
     };
     c.brains.push(entry.clone());
     Ok((c, entry))
+}
+
+/// 新腦 multimodal 繼承：作用中環境的 gbrain config 已啟用 multimodal（且帶
+/// litellm URL／模型）→ 三鍵寫入新腦（雙 plane）。來源未啟用 → Ok（不繼承；
+/// 工廠頁的能力提示會引導設定）。
+async fn inherit_multimodal(exe: &str, c: &AppConfig, home: Option<&str>) -> Result<(), String> {
+    let view = crate::gbrain_cfg::build_config_view(Some(exe), c.active_env_home())
+        .await
+        .map_err(|e| e.to_string())?;
+    if !view.embedding_multimodal {
+        return Ok(());
+    }
+    let url = view
+        .provider_base_urls
+        .get("litellm")
+        .and_then(|v| v.as_str())
+        .unwrap_or("http://127.0.0.1:8090/v1")
+        .to_string();
+    let model = view
+        .embedding_multimodal_model
+        .clone()
+        .unwrap_or_else(|| "litellm:embeddinggemma-2".into());
+    crate::gbrain_cfg::set_multimodal_setup(exe, home, &model, &url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 新腦 `embedding_image` 維度修正：以 bun 跑 `alter-image-dim.mjs`
+/// （PGLITE_DIR 指向新腦；冪等——已為目標維度即 no-op、欄位有資料即中止）。
+/// 腳本尋找順序：`OPEROID_ALTER_IMAGE_SCRIPT` → `~/.bun/install/global/` →
+/// `<cwd>/deploy/local/mm-bridge/`。
+async fn fix_embedding_image_dim(c: &AppConfig, home: Option<&str>, dim: i64) -> Result<(), String> {
+    let script = locate_alter_script().ok_or_else(|| {
+        "alter-image-dim.mjs 不存在（找過 OPEROID_ALTER_IMAGE_SCRIPT、~/.bun/install/global、<cwd>/deploy/local/mm-bridge）".to_string()
+    })?;
+    let bun = locate_bun(c).ok_or_else(|| "bun 不在 PATH 也找不到 ~/.bun/bin".to_string())?;
+    let pglite = Path::new(home.expect("create=true 呼叫必帶 home"))
+        .join(".gbrain")
+        .join("brain.pglite");
+    let env: Vec<(&'static str, std::ffi::OsString)> = vec![
+        ("PGLITE_DIR", pglite.to_string_lossy().into_owned().into()),
+        ("TARGET_DIM", dim.to_string().into()),
+    ];
+    let (_, out, err) = run_capture(&bun, &[script.to_string_lossy().as_ref()], &env)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !out.contains("免改") && !out.contains("改後") {
+        return Err(format!(
+            "腳本輸出異常：{} {}",
+            out.trim().chars().take(200).collect::<String>(),
+            err.trim().chars().take(200).collect::<String>()
+        ));
+    }
+    Ok(())
+}
+
+/// `alter-image-dim.mjs` 位置探測（依序：env 覆寫 → gbrain 全域安裝根 → repo 部署包）。
+fn locate_alter_script() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("OPEROID_ALTER_IMAGE_SCRIPT") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        let p = home.join(".bun").join("install").join("global").join("alter-image-dim.mjs");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let deployed = std::env::current_dir()
+        .ok()?
+        .join("deploy")
+        .join("local")
+        .join("mm-bridge")
+        .join("alter-image-dim.mjs");
+    if deployed.is_file() {
+        return Some(deployed);
+    }
+    None
+}
+
+/// bun 位置探測：PATH → `~/.bun/bin`（gbrain 同源安裝）。
+fn locate_bun(c: &AppConfig) -> Option<String> {
+    if let Ok(path_env) = std::env::var("PATH") {
+        if let Some(p) = crate::converters::mineru::ladder::find_on_path("bun", &path_env) {
+            return Some(p.to_string_lossy().into_owned());
+        }
+    }
+    let home = dirs::home_dir()?;
+    for name in if cfg!(windows) { ["bun.exe"] } else { ["bun"] } {
+        let p = home.join(".bun").join("bin").join(name);
+        if p.is_file() {
+            return Some(p.to_string_lossy().into_owned());
+        }
+    }
+    let _ = c;
+    None
 }
 
 /// 列出某腦的 sources（live：gbrain sources list --json）。給 `brain_sources` 指令
@@ -470,4 +579,62 @@ mod tests {
         assert_ne!(em, "  ");
         assert_ne!(dim, 0);
     }
+}
+
+/// 新腦建立即具備 multimodal（#[ignore]——真實環境：gbrain、bun、alter 腳本與
+/// 作用中環境已啟用 multimodal；手動跑）。
+/// 跑法：`cargo test -p ocore real_add_brain_multimodal -- --ignored --nocapture`
+#[ignore = "真實環境相依：需 gbrain、bun、alter-image-dim.mjs 與已啟用 multimodal 的作用中環境"]
+#[tokio::test]
+async fn real_add_brain_inherits_multimodal_and_fixes_image_dim() {
+    let dir = std::env::temp_dir().join(format!(
+        "operoid-brain-mm-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let home = dir.join("newbrain");
+    std::fs::create_dir_all(&home).unwrap();
+    let c = AppConfig::default();
+    let req = AddBrainReq {
+        name: "mm-test".into(),
+        gbrain_home: Some(home.to_string_lossy().into_owned()),
+        create: true,
+        embedding_model: None,
+        embedding_dimensions: None,
+        chat_model: None,
+    };
+    let (_, _entry) = add_brain_core(&c, &req).await.expect("建腦應成功");
+
+    // 斷言：multimodal 三鍵已繼承（file plane）。
+    let cfg: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(home.join(".gbrain").join("config.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(cfg["embedding_multimodal"], serde_json::json!(true), "multimodal 應已啟用");
+    assert_eq!(
+        cfg["embedding_multimodal_model"],
+        serde_json::json!("litellm:embeddinggemma-2")
+    );
+    assert!(cfg["provider_base_urls"]["litellm"].is_string(), "litellm URL 應已繼承");
+
+    // 斷言：embedding_image 已為 768（重跑腳本應回報「免改」）。
+    let script = locate_alter_script().expect("alter 腳本應可找到");
+    let bun = locate_bun(&c).expect("bun 應可找到");
+    let env: Vec<(&'static str, std::ffi::OsString)> = vec![
+        (
+            "PGLITE_DIR",
+            home.join(".gbrain").join("brain.pglite").to_string_lossy().into_owned().into(),
+        ),
+        ("TARGET_DIM", "768".into()),
+    ];
+    let (code, out, err) = run_capture(&bun, &[script.to_string_lossy().as_ref()], &env)
+        .await
+        .expect("bun spawn");
+    assert_eq!(code, 0, "alter 檢查應成功：{out}{err}");
+    assert!(out.contains("免改"), "維度應已修正為 768：{out}");
+
+    std::fs::remove_dir_all(&dir).ok();
 }

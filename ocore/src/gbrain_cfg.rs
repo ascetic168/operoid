@@ -287,6 +287,50 @@ pub async fn clear_db_overrides(exe: &str, home: Option<&str>) -> Result<(), App
     Ok(())
 }
 
+/// 新腦 multimodal 設定繼承（階梯：腦建立程序呼叫）：三鍵**雙 plane** 寫入——
+/// file plane（config.json 直寫；`embedding_multimodal*` 非 model key、
+/// `litellm` 不在 ALL_PROVIDERS，故不走 set_model／set_provider_base_url）
+/// ＋DB plane（`gbrain config set`）。兩 plane 一致，避免影子歧義。
+pub async fn set_multimodal_setup(
+    exe: &str,
+    home: Option<&str>,
+    model: &str,
+    litellm_url: &str,
+) -> Result<(), AppError> {
+    let model = model.trim();
+    let litellm_url = litellm_url.trim();
+    if model.is_empty() || litellm_url.is_empty() {
+        return Err(AppError::new("gbrain.configEmptyValue"));
+    }
+    // file plane。
+    let loaded = gbrain_config::load_for(home)?;
+    let mut raw = if loaded.raw.is_object() {
+        loaded.raw
+    } else {
+        serde_json::json!({})
+    };
+    let obj = raw
+        .as_object_mut()
+        .expect("raw checked to be an object above");
+    obj.insert("embedding_multimodal".into(), serde_json::Value::Bool(true));
+    obj.insert(
+        "embedding_multimodal_model".into(),
+        serde_json::Value::String(model.to_string()),
+    );
+    let urls = obj
+        .entry("provider_base_urls")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(map) = urls.as_object_mut() {
+        map.insert("litellm".into(), serde_json::Value::String(litellm_url.to_string()));
+    }
+    gbrain_config::save_raw(&gbrain_config::config_path_for(home)?, &raw)?;
+    // DB plane。
+    config_set(exe, home, "embedding_multimodal", "true").await?;
+    config_set(exe, home, "embedding_multimodal_model", model).await?;
+    config_set(exe, home, "provider_base_urls.litellm", litellm_url).await?;
+    Ok(())
+}
+
 /// 設 provider_base_url（**直寫檔案**，因 gbrain CLI 對此 key no-op）。
 /// base_url=None → 移除該 provider 的覆寫（用預設）。
 pub fn set_provider_base_url(
@@ -296,8 +340,7 @@ pub fn set_provider_base_url(
 ) -> Result<(), AppError> {
     if !gbrain_config::ALL_PROVIDERS.contains(&provider) {
         return Err(AppError::new("config.unknownProvider").p("provider", provider));
-    }
-    let path = gbrain_config::config_path_for(home)?;
+    }    let path = gbrain_config::config_path_for(home)?;
     let loaded = gbrain_config::load_for(home)?;
     let mut raw = loaded.raw;
     if !raw.is_object() {

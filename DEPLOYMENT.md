@@ -110,7 +110,11 @@ gbrain config set embedding_multimodal true
 驗證：圖片＋同名 `.md` 註解頁放進 notes repo → sync → `gbrain schema stats`
 出現 `image` 頁。注意 `image_of` 自動連結在「圖先於註解頁匯入」時會跳過——
 PDF 圖檔管線已內建「先 `.md` 後圖檔」順序＋入庫後補一輪冪等 sync 作保險；
-手動放置時註解頁請先行。**範圍註記**：此 shim 服務的是 gbrain 原生圖片 lane
+手動放置時註解頁請先行。**新腦免手動**（2026-10-18 起）：GUI／API 建立腦時，作用中環境已啟用
+multimodal 即自動繼承三鍵（file＋DB 雙 plane），並自動把新腦的 `embedding_image` 由 gbrain
+硬編的 vector(1024) 修正為嵌入維度（冪等腳本 `deploy/local/mm-bridge/alter-image-dim.mjs`，
+以 bun 執行；找尋順序 `OPEROID_ALTER_IMAGE_SCRIPT` → `~/.bun/install/global/` →
+`<cwd>/deploy/local/mm-bridge/`；失敗不擋建立，記於 oserver log）。此步驟前的既有腦仍需手動。**範圍註記**：此 shim 服務的是 gbrain 原生圖片 lane
 （拖放圖片與 PDF figures 的 `embedding_image` 向量）；舊 K3 sidecar 直連
 llama-server 8080、不需要本 shim（sidecar 已退役，見 §10.5）。
 

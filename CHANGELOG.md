@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### New brains inherit multimodal embedding and self-fix the image column
+
+- Brain creation (GUI add / POST /api/brains with create=true) previously
+  produced brains without multimodal embedding config and with gbrain's
+  hardcoded vector(1024) embedding_image column — image sync silently
+  degraded on every GUI-created brain (surfaced by the demo brain).
+- add_brain_core now (1) inherits the multimodal trio
+  (embedding_multimodal / _model / provider_base_urls.litellm) from the
+  active environment when enabled, writing both config planes, and (2)
+  runs the idempotent alter-image-dim script (bun) to retarget the column
+  to the embedding dimension; both steps are best-effort (logged, never
+  blocking creation). Script probe order: OPEROID_ALTER_IMAGE_SCRIPT →
+  ~/.bun/install/global → <cwd>/deploy/local/mm-bridge; bun via PATH or
+  ~/.bun/bin. The script itself is now machine-independent (env-derived
+  gbrain asset path instead of a hardcoded user path).
+- Real-env test real_add_brain_inherits_multimodal_and_fixes_image_dim
+  pins the whole chain (create → inherited keys → column at 768).
+
 ### Portable MinerU detection: configurable install directory with env expansion
 
 - New first-class ladder rung `[knowledge] mineru_dir`: point it at a MinerU
