@@ -171,6 +171,8 @@ export interface AppConfig {
   notes_repo_path: string;
   gbrain_exe_path: string;
   gbrain_home_override: string | null;
+  /** K1 MinerU 階梯 1b：安裝根目錄（%USERPROFILE%／${HOME} 展開；null = 未設定）。 */
+  mineru_dir?: string | null;
   brains: BrainEntry[];
   active_brain_id: string | null;
   active_source_id: string | null;

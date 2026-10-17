@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
 import { Save, CheckCircle2, RefreshCw } from "lucide-vue-next";
-import { formatError, knowledgeHealth, obridgeConfigLoad, obridgeConfigSave, serverInfoExt, serverServiceInstall, serverServiceUninstall, type KnowledgeHealth } from "@/lib/tauri";
+import { formatError, knowledgeHealth, obridgeConfigLoad, obridgeConfigSave, serverInfoExt, serverServiceInstall, serverServiceUninstall, type AppConfig, type KnowledgeHealth } from "@/lib/tauri";
+import { useConfigStore } from "@/stores/config";
+
+const config = useConfigStore();
 
 // ---- K6 知識管線能力狀態（MinerU／嵌入多模態／chat VLM）----
 const caps = ref<KnowledgeHealth | null>(null);
@@ -48,9 +51,39 @@ async function toggleService() {
     server.busy = false;
   }
 }
+// ---- MinerU 安裝目錄（階梯 1b；%USERPROFILE%／${HOME} 展開——設定字串跨機器可攜）----
+const mineruDir = ref("");
+const mineruDirSaved = ref(false);
+const mineruDirError = ref<string | null>(null);
+
+async function initMineruDir() {
+  try {
+    if (!config.ready) await config.load();
+    else if (!config.app) await config.loadApp();
+  } catch {
+    // 設定載入失敗不阻塞狀態區塊（caps 區有自己的錯誤顯示）。
+  }
+  mineruDir.value = config.app?.mineru_dir ?? "";
+}
+
+async function saveMineruDir() {
+  mineruDirError.value = null;
+  mineruDirSaved.value = false;
+  try {
+    if (!config.app) await config.loadApp();
+    const next = { ...(config.app as AppConfig), mineru_dir: mineruDir.value.trim() || null };
+    await config.saveAppConfig(next);
+    mineruDirSaved.value = true;
+    await loadCaps(); // 儲存後重抓偵測狀態（✓/✗ 即時反映新路徑）
+  } catch (e) {
+    mineruDirError.value = formatError(e);
+  }
+}
+
 onMounted(() => {
   loadServerInfo();
   void loadCaps();
+  void initMineruDir();
 });
 
 // ---- Obridge 設定代管（原始文字編輯；路徑未設定時顯示提示而非區塊內容）----
@@ -120,6 +153,27 @@ onMounted(loadObridge);
             {{ caps.mineru.resolved ? $t("caps.mineruOk") : $t("caps.mineruMissing") }}
           </p>
           <p v-if="!caps.mineru.resolved && caps.mineru.hint" class="mt-1 pl-6 text-[11px] text-muted-foreground/80">{{ caps.mineru.hint }}</p>
+          <div class="mt-2 flex flex-col gap-1 pl-6">
+            <span class="text-[11px] text-muted-foreground">{{ $t("caps.mineruDirLabel") }}</span>
+            <div class="flex items-center gap-2">
+              <input
+                v-model="mineruDir"
+                :placeholder="$t('caps.mineruDirPh')"
+                class="w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-xs"
+                @keyup.enter="saveMineruDir"
+              />
+              <button
+                class="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:opacity-80 disabled:opacity-50"
+                :disabled="!config.app"
+                @click="saveMineruDir"
+              >
+                <Save :size="13" /> {{ $t("caps.mineruDirSave") }}
+              </button>
+            </div>
+            <p class="text-[11px] text-muted-foreground/80">{{ $t("caps.mineruDirHint") }}</p>
+            <p v-if="mineruDirSaved" class="text-[11px] text-green-600">{{ $t("caps.mineruDirSaved") }}</p>
+            <p v-if="mineruDirError" class="text-[11px] text-destructive">{{ mineruDirError }}</p>
+          </div>
         </div>
         <!-- 嵌入端點（多模態＝vision；批次旗標＝長 chunk 紀律） -->
         <div class="rounded-md border border-border p-3">

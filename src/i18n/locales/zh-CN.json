@@ -794,6 +794,11 @@
     "scopeFailed": "范围操作失败：{detail}"
   },
   "caps": {
+    "mineruDirLabel": "安装目录（mineru_dir）",
+    "mineruDirPh": "例如：%USERPROFILE%\\Documents\\python\\.mineru",
+    "mineruDirHint": "阶梯第 1b 级——支持 %USERPROFILE%／${HOME} 环境变量展开，设置字符串跨机器、跨用户可携带；留空则依序探测 mineru_command → PATH → 远端。保存后即时重测。",
+    "mineruDirSave": "保存",
+    "mineruDirSaved": "已保存——检测状态已更新",
     "title": "知识管线能力",
     "desc": "缺项不会阻断流程（内置降级：快速路径／纯文字索引／定位者模式），但会限制质量上限；安装或调整设置后按「重新检查」更新。",
     "recheck": "重新检查",

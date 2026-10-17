@@ -29,6 +29,10 @@
 - Real-machine ladder probe: `cargo test -p ocore real_ladder_probe --
   --ignored --nocapture` prints every rung attempt, the actual-PATH lookup
   result, and an expansion sample (diagnostic, no assertions).
+- Settings UI: the services tab's MinerU card gains an editable install
+  directory field (saved into app_config.mineru_dir, re-runs detection on
+  save); operoid.toml [knowledge] mineru_dir wired for enterprise deploys;
+  mineruMissing hints name the new option (zh-TW/zh-CN/en).
 
 ### PDF figures move to the gbrain-native image import lane; sidecar retired
 

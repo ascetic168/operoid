@@ -794,6 +794,11 @@
     "scopeFailed": "Scope operation failed: {detail}"
   },
   "caps": {
+    "mineruDirLabel": "Install directory (mineru_dir)",
+    "mineruDirPh": "e.g. %USERPROFILE%\\Documents\\python\\.mineru",
+    "mineruDirHint": "Ladder rung 1b — expands %USERPROFILE% / ${HOME}, so one settings string works across machines and users. Leave empty to fall through to mineru_command → PATH → remote. Saving re-runs detection.",
+    "mineruDirSave": "Save",
+    "mineruDirSaved": "Saved — detection refreshed",
     "title": "Knowledge pipeline capabilities",
     "desc": "Missing capabilities never block the pipeline (built-in fallbacks: fast path / text-only indexing / locator mode) - they cap quality. Install or reconfigure, then hit Recheck.",
     "recheck": "Recheck",
