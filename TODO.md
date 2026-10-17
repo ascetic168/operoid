@@ -147,6 +147,18 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
     image 頁（both＋limit 20 實測僅回文字頁）——圖片必須顯式走
     `--cross-modal image` arm。sidecar 退役時 service route 2 需改接此 arm，
     否則產品查詢靜默失去圖片。
+- **✅ 改道實作（2026-10-17，commits 4d65e65／7b523c5／18066b0）**：
+  - 寫入端：`publish_pdf_figures`（工廠與 ingest 共用）——`figN-pP.md` 補強
+    （影像檔 wikilink＋原論文 PDF 出處＋匯入錨點，冪等）＋同名圖檔落 doc 目錄
+    （先 .md 後 .jpg）；sidecar 寫入全數移除（轉換器 work figures.sqlite 保留為
+    metadata 載體）。
+  - 查詢端：service route 2 在 sidecar 缺席時改用 `gbrain query --cross-modal
+    image` 圖 arm（錨文件歸因同鐵律；`sidecar_config` 對不存在的檔回 None）。
+  - 遷移：`POST /api/knowledge/migrate-figures`（Admin）——已授權列搬進 source
+    repo（未授權列不遷，fail-closed 保留）、sidecar 封存 `.retired-<date>`、
+    figures.assets 留待手動清理；查詢端開檔一律 `open_existing`。
+  - 待辦：本機實際執行遷移（mueller2016 sidecar 資料 → 所屬 source repo）＋
+    遷移後重跑 `real_figures_lane` 對照。
 - **工具選項：Unsloth（2026-10-17 調查，未採用）**：Unsloth 是微調/量化框架＋模型發布管線，
   **不是** ollama/llama-server 的替代（Unsloth Studio 底層就是拉 llama.cpp 當推論後端，
   只差管理 UI）。對本專案的實際價值是**微調 EmbeddingGemma 2**：官方支援

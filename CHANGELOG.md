@@ -15,6 +15,33 @@
 
 ## [Unreleased]
 
+### PDF figures move to the gbrain-native image import lane; sidecar retired
+
+- Retrieval pilot (four-lane benchmark on mueller2016, 11 figure-targeted
+  queries) showed hit@5 parity across the sidecar joint-vector lane and the
+  gbrain pure-image lane; the write path now publishes each figure as a
+  same-stem image file next to an enriched annotation page in the doc
+  directory (`publish_pdf_figures`), triggering gbrain's `image_of` auto-link
+  and multimodal embedding — the same track as user-dropped images. Pages
+  carry an image wikilink, the source-PDF attribution line, and an import
+  timeline anchor (idempotent). The pipeline no longer writes
+  figures.sqlite/figures.assets; annotation-page-before-image ordering plus a
+  second idempotent sync guards the image_of silent-skip caveat.
+- Query side: when no figures sidecar is configured, fusion gains a
+  cross-modal image arm (`gbrain query --cross-modal image`) with the same
+  anchor-doc attribution discipline; text queries never surface image pages
+  on their own (measured), so the explicit arm is required.
+- Migration: `POST /api/knowledge/migrate-figures` (admin, async) moves
+  authorized sidecar rows into their source repos (rebuilding missing pages
+  from row metadata, preserving K8 captions and PDF attribution), commits,
+  syncs, then archives figures.sqlite as `.retired-<date>`. Unauthorized rows
+  are never migrated (fail-closed). `figures.assets/` stays for manual
+  cleanup; query-time opens use `open_existing` and degrade gracefully.
+- Known trade-off (documented in DEPLOYMENT.md section 10.5): fused MRR 0.909
+  vs the sidecar's 1.000 on the pilot set — the gap is rank 2/3 vs 1 on 2/11
+  queries from caption-free image vectors, compensated by the annotation-page
+  text lane and optional OCR.
+
 ### Smart LLM routing for people CSV: dated notes now reach the timeline
 
 - People CSV imports no longer stop at plain parsing: after pages are

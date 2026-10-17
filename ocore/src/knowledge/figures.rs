@@ -1,5 +1,15 @@
 //! K3 圖向量 sidecar——`figures.sqlite` 的向量回填與暴力 cosine 檢索。
 //!
+//! **⚠ 2026-10-17 起退役（寫入端改道）**：PDF 圖已改走 gbrain 原生 image
+//! import——同名圖檔＋註解頁直接落 repo（`factories::publish_pdf_figures`，
+//! 試點數據與裁決見 TODO 項目 3）。本模組僅供**既有資料**使用：查詢端融合
+//! （K4 路 2/路 3，`figures_db_path` 有設且檔案存在才接線）、K5 think 附帶、
+//! 媒體簽章、K8 補圖說，以及退役遷移（[`super::figures_migrate`]）。
+//! 查詢端開檔一律走 [`Sidecar::open_existing`]——檔案不存在即優雅降級，
+//! 絕不重生空庫。**repo 內外邊界**：圖檔現在屬於 repo 內
+//! （`<doc_id>/figN-pP.<ext>`＋同名 `.md`，授權隨 source 成員走）；repo 外僅剩
+//! 封存的 sidecar（`.retired-<date>`）與待手動清理的 `figures.assets/`。
+//!
 //! 設計（計畫 §K3；證據：實驗報告 §4/§5）：
 //! - **儲存即檢索**：千級向量不值得引進向量資料庫——rusqlite 全表掃＋Rust 內積。
 //! - **嵌入能力分層**（多模態非必備）：

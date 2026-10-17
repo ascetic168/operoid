@@ -108,8 +108,11 @@ gbrain config set embedding_multimodal true
 ```
 
 驗證：圖片＋同名 `.md` 註解頁放進 notes repo → sync → `gbrain schema stats`
-出現 `image` 頁。注意 `image_of` 自動連結在「圖先於註解頁匯入」時會跳過，
-註解頁請先行放置。
+出現 `image` 頁。注意 `image_of` 自動連結在「圖先於註解頁匯入」時會跳過——
+PDF 圖檔管線已內建「先 `.md` 後圖檔」順序＋入庫後補一輪冪等 sync 作保險；
+手動放置時註解頁請先行。**範圍註記**：此 shim 服務的是 gbrain 原生圖片 lane
+（拖放圖片與 PDF figures 的 `embedding_image` 向量）；舊 K3 sidecar 直連
+llama-server 8080、不需要本 shim（sidecar 已退役，見 §10.5）。
 
 **新腦預設 embedding 模型（可選）**：伺服器上**新建腦**的 embedding 初始值可於
 `<data-dir>/app-settings.json` 的 `app_config` 區塊設定（改後重啟 oserver；企業版亦可以
@@ -340,11 +343,15 @@ IMAP／SMTP 帳號與路由，存檔即寫入 `<settings-dir>/obridge/obridge.to
 
 ---
 
-## 10. PDF 知識管線（MinerU → gbrain ＋圖向量 sidecar）
+## 10. PDF 知識管線（MinerU → gbrain 原生 image import）
 
-複雜 PDF（論文/報告）經 MinerU 轉為「章節切塊文字筆記＋圖片筆記」，入 gbrain 純文字索引；
-每圖另記入 `figures.sqlite` sidecar（後續以多模態嵌入補圖向量，K3）。**gbrain 零修改**——
-文件格式由筆記 body 自帶、查詢前綴由呼叫端縫入。
+複雜 PDF（論文/報告）經 MinerU 轉為「章節切塊文字筆記＋圖片筆記」，入 gbrain 索引；
+**每圖另發布同名圖檔＋註解頁至 doc 目錄**（`<doc_slug>/fig1-p2.jpg`＋`fig1-p2.md`，
+2026-10-17 起取代舊 `figures.sqlite` sidecar 寫入——試點數據與裁決見 TODO 項目 3）。
+圖檔經 `gbrain sync` 自動建立 `type: image` 頁＋多模態向量（`embedding_image`）＋
+`image_of` 自動連結，與使用者拖放圖片同軌；查詢端未設定 sidecar 時由跨模態圖 arm
+（`--cross-modal image`）參與融合。**gbrain 零修改**——文件格式由筆記 body 自帶、
+查詢前綴由呼叫端縫入。舊 sidecar 資料與退役遷移見 §10.5。
 
 ### 10.1 嵌入服務紀律（必帶旗標）
 
@@ -392,23 +399,47 @@ llama-server --embedding \
 ### 10.4 轉換輸出與 gbrain 導入
 
 ```
-<out>/
-  notes/<doc_slug>/s00.md … fig1-p2.md …   ← gbrain source（git repo；一 chunk 一筆記）
-  figures.sqlite                            ← sidecar 來源資料：doc_id/page/image_path/
-                                              caption/section/image_md5（vec 由 K3 回填；
-                                              image_md5 為去重鍵——重轉換不重嵌）
+<out>/                                       （轉換暫存目錄；入庫結束即刪）
+  notes/<doc_slug>/s00.md … fig1-p2.md …   ← 複製進 gbrain source（git repo；一 chunk 一筆記）
+  figures.sqlite                            ← 轉換期 metadata（doc_id/page/caption/…）——
+                                              僅供圖檔發布步驟讀取，**不併生產庫**、隨暫存刪除
   conversion-report.json                    ← 路由訊號＋階梯嘗試＋egress 稽核＋警告
-  mineru/                                   ← MinerU zip＋解壓（images/ 是 K3 嵌入來源，保留）
+  mineru/                                   ← MinerU zip＋解壓（images/ 是圖檔發布來源）
 ```
 
-筆記以 `gbrain sync --no-extract` 導入（extract/facts 對切塊筆記是逐頁 LLM 計費且無收
-拾價值）；筆記歸屬工廠 notes repo（federated source）；slug 以文件前綴防碰撞
-（`<doc_slug>/sNN`、`<doc_slug>/figN-pP`——歸因靠 metadata 不靠向量）。
-查詢端由 Operoid 自動縫 `task: search result | query: ` 前綴＋停用 expansion（K2）。
+筆記與圖檔以 `gbrain sync --no-extract` 導入（extract/facts 對切塊筆記是逐頁 LLM 計費
+且無收拾價值）；筆記歸屬工廠 notes repo（federated source）；slug 以文件前綴防碰撞
+（`<doc_slug>/sNN`、`<doc_slug>/figN-pP`——歸因靠 metadata 不靠向量）。圖檔發布
+（`publish_pdf_figures`）先補強 `.md`（`影像檔：` wikilink＋`原論文 PDF：` 出處＋
+匯入 timeline 錨點，冪等）、後落同名圖檔——**順序鐵律**：gbrain 的 `image_of` 在
+「圖先於註解頁」時靜默跳過。查詢端由 Operoid 自動縫 `task: search result | query: `
+前綴＋停用 expansion（K2）。
 
 **gbrain 版本紀律**：chunking/slug 規則屬 gbrain 內部行為——本管線以 gbrain **0.60.105.0**
 驗證（12 查詢 hit@5 12/12、MRR 0.958）；升級 gbrain 後應重跑端到端評測
 （`cargo test -p ocore real_k7 -- --ignored --nocapture`）再上線。
+
+### 10.5 sidecar 退役與遷移（2026-10-17 裁決）
+
+**repo 內外邊界**：圖檔屬 **repo 內**（`<doc_slug>/figN-pP.<ext>`＋同名註解頁，授權隨
+source 成員走；檢索向量由 gbrain `embedding_image` 承擔）；repo 外僅剩舊 sidecar 的
+殘留（封存檔與 `figures.assets/`）。
+
+- **查詢端**：`figures_db_path` 未設定或檔案不存在（已封存）→ 融合改用跨模態圖 arm
+  （`gbrain query --cross-modal image`；注意 `auto/both` 的文字查詢不會帶出 image 頁，
+  圖必須顯式走此 arm）。已授權舊庫仍可掛 sidecar 融合（K4 路 2/路 3，查詢端開檔一律
+  `open_existing`——檔案不存在即降級，不重生空庫）。
+- **退役遷移**：`POST /api/knowledge/migrate-figures`（Admin，非同步 202＋
+  `GET …/migrate-figures/{id}`）——把 sidecar **已授權**圖列搬進其 source repo
+  （重建缺漏註解頁、保留 K8 補圖說與原論文出處）、逐 repo commit＋sync、最後把
+  `figures.sqlite` 封存為 `.retired-<date>`。**`source_id` 未歸檔的列不遷**
+  （fail-closed：未授權＝從未可見，搬進 repo 等於授權外流）。
+- **不刪除**：`figures.assets/` 原地保留，遷移驗證後由管理者手動刪；未授權列留在
+  封存檔內（語意不變：不可見）。
+- **品質基線**（mueller2016 四 lane 試點，TODO 項目 3）：hit@5 全 lane 持平（11/11）；
+  MRR sidecar 融合 1.000 vs 圖 arm＋文字融合 0.909——差距為 2/11 查詢的 #1 vs #2/#3
+  （純圖向量無 caption），靠註解頁 caption（文字 lane）與選配 OCR 補償。改寫後應重跑
+  `cargo test -p ocore real_figures_lane -- --ignored --nocapture` 對照。
 
 ## 11. 個人版（桌面）：元件偵測、前置需求與降級行為
 
