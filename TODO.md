@@ -119,6 +119,15 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
   註解頁的 timeline 事件。
 - **待辦細節**：批次的 OCR/embed 費用估算與併發；把 doctor 的 multimodal 設定檢查接進
   Operoid 前置檢查（未設定時提前提示，而非 sync 靜默跳過）。
+- **試點結果（2026-10-17，多模態圖片嵌入 × PDF figures 統一性評估）**：
+  mueller2016 的 8 張 MinerU 圖以筆記同名放進 demo repo doc 目錄 → sync →
+  `type: image` 頁＋768 維 `embedding_image` 向量＋`image_of` 連結全數落地；
+  視覺語意查詢「magnetic field cross section inductor」→ 圖片頁排名 #1（0.9495）。
+  EmbeddingGemma 2 + mmproj 經 llama.cpp 原生 content 形狀直接服務（sidecar 的
+  嵌入形狀與 llama.cpp 相同，**不需要 mm-bridge**）。
+  **方向決議候選**：PDF figures 改道 gbrain 原生 image import（與使用者拖放同軌）、
+  sidecar 向量/檢索退役——遷移前先以 mueller2019 規模做檢索品質對照
+  （K3 聯合向量 vs gbrain 圖向量＋OCR/旁頁文字的取捨需實測）。
 - **工具選項：Unsloth（2026-10-17 調查，未採用）**：Unsloth 是微調/量化框架＋模型發布管線，
   **不是** ollama/llama-server 的替代（Unsloth Studio 底層就是拉 llama.cpp 當推論後端，
   只差管理 UI）。對本專案的實際價值是**微調 EmbeddingGemma 2**：官方支援
