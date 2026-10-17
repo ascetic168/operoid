@@ -118,6 +118,43 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
 - **待辦細節**：批次的 OCR/embed 費用估算與併發；把 doctor 的 multimodal 設定檢查接進
   Operoid 前置檢查（未設定時提前提示，而非 sync 靜默跳過）。
 
+### 設定方案（2026-10-17 深度調查：全本地棧，EmbeddingGemma 2）
+
+使用者現況：文字 embedding 走本機 llama-server 的 `embeddinggemma-2`（768d）。
+**EmbeddingGemma 2**（Google DeepMind 2026-10-06，~740M，Apache 2.0）原生多模態：
+文字+圖片+視頻幀+音訊 → 統一 768 維。llama.cpp **支援圖片 embedding**：
+`llama-server --mmproj <mmproj.gguf>` 後 `/v1/embeddings` 接受 multimodal content 陣列
+（官方 GGUF：ggml-org/embeddinggemma-2-GGUF）。
+
+**gbrain 側的路由事實（安裝版 0.60.262.0 原始碼查核）**：
+- `supports_multimodal` 僅 voyage（自有 /multimodalembeddings 端點）與 **litellm-proxy**
+  （標準 /embeddings + OpenAI image_url content 陣列，**無模型白名單——信任使用者的模型 id**）。
+- `llama-server` recipe **未宣告** multimodal → `embedding_multimodal_model llama-server:<id>`
+  會被拒（"does not support multimodal embedding"）。
+- 多模態與文字 embedding 的模型路由**互相獨立**（`embedding_multimodal_model` 優先，
+  fallback 才是 `embedding_model`）；向量走獨立的 `embedding_image` 欄 → 文字側零 reindex。
+
+**設定步驟（文字維持本機、圖片走同機 litellm-recipe 別名）**：
+1. llama-server 帶 mmproj 重啟：`llama-server -m embeddinggemma-2.gguf --mmproj <mmproj.gguf>`
+   （ggml-org/embeddinggemma-2-GGUF 取件；注意 llama.cpp #19040 的 GGUF 精度回報）。
+2. multimodal 模型經 litellm recipe 指向同一台 llama-server（recipe 信任模型 id、
+   端點即標準 /v1/embeddings）：
+   `gbrain config set provider_base_urls.litellm http://localhost:8080/v1`
+   `gbrain config set embedding_multimodal_model litellm:embeddinggemma-2`
+   `gbrain config set embedding_multimodal true`
+3. （選用）OCR：`gbrain config set embedding_image_ocr true` +
+   `embedding_image_ocr_model <多模態 chat 模型>`（expansion touchpoint；zhipu GLM-4V 或
+   llama-server 上的視覺模型）→ OCR 文字進 chunk_text，文字側即可全文檢索。
+4. **唯一待實測點**：請求形狀匹配——gbrain 送
+   `{model, input:[{type:'image_url',image_url:{url:'data:<mime>;base64,...'}}], input_type}`
+   到 `<base>/embeddings`；llama.cpp 的 multimodal embedding 接受 chat 式 content 陣列
+   （llama.cpp discussion #13666）。兩者大概率兼容，落地上線前用一張圖 curl 實測；
+   若形狀不合，垫一層 10 行轉換 proxy 或等 gbrain 上游給 llama-server recipe 補
+   supports_multimodal（上游原始碼已含完整 openai-compat multimodal 路徑，補宣告是小改動）。
+5. 驗收：丟一張圖進 notes repo → sync → `gbrain schema stats` 出現 image 頁 +
+   圖片搜尋（`embedding_image` 向量）+ `image_of` 自動連結（圖旁同名 .md 註解頁——搭配項目 2
+   的強制註解）。
+
 ---
 
 ## 4. 附帶 Bug（本次遷移發現，建議優先修）
