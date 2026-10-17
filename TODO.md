@@ -163,8 +163,10 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
    image 頁建立、`image_asset` chunk 的 `embedding_image` 實存 **768 維向量**、
    註解頁 text chunks 照常、timeline 1 筆萃取。
 6. **剩餘事項**：
-   - shim 開機自啟未掛（`start-mm-bridge.cmd` 手動放 startup）；
-     llama-server 本體的重啟（含 --mmproj）也是手動流程。
+   - ~~shim 開機自啟未掛~~ **已完成（2026-10-17）**：Startup 資料夾 + VBS 隱藏包裝
+     （`shell:startup\mm-bridge.vbs`，免 admin；部署副本 `deploy/local/mm-bridge/mm-bridge-autostart.vbs`）。
+     S4U 排程任務版（`register-mm-bridge-task.ps1`）因需提權未採用，留作替代。
+     llama-server 本體的重啟（含 --mmproj）仍是手動流程。
    - `image_of` 自動連結在「圖先於註解頁匯入」時會靜默跳過（gbrain best-effort）——
      Operoid 實作時應先寫註解頁再丟圖，或匯入後跑連結補算。
    - gbrain `self-upgrade`／未來 migration 可能重置 image 欄維度——升級後重跑

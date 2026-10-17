@@ -26,15 +26,19 @@ shim 把 gbrain 的形狀轉成 llama.cpp 的 `{content:[…]}` 形狀，回應�
 | 檔案 | 作用 |
 |---|---|
 | `mm-bridge.mjs` | 轉譯 shim（bun 單檔、零依賴）。監聽 `127.0.0.1:8090` → 上游 `127.0.0.1:8080`。`UPSTREAM`/`PORT` 環境變數可覆寫 |
-| `start-mm-bridge.cmd` | 啟動器（放 shell:startup 或排程任務即可開機自啟） |
+| `mm-bridge-autostart.vbs` | 登入自啟（複製到 `shell:startup`；WScript.Shell.Run 隱藏視窗啟動 shim） |
+| `start-mm-bridge.cmd` | 手動啟動器（前景、可見視窗，除錯用） |
 | `alter-image-dim.mjs` | 一次性 schema 前置：`content_chunks.embedding_image` 由 vector(1024)（硬編，為 Voyage 設計）改成 vector(768)（EmbeddingGemma 2 維度）。冪等，gbrain self-upgrade 後若被重置可重跑 |
+| `register-mm-bridge-task.ps1` | （替代方案）S4U 登入排程任務註冊——需管理員權限；未採用，留作參考 |
 
 ## 設定步驟（全新機器）
 
 前提：`llama-server --embedding -m embeddinggemma-2.gguf --mmproj <mmproj.gguf>`
 已在 8080 跑起（要帶 `--mmproj`，否則圖片 embedding 會失敗）；`bun` 可用。
 
-1. 啟動 shim：`start-mm-bridge.cmd`（或 `bun mm-bridge.mjs`）。
+1. 啟動 shim 並設為登入自啟：把 `mm-bridge-autostart.vbs` 複製到
+   `shell:startup`（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`）；
+   手動除錯用 `start-mm-bridge.cmd`（可見視窗）。
 2. **schema 前置**（僅首次；欄位必須全空，腳本會自我檢查非空即中止；
    執行前備份 `~/.gbrain/brain.pglite`，且確認沒有 gbrain 行程在跑）：
    ```
