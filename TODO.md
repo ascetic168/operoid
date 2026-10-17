@@ -212,6 +212,12 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
    可能仍是舊檔（本次為 8/30 舊檔，缺新路由 → 前端「本地服務通訊失敗」）。
    建議：`ensure_server` spawn 前比對 `deps/oserver.exe` 與 `oserver.exe` mtime/大小，
    不一致即拒絕帶起並提示重 build；或 build 腳本在連結後強制 replace。
+   **✅ 已修＋根因定位（2026-10-17，commit c4f7d28/4ed3ade）**：根因是 `tauri.conf`
+   的 `externalBin` 指向 `src-tauri/binaries/<name>-<triple>.exe`（未被 git 追蹤的
+   本機 artifact，8/30 殘留）——每次 `cargo check/build -p operoid` 時 tauri-build
+   把該檔複製蓋寫 `target/debug/oserver.exe`（蓋掉 cargo 的新建置）。已修：
+   `dev:all` 接上 `scripts/sync-sidecars.mjs`（建置後同步 sidecar 來源）＋
+   `ensure_server` 與 deps 逐位元組比對、不一致拒絕帶起。
 
 ---
 
