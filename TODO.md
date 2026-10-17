@@ -181,9 +181,16 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
      `alter-image-dim.mjs` 驗證（冪等）。
    - 上游正道：給 gbrain 的 llama-server recipe 補 `supports_multimodal` 宣告
      （openai-compat multimodal 路徑上游已存在，是小改動），可免除 shim。
-   - **Operoid 工廠的 image 管線仍未實作**（工廠目前不收圖片；上述全部是 gbrain 側
-     管線＋手動放檔）。實作範圍見本項目「推薦做法」：拖放 → 落 repo → 強制註解頁
-     （先頁後圖）→ sync，並整合 doctor 的 multimodal 前置檢查。
+   - ~~Operoid 工廠的 image 管線仍未實作~~ **已實作（2026-10-17，commit f601657）**：
+     新增 `image` 工廠（v2 pack 第 16 型、`Pipeline::Image`）——拖放圖片（單/批）→
+     強制逐張註解對話框 → 圖落 `media/<名稱>.<ext>`＋同名註解頁（`type: note`＋
+     匯入 timeline 錨點，即項目 2 的圖片版）→ sync 時 gbrain 自動多模態嵌入與
+     `image_of` 連結。sha256 去重（同內容重用、同名異容 `-2/-3`）、凍結保護適用於
+     註解頁、無 LLM。API：`/api/factories/run` 與桌面 command 增 `annotations`
+     平行陣列（強制非空）；scoped（circle）目標暫不支援 image 工廠。分類器以
+     副檔名高信心直達 image 工廠。剩：企業版 user 前端的註解對話框 UI 移植
+     （後端已就緒，缺 UI 時會收到明確的 per-file 錯誤）、doctor multimodal
+     前置檢查整合。
 
 ---
 
