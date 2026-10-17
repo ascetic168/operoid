@@ -333,7 +333,12 @@
       "targetLevel": "保密等级",
       "targetCircle": "圈子（部门／项目）",
       "targetHint": "默认写入公司层；指定部门／项目或更高保密等级时，系统自动创建对应范围与来源（作者需具备该等级 clearance）。"
-    }
+    },
+    "importAnn": {
+      "label": "导入注解（选填）",
+      "placeholder": "例：从 Google Contacts 导入的联系人"
+    },
+    "multimodalHint": "未启用 multimodal embedding——图片在 sync 时会被跳过。设定方式见 DEPLOYMENT.md「多模态（图片嵌入）」。"
   },
   "chat": {
     "empty": "尚无消息。发一则开始对话。",
@@ -617,8 +622,7 @@
   "factory": {
     "csvOnly": "people 工厂只接受 .csv：{file}",
     "fileError": "{file}：{detail}",
-    "peopleSummary": "CSV 列：{rows}　合并群组：{merged}　已写入 people 页：{written}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
-    "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
+    "peopleSummary": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}　日期命中：{hits}　富集：{enriched}（失败 {failed}／跳过 {skipped}）",
     "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
     "imageSummary": "已复制 {images} 张图（重用 {reused}）　写入 {written} 个注解页　冻结：{frozen}",
     "imageAnnotationRequired": "{file}：缺少注解——图片必须填写描述才会入库",

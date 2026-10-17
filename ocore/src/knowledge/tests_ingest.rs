@@ -192,7 +192,7 @@ async fn real_factory_pdf_drag_flow() {
     cfg.mineru_command = Some(mineru.to_string_lossy().into_owned());
     // figures_db_path 未設 → 工廠用 notes repo 伴隨檔（預設鏈）。
 
-    let result = crate::factories::run_core(&cfg, "pdf", &[PDF.to_string()], None, None)
+    let result = crate::factories::run_core(&cfg, "pdf", &[PDF.to_string()], None, None, None)
         .await
         .expect("拖 PDF 進工廠應成功");
     eprintln!(

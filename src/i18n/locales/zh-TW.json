@@ -333,7 +333,12 @@
       "targetLevel": "保密等級",
       "targetCircle": "圈子（部門／專案）",
       "targetHint": "預設寫入公司層；指定部門／專案或更高保密等級時，系統自動建立對應範圍與來源（作者需具備該等級 clearance）。"
-    }
+    },
+    "importAnn": {
+      "label": "匯入註解（選填）",
+      "placeholder": "例：從 Google Contacts 匯入的聯絡人"
+    },
+    "multimodalHint": "未啟用 multimodal embedding——圖片在 sync 時會被略過。設定方式見 DEPLOYMENT.md「多模態（圖片嵌入）」。"
   },
   "chat": {
     "empty": "尚無訊息。發一則開始對話。",
@@ -617,8 +622,7 @@
   "factory": {
     "csvOnly": "people 工廠只接受 .csv：{file}",
     "fileError": "{file}：{detail}",
-    "peopleSummary": "CSV 列：{rows}　合併群組：{merged}　已寫入 people 頁：{written}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
-    "writtenN": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
+    "peopleSummary": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}　日期命中：{hits}　富集：{enriched}（失敗 {failed}／略過 {skipped}）",
     "writtenN": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
     "imageSummary": "已複製 {images} 張圖（重用 {reused}）　寫入 {written} 個註解頁　凍結：{frozen}",
     "imageAnnotationRequired": "{file}：缺少註解——圖片必須填寫描述才會入庫",

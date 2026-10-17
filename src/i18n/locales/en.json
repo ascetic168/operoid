@@ -333,7 +333,12 @@
       "targetLevel": "Level",
       "targetCircle": "Circle (dept/project)",
       "targetHint": "Defaults to the company layer; picking a department/project or a higher level auto-provisions the matching scope and source (author needs the matching clearance)."
-    }
+    },
+    "importAnn": {
+      "label": "Import annotation (optional)",
+      "placeholder": "e.g. contacts imported from Google Contacts"
+    },
+    "multimodalHint": "Multimodal embedding is not enabled — images will be skipped on sync. See DEPLOYMENT.md (multimodal section) for setup."
   },
   "chat": {
     "empty": "No messages yet. Send one to start the conversation.",
@@ -617,8 +622,7 @@
   "factory": {
     "csvOnly": "people factory only accepts .csv: {file}",
     "fileError": "{file}: {detail}",
-    "peopleSummary": "CSV rows: {rows}　merged groups: {merged}　people pages written: {written}　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
-    "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
+    "peopleSummary": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date events: {dropped}　date-signal hits: {hits}　enriched: {enriched} (failed {failed}／skipped {skipped})",
     "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
     "imageSummary": "Copied {images} image(s) (reused {reused})　wrote {written} annotation page(s)　frozen: {frozen}",
     "imageAnnotationRequired": "{file}: annotation missing — images require a description before import",
