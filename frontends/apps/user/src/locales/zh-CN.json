@@ -235,7 +235,8 @@
       "hint": "每张图会落 media/ 并生成同名注解页；描述将成为页面内容与导入 timeline。sync 时 gbrain 会做多模态嵌入与 image_of 连结。",
       "placeholder": "这张图是什么？（例：产品外观照、白板照片、客户名片…）",
       "needAll": "每张图都要填注解",
-      "confirm": "加入注解并转换"
+      "confirm": "加入注解并转换",
+      "cancelled": "已取消（未转换）"
     },
     "classify": {
       "confirmTitle": "确认文件分类",
@@ -277,8 +278,7 @@
   "factory": {
     "csvOnly": "people 工厂只接受 .csv：{file}",
     "fileError": "{file}：{detail}",
-    "peopleSummary": "CSV 列：{rows}　合并群组：{merged}　已写入 people 页：{written}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
-    "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
+    "peopleSummary": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}　日期命中：{hits}　富集：{enriched}（失败 {failed}／跳过 {skipped}）",
     "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
     "imageSummary": "已复制 {images} 张图（重用 {reused}）　写入 {written} 个注解页　冻结：{frozen}",
     "imageAnnotationRequired": "{file}：缺少注解——图片必须填写描述才会入库",

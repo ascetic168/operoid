@@ -48,6 +48,7 @@ import {
   type PreviewResult,
   type WriteResult,
   type AuthoredResult,
+  getGbrainConfig,
 } from "@/lib/tauri";
 import { useBrainsStore } from "@/stores/brains";
 
@@ -301,7 +302,10 @@ async function runFactoryGroup(f: string, ps: string[]): Promise<PreviewResult |
     anns = await openAnnotationDialog(ps);
     if (!anns) return null;
   }
-  return factoryRun(f as Factory, ps, targetRepo.value, anns ?? undefined);
+  const impAnn = f === "image" ? undefined : importAnn.value.trim() || undefined;
+  const r = factoryRun(f as Factory, ps, targetRepo.value, anns ?? undefined, impAnn);
+  importAnn.value = "";
+  return r;
 }
 
 /** 依分組跑各工廠；單群失敗不中斷其餘，轉成含 errors 的結果。 */
@@ -381,6 +385,19 @@ async function doRun(factoryId: string, paths: string[]) {
     busy.value = null;
   }
 }
+
+// 匯入註解（選填）：people/textual 匯入時加 timeline 匯入錨點（重匯自動去重）
+const importAnn = ref("");
+// D2 前置檢查：multimodal 未啟用 → image 卡片警告（sync 會略過圖片）
+const multimodalOn = ref(true);
+onMounted(async () => {
+  try {
+    const c = await getGbrainConfig();
+    multimodalOn.value = c.embedding_multimodal === true;
+  } catch {
+    multimodalOn.value = true; // 查不到設定不擋使用
+  }
+});
 
 // ── 圖片註解對話框（image 工廠強制逐張註解）────────────────────────
 const annOpen = ref(false);
@@ -552,15 +569,22 @@ async function saveEditorAndSync() {
         <option v-for="s in brains.sources" :key="s.id" :value="s.id">{{ s.id }} — {{ s.local_path ?? '(federated)' }}</option>
       </select>
       <span v-else class="text-xs text-warning">{{ $t("factories.noSource") }}</span>
+      <input
+        v-model="importAnn"
+        :placeholder="$t('factories.importAnn.placeholder')"
+        :title="$t('factories.importAnn.label')"
+        class="ml-2 w-56 rounded border border-border bg-background px-2 py-1 text-xs"
+      />
     </div>
 
     <!-- 非 v2 pack：提示可到設定頁跑 unify-types 升級 -->
     <div
-      v-if="v2Hint"
+      v-if="v2Hint || !multimodalOn"
       class="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning"
     >
       <AlertTriangle :size="15" />
-      <span class="min-w-0 flex-1">{{ v2Hint }}</span>
+      <span v-if="v2Hint" class="min-w-0 flex-1">{{ v2Hint }}</span>
+      <span v-else-if="!multimodalOn" class="min-w-0 flex-1">{{ $t("factories.multimodalHint") }}</span>
       <RouterLink to="/config" class="rounded-md border border-warning/50 px-2 py-1 text-xs hover:bg-warning/20">
         {{ $t("factories.v2HintLink") }}
       </RouterLink>

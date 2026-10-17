@@ -133,6 +133,9 @@ export interface GBrainConfigView {
   models_default: string | null;
   embedding_model: string | null;
   embedding_dimensions: number | null;
+  /** 多模態（圖片嵌入）閘門——sync 的 image import 依此啟用。 */
+  embedding_multimodal: boolean;
+  embedding_multimodal_model: string | null;
   schema_pack: string | null;
   schema_pack_v2: boolean;
   engine: string | null;
@@ -397,10 +400,11 @@ export const factoryRun = (
   paths: string[],
   targetRepo: string | null,
   annotations?: string[],
+  importAnnotation?: string,
 ): Promise<PreviewResult> =>
   agentFetch<PreviewResult>("/api/factories/run", {
     method: "POST",
-    body: { factory, paths, target_repo: targetRepo, annotations },
+    body: { factory, paths, target_repo: targetRepo, annotations, import_annotation: importAnnotation },
   });
 
 /** `factory_open_dir` 回傳：以什麼方式開啟了目錄。 */

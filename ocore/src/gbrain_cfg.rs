@@ -37,6 +37,12 @@ pub struct GBrainConfigView {
     pub tiers: TierModelsView,
     /// 每個 tier 的來源："file" | "db" | "default"（前端據此顯示狀態徽章）。
     pub tier_source: TierSourceView,
+    /// 多模態（圖片嵌入）閘門與模型——sync 的 image import 依此啟用
+    /// （file plane 於 to_view_file_only、DB plane 於 enrich_with_db_plane 覆寫）。
+    #[serde(default)]
+    pub embedding_multimodal: bool,
+    #[serde(default)]
+    pub embedding_multimodal_model: Option<String>,
     /// DB plane 真正生效的 model/tier 鍵清單（= 檔案無值、由 DB fallback 的鍵；
     /// gbrain 0.47.x 實測 file plane 優先，DB 值有檔案值時是被 shadow 的一方）。
     pub db_overrides: Vec<String>,
@@ -92,6 +98,16 @@ fn to_view_file_only(loaded: LoadedConfig) -> GBrainConfigView {
         models_default: gbrain_config::models_default_of(&loaded.raw),
         embedding_model: c.embedding_model.clone(),
         embedding_dimensions: c.embedding_dimensions,
+        embedding_multimodal: loaded
+            .raw
+            .get("embedding_multimodal")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        embedding_multimodal_model: loaded
+            .raw
+            .get("embedding_multimodal_model")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         schema_pack: c.schema_pack.clone(),
         schema_pack_v2: c.schema_pack_v2(),
         engine: c.engine.clone(),
@@ -149,6 +165,14 @@ async fn enrich_with_db_plane(exe: &str, home: Option<&str>, view: &mut GBrainCo
                 _ => {}
             }
         }
+    }
+    // 多模態閘門：DB plane 值存在即覆寫 file-plane 視圖
+    if let Ok(Some((value, _source))) = config_get(exe, home, "embedding_multimodal").await {
+        view.embedding_multimodal = value.trim() == "true";
+    }
+    if let Ok(Some((value, _source))) = config_get(exe, home, "embedding_multimodal_model").await {
+        let v = value.trim();
+        view.embedding_multimodal_model = if v.is_empty() { None } else { Some(v.to_string()) };
     }
     view.db_overrides = db_overrides;
 }

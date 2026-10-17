@@ -235,7 +235,8 @@
       "hint": "Each image lands in media/ with a same-name annotation page; the description becomes the page body and its import timeline. gbrain embeds multimodally and links image_of on sync.",
       "placeholder": "What is this image? (e.g. product photo, whiteboard shot, business card…)",
       "needAll": "Every image needs an annotation",
-      "confirm": "Add annotations & convert"
+      "confirm": "Add annotations & convert",
+      "cancelled": "Cancelled (not converted)"
     },
     "classify": {
       "confirmTitle": "Confirm file classification",
@@ -277,8 +278,7 @@
   "factory": {
     "csvOnly": "people factory only accepts .csv: {file}",
     "fileError": "{file}: {detail}",
-    "peopleSummary": "CSV rows: {rows}　merged groups: {merged}　people pages written: {written}　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
-    "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
+    "peopleSummary": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date events: {dropped}　date-signal hits: {hits}　enriched: {enriched} (failed {failed}／skipped {skipped})",
     "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
     "imageSummary": "Copied {images} image(s) (reused {reused})　wrote {written} annotation page(s)　frozen: {frozen}",
     "imageAnnotationRequired": "{file}: annotation missing — images require a description before import",

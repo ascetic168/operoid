@@ -271,9 +271,10 @@ pub async fn run_core(
     factory: &str,
     paths: &[String],
     annotations: Option<&[String]>,
+    import_annotation: Option<&str>,
     target_repo: Option<&str>,
 ) -> Result<PreviewResult, AppError> {
-    run_core_sched(cfg, factory, paths, target_repo, None, annotations).await
+    run_core_sched(cfg, factory, paths, target_repo, None, annotations, import_annotation).await
 }
 
 /// [`run_core`] 的多工版：`gate=Some` 時逐檔經企業公平閘門（oserver 接線）；
@@ -287,6 +288,7 @@ pub async fn run_core_sched(
     target_repo: Option<&str>,
     gate: Gate<'_>,
     annotations: Option<&[String]>,
+    import_annotation: Option<&str>,
 ) -> Result<PreviewResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
     let max = file_concurrency(cfg);
@@ -312,8 +314,12 @@ pub async fn run_core_sched(
     if !others.is_empty() {
         let (pack, spec) = spec_for(cfg, factory)?;
         results.push(match spec.pipeline {
-            Pipeline::People => run_people(pack, spec, cfg, &notes, &others, gate, max).await?,
-            Pipeline::Textual => run_textual(pack, spec, cfg, &notes, &others, gate, max).await?,
+            Pipeline::People => {
+                run_people(pack, spec, cfg, &notes, &others, gate, max, import_annotation).await?
+            }
+            Pipeline::Textual => {
+                run_textual(pack, spec, cfg, &notes, &others, gate, max, import_annotation).await?
+            }
             Pipeline::Image => run_images(spec, &notes, &others, annotations)?,
             Pipeline::Capture => run_inbox(spec, cfg, &others, gate, max).await?,
         });
@@ -508,6 +514,146 @@ async fn run_pdf_knowledge(
     })
 }
 
+/// 從頁面 markdown 抽出「匯入」錨點整塊（`### date — 匯入：…` 起，到下一個
+/// `###`/`##` 標題或 EOF）。供重匯時保留舊錨點（TODO 項目 2 去重策略）。
+fn extract_import_anchors(md: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur: Vec<String> = Vec::new();
+    let mut in_anchor = false;
+    for line in md.lines() {
+        let is_heading = line.starts_with("###") || line.starts_with("## ");
+        if in_anchor && is_heading {
+            let joined = cur.join("
+").trim_end().to_string();
+            if !joined.is_empty() {
+                out.push(joined);
+            }
+            cur.clear();
+            in_anchor = false;
+        }
+        if !in_anchor && line.starts_with("### ") && line.contains("— 匯入：") {
+            in_anchor = true;
+            cur.clear();
+        }
+        if in_anchor {
+            cur.push(line.to_string());
+        }
+    }
+    if in_anchor {
+        let joined = cur.join("
+").trim_end().to_string();
+        if !joined.is_empty() {
+            out.push(joined);
+        }
+    }
+    out
+}
+
+/// 合併匯入錨點（TODO 項目 2，去重策略）：新頁 timeline 首位插入本批
+/// `### {date} — 匯入：{annotation}` 錨點；舊頁的既有匯入錨點**保留**並追加在其後
+/// （首行與本批相同者去重）。新頁無 timeline 區塊 → 頁尾附加 sentinel＋錨點。
+fn merge_import_anchor(new_md: &str, old_md: Option<&str>, date: &str, annotation: &str) -> String {
+    let ann_trim = annotation.trim();
+    if ann_trim.is_empty() {
+        return new_md.to_string();
+    }
+    let new_anchor_line = format!("### {date} — 匯入：{ann_trim}");
+    let mut anchors: Vec<String> = vec![new_anchor_line.clone()];
+    if let Some(old) = old_md {
+        for a in extract_import_anchors(old) {
+            if a.lines().next() != Some(new_anchor_line.as_str()) {
+                anchors.push(a);
+            }
+        }
+    }
+    let block = anchors.join("
+
+");
+    match new_md.find("<!-- timeline -->") {
+        Some(idx) => {
+            let after = idx + "<!-- timeline -->".len();
+            let (head, tail) = new_md.split_at(after);
+            let tail_trimmed = tail.trim_start_matches(['\r', '\n']);
+            format!("{head}
+
+{block}
+
+{tail_trimmed}")
+        }
+        None => {
+            let trimmed = new_md.trim_end();
+            format!("{trimmed}
+
+<!-- timeline -->
+
+{block}
+")
+        }
+    }
+}
+/// 抽頁面的「備註」區段內文（`## 備註` 之後到下一個 `## ` 標題或 EOF）。
+fn notes_section(md: &str) -> Option<String> {
+    let mut buf: Vec<&str> = Vec::new();
+    let mut in_sec = false;
+    for line in md.lines() {
+        if !in_sec {
+            if line.trim_end() == "## 備註" {
+                in_sec = true;
+            }
+            continue;
+        }
+        if line.starts_with("## ") {
+            break;
+        }
+        buf.push(line);
+    }
+    let text = buf.join("\n").trim().to_string();
+    if text.is_empty() { None } else { Some(text) }
+}
+
+/// 剝掉頁面開頭的 frontmatter（`---…---`），回傳 body。
+fn strip_frontmatter(md: &str) -> String {
+    if let Some(rest) = md.strip_prefix("---\n") {
+        if let Some(idx) = rest.find("\n---\n") {
+            return rest[idx + 5..].trim_start_matches('\n').to_string();
+        }
+    }
+    md.to_string()
+}
+
+/// 取 frontmatter 的 title 值（去單引號）。
+fn frontmatter_title_of(md: &str) -> Option<String> {
+    for line in md.lines().skip(1) {
+        if line.trim() == "---" {
+            break;
+        }
+        if let Some(v) = line.strip_prefix("title: ") {
+            return Some(v.trim_matches('\'').to_string());
+        }
+    }
+    None
+}
+
+/// 釘回 frontmatter title（防 LLM 標題變異造成 slug/title 發散——只改 title 行）。
+fn pin_frontmatter_title(md: &str, title: &str) -> String {
+    let quoted = crate::converters::frontmatter::yaml_single_quote(title);
+    if let Some(end) = md.find("\n---\n") {
+        let head = &md[..=end];
+        if let Some(t) = head.find("title: ") {
+            let tline_end = md[t..].find('\n').map(|n| t + n).unwrap_or(md.len());
+            let mut out = String::with_capacity(md.len() + quoted.len());
+            out.push_str(&md[..t]);
+            out.push_str("title: ");
+            out.push_str(&quoted);
+            out.push_str(&md[tline_end..]);
+            return out;
+        }
+    }
+    md.to_string()
+}
+
+/// 圖片工廠（`Pipeline::Image`）：圖片落 `<notes>/media/<名稱>.<副檔>`＋強制註解頁
+/// 圖片工廠（`Pipeline::Image`）：圖片落 `<notes>/media/<名稱>.<副檔>`＋強制註解頁
 /// 圖片工廠（`Pipeline::Image`）：圖片落 `<notes>/media/<名稱>.<副檔>`＋強制註解頁
 /// `<notes>/media/<名稱>.md`（同目錄同名 → gbrain sync 自動 `image_of` 連結）。
 /// 無 LLM；多模態向量由 gbrain sync 的 image import 產生（需 multimodal 設定，
@@ -685,7 +831,9 @@ async fn run_people(
     paths: &[String],
     gate: Gate<'_>,
     max: usize,
+    import_annotation: Option<&str>,
 ) -> Result<PreviewResult, AppError> {
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
     // 僅當含 txt/md 才載 LLM endpoint(純 CSV 批次不要求 API key)。
     let has_text = paths.iter().any(|p| {
         Path::new(p)
@@ -741,7 +889,7 @@ async fn run_people(
                 // txt/md→LLM 結構化(一檔一人)。
                 let ep = endpoint.as_ref().expect("has_text ⇒ endpoint loaded");
                 match read_text(path).map_err(|e| file_err(&p, e)) {
-                Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, ep).await {
+                Ok(raw) => match text_to_md::text_to_page(spec, &raw, cfg, &ep).await {
                     Ok(sp) => {
                         let (slug, markdown, dropped) = text_to_md::render(spec, person_dir, &sp);
                         Ok((
@@ -790,7 +938,15 @@ async fn run_people(
                 merged += m;
                 dropped_timeline += d;
                 for page in &pages {
-                    match write_page_guarded(notes, &page.target_dir, &page.slug, &page.markdown) {
+                    let mut md = page.markdown.clone();
+                    if let Some(ann) = import_annotation {
+                        let old = std::fs::read_to_string(
+                            notes.join(&page.target_dir).join(format!("{}.md", page.slug)),
+                        )
+                        .ok();
+                        md = merge_import_anchor(&md, old.as_deref(), &today, ann);
+                    }
+                    match write_page_guarded(notes, &page.target_dir, &page.slug, &md) {
                         Ok(Some(f)) => written.push(f.to_string_lossy().into_owned()),
                         Ok(None) => frozen += 1,
                         Err(e) => errors.push(file_err(format!("{}/{}", page.target_dir, page.slug), e)),
@@ -810,6 +966,65 @@ async fn run_people(
 
     let total = all_pages.len();
     let sample: Vec<PreviewPage> = all_pages.iter().take(10).cloned().collect();
+    // ── 智慧 LLM 路由（TODO 項目 1）：備註含日期訊號的頁 → LLM 富集 timeline ──
+    // 兩階段：純解析頁面已全部落盤；此處僅對「備註命中日期訊號」的頁跑 LLM 富集，
+    // 富集後釘回原 slug/title 覆寫（頁面為本批剛寫入的 factory-owned 頁）。
+    let mut enrich_hits = 0usize;
+    let mut enrich_ok = 0usize;
+    let mut enrich_failed = 0usize;
+    let mut enrich_skipped = 0usize;
+    let hit_files: Vec<&String> = written
+        .iter()
+        .filter(|f| {
+            std::fs::read_to_string(f)
+                .ok()
+                .and_then(|md| notes_section(&md).map(|t| csv_people::has_date_signal(&t)))
+                .unwrap_or(false)
+        })
+        .collect();
+    enrich_hits = hit_files.len();
+    if !hit_files.is_empty() {
+        // 命中 > 0 才需要 LLM endpoint；無 key／載入失敗 → 跳過富集（匯入本身不受影響）
+        let ep = gbrain_config::load_for(cfg.active_env_home())
+            .ok()
+            .and_then(|loaded| gbrain_config::resolve_endpoint(&loaded.config).ok())
+            .filter(|e| e.has_api_key || e.provider == "ollama");
+        match ep {
+            Some(ep) => {
+                for f in &hit_files {
+                    let md = match std::fs::read_to_string(f) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            enrich_failed += 1;
+                            continue;
+                        }
+                    };
+                    let slug = Path::new(f)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let title = frontmatter_title_of(&md).unwrap_or_else(|| slug.clone());
+                    let raw = strip_frontmatter(&md);
+                    match text_to_md::text_to_page(spec, &raw, cfg, &ep).await {
+                        Ok(sp) => {
+                            let (_, enriched_md, dropped) =
+                                text_to_md::render(spec, &person_dir, &sp);
+                            let pinned = pin_frontmatter_title(&enriched_md, &title);
+                            dropped_timeline += dropped;
+                            match write_page_guarded(notes, &person_dir, &slug, &pinned) {
+                                Ok(_) => enrich_ok += 1,
+                                Err(_) => enrich_failed += 1,
+                            }
+                        }
+                        Err(_) => enrich_failed += 1,
+                    }
+                }
+            }
+            None => enrich_skipped = hit_files.len(),
+        }
+    }
+
     let summary = if rows > 0 {
         L10n::new("factory.peopleSummary")
             .p("rows", rows)
@@ -817,6 +1032,10 @@ async fn run_people(
             .p("written", written.len())
             .p("frozen", frozen)
             .p("dropped", dropped_timeline)
+            .p("hits", enrich_hits)
+            .p("enriched", enrich_ok)
+            .p("failed", enrich_failed)
+            .p("skipped", enrich_skipped)
     } else {
         L10n::new("factory.writtenN")
             .p("factory", spec.id)
@@ -844,7 +1063,9 @@ async fn run_textual(
     paths: &[String],
     gate: Gate<'_>,
     max: usize,
+    import_annotation: Option<&str>,
 ) -> Result<PreviewResult, AppError> {
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
     let loaded = gbrain_config::load_for(cfg.active_env_home())?;
     let endpoint = gbrain_config::resolve_endpoint(&loaded.config)?;
     if !endpoint.has_api_key && endpoint.provider != "ollama" {
@@ -892,6 +1113,15 @@ async fn run_textual(
         match converted {
             Ok((slug, title, markdown, dropped)) => {
                 dropped_timeline += dropped;
+                let markdown = if let Some(ann) = import_annotation {
+                    let old = std::fs::read_to_string(
+                        notes.join(&target_dir).join(format!("{slug}.md")),
+                    )
+                    .ok();
+                    merge_import_anchor(&markdown, old.as_deref(), &today, ann)
+                } else {
+                    markdown
+                };
                 match write_page_guarded(notes, &target_dir, &slug, &markdown) {
                     Ok(Some(f)) => written.push(f.to_string_lossy().into_owned()),
                     Ok(None) => frozen += 1,
@@ -1225,7 +1455,7 @@ pub async fn run_to_scope_core(
 ) -> Result<(PreviewResult, crate::knowledge::provision::WriteTarget), AppError> {
     let target = scope_target_checked(store, cfg, kind, circle, level, owner_principal).await?;
     let preview =
-        run_core_sched(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref()), gate, None).await?;
+        run_core_sched(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref()), gate, None, None).await?;
     commit_and_sync_scope(cfg, &target).await?;
     Ok((preview, target))
 }
@@ -1469,5 +1699,43 @@ enriched: true
         assert!(r.written.is_empty()); // 凍結頁不計入 written
         assert_eq!(r.summary.params.get("frozen").cloned().as_deref(), Some("1"));
         let _ = std::fs::remove_dir_all(&notes);
+    }
+}
+
+#[cfg(test)]
+mod enrich_helper_tests {
+    use super::*;
+
+    #[test]
+    fn notes_section_extracts_between_headings() {
+        let md = "---\ntype: person\n---\n# 王小明\n\n任職於甲公司。\n\n## 備註\n\n2008/2/4 拜訪客戶\n3月12日 電話聯絡\n\n## 其他\n\n不應包含\n";
+        let sec = notes_section(md).unwrap();
+        assert!(sec.contains("2008/2/4 拜訪客戶"));
+        assert!(sec.contains("3月12日 電話聯絡"));
+        assert!(!sec.contains("不應包含"));
+        assert!(notes_section("# 無備註頁").is_none());
+    }
+
+    #[test]
+    fn strip_frontmatter_removes_leading_block() {
+        let md = "---\ntype: person\norigin: operoid-factory\n---\n# 王小明\n\n本文\n";
+        let body = strip_frontmatter(md);
+        assert!(body.starts_with("# 王小明"));
+        assert!(!body.contains("type: person"));
+    }
+
+    #[test]
+    fn pin_frontmatter_title_forces_title_line() {
+        let md = "---\ntype: person\norigin: operoid-factory\ntitle: 'LLM 幻覺標題'\ntags: [people]\n---\n# body\n";
+        let pinned = pin_frontmatter_title(md, "王小明");
+        assert!(pinned.contains("title: '王小明'"));
+        assert!(!pinned.contains("LLM 幻覺標題"));
+        assert!(pinned.ends_with("# body\n"));
+    }
+
+    #[test]
+    fn frontmatter_title_of_reads_quoted_value() {
+        let md = "---\ntype: person\ntitle: '王小明'\n---\n";
+        assert_eq!(frontmatter_title_of(md).unwrap(), "王小明");
     }
 }

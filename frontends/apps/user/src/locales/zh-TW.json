@@ -235,7 +235,8 @@
       "hint": "每張圖會落 media/ 並生成同名註解頁；描述將成為頁面內容與匯入 timeline。sync 時 gbrain 會做多模態嵌入與 image_of 連結。",
       "placeholder": "這張圖是什麼？（例：產品外觀照、白板照片、客戶名片…）",
       "needAll": "每張圖都要填註解",
-      "confirm": "加入註解並轉換"
+      "confirm": "加入註解並轉換",
+      "cancelled": "已取消（未轉換）"
     },
     "classify": {
       "confirmTitle": "確認檔案分類",
@@ -272,13 +273,16 @@
     "targetHintConvert": "預設寫入企業預設來源（同步由系統管理）；指定部門／專案或更高保密等級時，系統自動建立對應範圍與來源、轉換完成立即入圖（需具備該等級 clearance）。",
     "targetCaptureNote": "速記（capture）管線不落盤——寫入目標對此類型不適用。",
     "capsMineruMissing": "未偵測到 MinerU——目前僅能完整處理非常簡單的 PDF（純文字、無圖表）；雙欄論文／掃描／含圖 PDF 的轉換品質將下降，請聯絡管理員安裝 MinerU。",
-    "capsNoVision": "嵌入模型未啟用多模態——PDF 圖片僅以文字說明索引，圖片內容的檢索能力受限。"
+    "capsNoVision": "嵌入模型未啟用多模態——PDF 圖片僅以文字說明索引，圖片內容的檢索能力受限。",
+    "importAnn": {
+      "label": "匯入註解（選填）",
+      "placeholder": "例：從 Google Contacts 匯入的聯絡人"
+    }
   },
   "factory": {
     "csvOnly": "people 工廠只接受 .csv：{file}",
     "fileError": "{file}：{detail}",
-    "peopleSummary": "CSV 列：{rows}　合併群組：{merged}　已寫入 people 頁：{written}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
-    "writtenN": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
+    "peopleSummary": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}　日期命中：{hits}　富集：{enriched}（失敗 {failed}／略過 {skipped}）",
     "writtenN": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
     "imageSummary": "已複製 {images} 張圖（重用 {reused}）　寫入 {written} 個註解頁　凍結：{frozen}",
     "imageAnnotationRequired": "{file}：缺少註解——圖片必須填寫描述才會入庫",

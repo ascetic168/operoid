@@ -36,7 +36,7 @@ interface L10n {
 interface FactoryTypeInfo {
   id: string
   dir: string
-  pipeline: 'people' | 'textual' | 'capture'
+  pipeline: 'people' | 'textual' | 'image' | 'capture'
   extensions: string[]
 }
 interface FactoryTypesResult {
@@ -184,6 +184,8 @@ let stagingId: string | null = null
 const convTargetKind = ref<'company' | 'department' | 'project'>('company')
 const convTargetCircle = ref('')
 const convTargetLevel = ref<SecurityLevel>('internal')
+// 匯入註解（選填）：people/textual 匯入時加 timeline 匯入錨點（重匯自動去重）
+const importAnn = ref('')
 const convTarget = computed<
   { kind: 'company' | 'department' | 'project'; circle: string; level: SecurityLevel } | undefined
 >(() => {
@@ -261,10 +263,20 @@ async function doRun(factoryId: string, files: File[]): Promise<void> {
     }
     const body: Record<string, unknown> = { factory: factoryId, paths: up.paths }
     if (convTarget.value) body.target = convTarget.value
+    if (factoryId === 'image') {
+      body.annotations = await openAnnotationDialog(up.paths)
+      if (!body.annotations) {
+        cleanupStaging()
+        return
+      }
+    }
+    const impAnn = importAnn.value.trim()
+    if (impAnn && factoryId !== 'image') body.import_annotation = impAnn
     const r = await api.post<PreviewResult>('/api/factories/run', body)
     preview.value = r
     lastRunTarget = convTarget.value ?? null
     syncEditedFromSample()
+    importAnn.value = ''
     cleanupStaging()
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return
@@ -287,6 +299,40 @@ interface ClassifyItem {
   reason: string
 }
 const classifyOpen = ref(false)
+// 圖片註解對話框（image 工廠強制逐張註解）
+const annOpen = ref(false)
+const annItems = ref<{ path: string; stem: string; text: string }[]>([])
+const annError = ref('')
+let annResolver: ((anns: string[] | null) => void) | null = null
+
+function stemOf(p: string): string {
+  const base = p.split(/[\/]/).pop() ?? p
+  const i = base.lastIndexOf('.')
+  return i > 0 ? base.slice(0, i) : base
+}
+
+function openAnnotationDialog(paths: string[]): Promise<string[] | null> {
+  annItems.value = paths.map((p) => ({ path: p, stem: stemOf(p), text: '' }))
+  annError.value = ''
+  annOpen.value = true
+  return new Promise((resolve) => {
+    annResolver = resolve
+  })
+}
+function cancelAnnotations() {
+  annOpen.value = false
+  annResolver?.(null)
+  annResolver = null
+}
+function confirmAnnotations() {
+  if (annItems.value.some((it) => !it.text.trim())) {
+    annError.value = t('factories.ann.needAll')
+    return
+  }
+  annOpen.value = false
+  annResolver?.(annItems.value.map((it) => it.text.trim()))
+  annResolver = null
+}
 const classifyItems = ref<ClassifyItem[]>([])
 const classifyBusy = ref(false)
 
@@ -337,6 +383,17 @@ async function runGroups(groups: Record<string, string[]>): Promise<PreviewResul
     try {
       const body: Record<string, unknown> = { factory: f, paths }
       if (convTarget.value) body.target = convTarget.value
+      if (f === 'image') {
+        body.annotations = await openAnnotationDialog(paths)
+        if (!body.annotations) {
+          results.push({
+            factory: f, summary: { code: 'factories.ann.cancelled', params: {} }, sample: [], total: 0, written: [], errors: [], files: [],
+          })
+          continue
+        }
+      }
+      const impAnn = importAnn.value.trim()
+      if (impAnn && f !== 'image') body.import_annotation = impAnn
       results.push(await api.post<PreviewResult>('/api/factories/run', body))
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) throw e
@@ -504,6 +561,13 @@ onBeforeUnmount(() => {
     <!-- 轉換寫入目標（C13c 圈子×等級）：套用於拖放轉換與自動分類；預設＝企業預設來源 -->
     <div class="targetbar">
       <span class="targetlabel">{{ t('factories.targetBar') }}</span>
+      <input
+        v-model="importAnn"
+        :placeholder="t('factories.importAnn.placeholder')"
+        :title="t('factories.importAnn.label')"
+        class="impann"
+        :disabled="busy !== null"
+      />
       <select v-model="convTargetLevel" class="sel" :disabled="busy !== null">
         <option value="internal">internal</option>
         <option value="confidential">confidential</option>
@@ -769,6 +833,29 @@ onBeforeUnmount(() => {
           <button type="button" class="ghost" @click="classifyOpen = false">{{ t('factories.close') }}</button>
           <button type="button" class="primary" :disabled="classifyBusy" @click="confirmClassify">
             {{ t('factories.classify.confirmRun') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="annOpen" class="modal" @click.self="cancelAnnotations">
+      <div class="dialog">
+        <div class="dialoghead">
+          <span class="cardtitle">{{ t('factories.ann.title') }}</span>
+          <button type="button" class="iconbtn" @click="cancelAnnotations">×</button>
+        </div>
+        <div class="dialoghint">{{ t('factories.ann.hint') }}</div>
+        <div class="confirmlist">
+          <div v-for="(it, i) in annItems" :key="i" class="confirmrow">
+            <span class="mono small truncate">{{ it.path }}</span>
+            <textarea v-model="it.text" rows="2" class="sel" :placeholder="t('factories.ann.placeholder')"></textarea>
+          </div>
+          <div v-if="annError" class="muted small">{{ annError }}</div>
+        </div>
+        <div class="dialogfoot">
+          <button type="button" class="ghost" @click="cancelAnnotations">{{ t('factories.close') }}</button>
+          <button type="button" class="primary" @click="confirmAnnotations">
+            {{ t('factories.ann.confirm') }}
           </button>
         </div>
       </div>

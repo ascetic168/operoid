@@ -1140,6 +1140,9 @@ struct FactoryRunBody {
     target: Option<AuthoredTarget>,
     /// image 工廠的逐檔註解（與 paths 平行、強制非空）；其餘工廠忽略。
     annotations: Option<Vec<String>>,
+    /// 匯入註解（TODO 項目 2）：整批頁面 timeline 加 `### date — 匯入：<註解>` 錨點
+    /// （重匯自動去重）；people/textual 適用。
+    import_annotation: Option<String>,
 }
 
 async fn api_factory_run(
@@ -1169,8 +1172,16 @@ async fn api_factory_run(
         let writes_repo = pack.spec(&b.factory).map(|s| !s.is_capture()).unwrap_or(false);
         let scoped = writes_repo && b.target.is_some();
         if !writes_repo {
-            let preview =
-                run_core_sched(&cfg, &b.factory, &b.paths, None, Some((&gate, &owner)), b.annotations.as_deref()).await?;
+            let preview = run_core_sched(
+                &cfg,
+                &b.factory,
+                &b.paths,
+                None,
+                Some((&gate, &owner)),
+                b.annotations.as_deref(),
+                b.import_annotation.as_deref(),
+            )
+            .await?;
             return serde_json::to_value(preview)
                 .map_err(|e| AppError::new("server.internal").p("detail", e.to_string()));
         }
@@ -1204,9 +1215,16 @@ async fn api_factory_run(
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
             ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
         }
-        let preview =
-            run_core_sched(&cfg, &b.factory, &b.paths, Some(&repo), Some((&gate, &owner)), b.annotations.as_deref())
-                .await?;
+        let preview = run_core_sched(
+            &cfg,
+            &b.factory,
+            &b.paths,
+            Some(&repo),
+            Some((&gate, &owner)),
+            b.annotations.as_deref(),
+            b.import_annotation.as_deref(),
+        )
+        .await?;
         let mut v = serde_json::to_value(preview)
             .map_err(|e| AppError::new("server.internal").p("detail", e.to_string()))?;
         if let Some(obj) = v.as_object_mut() {

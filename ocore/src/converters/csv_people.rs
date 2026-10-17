@@ -444,6 +444,29 @@ fn build_page(c: &Contact) -> (String, String) {
 
 // ── 主管線 ─────────────────────────────────────────────────────────────
 
+/// 智慧 LLM 路由的訊號偵測（TODO 項目 1）：備註文字是否含「明確日期」的樣貌。
+/// 命中才值得花 LLM 呼叫做 timeline 富集；純年份/電話號碼不算。
+/// 樣式分層（由明確到寬鬆）：
+/// 1. `YYYY-MM-DD`／`YYYY/MM/DD`／`YYYY.MM.DD`
+/// 2. `YYYY年M月D日`／`YYYY年M月`
+/// 3. `M月D日`
+/// 4. `民國YYY年`
+pub fn has_date_signal(text: &str) -> bool {
+    let re_yyyymmdd = regex::Regex::new(r"(?:19|20)\d{2}\s*[-./年]\s*\d{1,2}\s*[-./月]\s*\d{1,2}\s*日?").unwrap();
+    if re_yyyymmdd.is_match(text) {
+        return true;
+    }
+    let re_monthday = regex::Regex::new(r"\d{1,2}\s*月\s*\d{1,2}\s*日").unwrap();
+    if re_monthday.is_match(text) {
+        return true;
+    }
+    let re_roc = regex::Regex::new(r"民國\s*\d{2,3}\s*年").unwrap();
+    if re_roc.is_match(text) {
+        return true;
+    }
+    false
+}
+
 /// 解析 CSV 文字（須已解碼、去 BOM）。`dedup`=true 時合併同人。
 pub fn parse(content: &str, dedup: bool) -> anyhow::Result<PeopleImport> {
     let mut rdr = csv::ReaderBuilder::new()
@@ -664,5 +687,35 @@ mod tests {
         eprintln!("{summary}");
         // 正規化換行後應幾乎全一致（容許少數被手工編輯）
         assert!(norm_match > 1900, "正規化後一致太少：{summary}");
+    }
+
+    #[test]
+    fn has_date_signal_positives() {
+        for t in [
+            "2008/2/4 和連宇力一起拜訪",
+            "2007 餐廳希望改裝省電照明", // 純年份——不應命中，見反面測試
+            "2008-11-07 格利萊轉介",
+            "2008年2月4日 拜訪",
+            "3月12日 電話聯絡",
+            "民國095年開始配合",
+            "2006.6.28 meet with 呂孝文",
+        ] {
+            // 純年份例外：單獨一行「2007 餐廳…」不含月日 → 應為 false
+            let expect = !t.starts_with("2007 餐廳");
+            assert_eq!(super::has_date_signal(t), expect, "case: {t}");
+        }
+    }
+
+    #[test]
+    fn has_date_signal_negatives() {
+        for t in [
+            "0912317681",
+            "TEL: (02)29855334",
+            "2024 年度大事記（無月日）",
+            "高僑自動化科技股份有限公司",
+            "+1 (303) 9268527",
+        ] {
+            assert!(!super::has_date_signal(t), "case: {t}");
+        }
     }
 }
