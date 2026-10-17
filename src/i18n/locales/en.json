@@ -121,7 +121,7 @@
       "ack": "Got it"
     },
     "caps": {
-      "mineruMissing": "MinerU not detected - the PDF knowledge pipeline can only handle very simple PDFs (plain text, single column, no figures) in fast mode. Complex PDFs (two-column papers, scans, figures) require MinerU: `uv tool install mineru`, or set [knowledge] mineru_command in the config file.",
+      "mineruMissing": "MinerU not detected - the PDF knowledge pipeline can only handle very simple PDFs (plain text, single column, no figures) in fast mode. Complex PDFs (two-column papers, scans, figures) require MinerU: `uv tool install mineru`; or set [knowledge] mineru_dir to the install root (supports %USERPROFILE% / ${HOME} expansion - portable across machines) or mineru_command to the full path.",
       "noVision": "Embedding model has no multimodal support - images are indexed by caption text only, limiting visual queries. Add --mmproj to the llama-server launch flags to unlock joint caption+image vectors.",
       "batchFlag": "llama-server is missing the -b/-ub 8192 flags - long chunks will be rejected (default 512), degrading knowledge retrieval quality.",
       "recheck": "Recheck",

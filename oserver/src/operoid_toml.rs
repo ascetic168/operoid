@@ -104,6 +104,7 @@ pub struct GbrainSection {
 /// ```toml
 /// [knowledge]
 /// mineru_command = "C:/python/.mineru/Scripts/mineru-kit.exe"  # 階梯 1：venv launcher（絕對路徑免 activate）
+/// mineru_dir = "%USERPROFILE%/.mineru"   # 階梯 1b：安裝根目錄（可攜；%VAR%／${VAR} 展開）
 /// mineru_tier = "basic"            # flash／basic（預設）／standard
 /// mineru_remote_url = "http://192.168.1.10:8000"  # 階梯 3-private：自架 api-server（設定即同意）
 /// mineru_api_key = "..."           # 階梯 3-public：mineru.net（須 allow_public_egress=true 才生效）
@@ -114,6 +115,7 @@ pub struct GbrainSection {
 #[serde(default)]
 pub struct KnowledgeSection {
     pub mineru_command: Option<String>,
+    pub mineru_dir: Option<String>,
     pub mineru_tier: Option<String>,
     pub mineru_remote_url: Option<String>,
     pub mineru_api_key: Option<String>,
@@ -168,6 +170,9 @@ pub fn apply_overrides(cfg: &mut AppConfig, t: Option<&OperoidToml>) {
     // K1：知識管線（MinerU 階梯＋egress 分層）。
     if let Some(p) = &t.knowledge.mineru_command {
         cfg.mineru_command = Some(p.clone());
+    }
+    if let Some(p) = &t.knowledge.mineru_dir {
+        cfg.mineru_dir = Some(p.clone());
     }
     if let Some(p) = &t.knowledge.mineru_tier {
         cfg.mineru_tier = Some(p.clone());
@@ -230,6 +235,7 @@ exe_path = "C:/gbrain/gbrain.exe"
 
 [knowledge]
 mineru_command = "C:/python/.mineru/Scripts/mineru-kit.exe"
+mineru_dir = "${HOME}/.mineru"
 mineru_remote_url = "http://192.168.1.10:8000"
 allow_public_egress = true
 pdf_convert_policy = "always_mineru"
@@ -261,6 +267,7 @@ concurrency = 8
             t.knowledge.mineru_command.as_deref(),
             Some("C:/python/.mineru/Scripts/mineru-kit.exe")
         );
+        assert_eq!(t.knowledge.mineru_dir.as_deref(), Some("${HOME}/.mineru"));
         assert_eq!(t.knowledge.allow_public_egress, Some(true));
         assert_eq!(t.knowledge.pdf_convert_policy.as_deref(), Some("always_mineru"));
         // P4：工廠多工節。

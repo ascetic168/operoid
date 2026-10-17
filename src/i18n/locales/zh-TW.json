@@ -121,7 +121,7 @@
       "ack": "我知道了"
     },
     "caps": {
-      "mineruMissing": "未偵測到 MinerU——PDF 知識管線目前僅能以快速模式處理非常簡單的 PDF（純文字、單欄、無圖表）；雙欄論文／掃描／含圖 PDF 需安裝 MinerU（uv tool install mineru，或於設定檔 [knowledge] mineru_command 指定路徑）。",
+      "mineruMissing": "未偵測到 MinerU——PDF 知識管線目前僅能以快速模式處理非常簡單的 PDF（純文字、單欄、無圖表）；雙欄論文／掃描／含圖 PDF 需安裝 MinerU（uv tool install mineru；或於設定檔 [knowledge] mineru_dir 指定安裝目錄——支援 %USERPROFILE%／${HOME} 展開、跨機器可攜——或 mineru_command 指定完整路徑）。",
       "noVision": "嵌入模型未啟用多模態——圖片僅以文字說明（caption）索引，純視覺查詢能力受限；於 llama-server 啟動旗標加 --mmproj 可解鎖「caption＋原圖」聯合向量。",
       "batchFlag": "llama-server 缺 -b/-ub 8192 旗標——長 chunk 會被拒收（預設 512），知識檢索品質將受影響。",
       "recheck": "重測",
