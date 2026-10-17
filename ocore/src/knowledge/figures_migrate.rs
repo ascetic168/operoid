@@ -364,3 +364,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 本機退役遷移 runner（#[ignore]；非破壞——sidecar 封存 `.retired-<date>`，
+/// 圖檔已存在則略過、註解頁補強為冪等）。
+/// 跑法：`MIGRATE_FIGURES_DB=<figures.sqlite> cargo test -p ocore real_migrate_local -- --ignored --nocapture`
+/// （未設 env 即無 op 返回——CI 安全。）
+#[ignore = "真實遷移：需 MIGRATE_FIGURES_DB 指向生產 sidecar；會 commit/sync 目標 repo 並封存 sidecar"]
+#[tokio::test]
+async fn real_migrate_local_sidecar() {
+    let Ok(db) = std::env::var("MIGRATE_FIGURES_DB") else {
+        eprintln!("[migrate] MIGRATE_FIGURES_DB 未設——略過");
+        return;
+    };
+    let gbrain_exe = dirs::home_dir()
+        .map(|h| h.join(".bun").join("bin").join("gbrain.exe"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| std::path::PathBuf::from("gbrain"));
+    let exe_s = gbrain_exe.to_string_lossy().into_owned();
+    let sources = super::ingest::list_sources(&exe_s, None)
+        .await
+        .expect("sources list 應成功");
+    eprintln!("[migrate] sources: {sources:?}");
+    let report = migrate_figures_sidecar(std::path::Path::new(&db), &sources, &exe_s, None)
+        .await
+        .expect("遷移應成功");
+    eprintln!(
+        "[migrate] {}",
+        serde_json::to_string_pretty(&report).expect("report 序列化")
+    );
+}

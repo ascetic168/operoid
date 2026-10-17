@@ -157,8 +157,13 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
   - 遷移：`POST /api/knowledge/migrate-figures`（Admin）——已授權列搬進 source
     repo（未授權列不遷，fail-closed 保留）、sidecar 封存 `.retired-<date>`、
     figures.assets 留待手動清理；查詢端開檔一律 `open_existing`。
-  - 待辦：本機實際執行遷移（mueller2016 sidecar 資料 → 所屬 source repo）＋
-    遷移後重跑 `real_figures_lane` 對照。
+  - **✅ 本機遷移已執行（2026-10-17）**：`MIGRATE_FIGURES_DB=… cargo test -p ocore
+    real_migrate_local -- --ignored`——9 列全授權（mueller2016 → gbrain-demo repo）、
+    8 圖已在 repo 全數略過（0 重複）、9 註解頁補強（wikilink＋原論文出處＋匯入錨點；
+    fig3 caption-only 只加錨點）、git commit＋sync×2＋embed --stale 零警告、
+    sidecar 封存 `gbrain-demo.figures.sqlite.retired-2026-10-17`（查詢端自動切換
+    圖 arm；`figures.assets/` 留待手動清理）。遷移後重跑 `real_figures_lane`：
+    四 lane 數據與試點一致（再測條款通過，C 未退化）。
 - **工具選項：Unsloth（2026-10-17 調查，未採用）**：Unsloth 是微調/量化框架＋模型發布管線，
   **不是** ollama/llama-server 的替代（Unsloth Studio 底層就是拉 llama.cpp 當推論後端，
   只差管理 UI）。對本專案的實際價值是**微調 EmbeddingGemma 2**：官方支援
