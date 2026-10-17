@@ -54,3 +54,6 @@ mod tests_k4;
 
 #[cfg(test)]
 mod tests_ingest;
+
+#[cfg(test)]
+mod tests_figures_lane;

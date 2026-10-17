@@ -128,6 +128,25 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
   **方向決議候選**：PDF figures 改道 gbrain 原生 image import（與使用者拖放同軌）、
   sidecar 向量/檢索退役——遷移前先以 mueller2019 規模做檢索品質對照
   （K3 聯合向量 vs gbrain 圖向量＋OCR/旁頁文字的取捨需實測）。
+- **檢索品質對照（2026-10-17，`cargo test -p ocore real_figures_lane -- --ignored`）**：
+  mueller2016、11 條帶圖查詢（embed-exp 12 條中 8 條帶 fig 目標＋K3 pixel-only 3 條；
+  主裁決子集 9 條＝IMG_QUERIES 6＋pixel 3。「mueller2019 規模」查無此語料，
+  經使用者核准以 mueller2016 完成）。四 lane：A＝sidecar 聯合向量單臂、
+  B＝gbrain `--cross-modal image` 純圖向量單臂、A′＝現行產品視圖（RRF k=60：
+  sidecar 列＋文字列）、C＝候選產品視圖（圖列＋文字列）。
+  - 單臂：A hit@5 11/11 MRR 1.000；B hit@5 11/11 MRR 0.894（Q3 fig5→#2、
+    Q11 fig9→#3——caption 不在圖向量輸入，視覺相似圖表互搶排名）。
+  - 產品視圖：A′ hit@5 11/11 MRR 1.000；C hit@5 11/11 MRR 0.909（文字 lane 的
+    同名註解頁把 Q11 從 #3 補到 #2）。
+  - **裁決：hit@5 全 lane 持平（目標圖必進前 5）＝核心檢索成功指標不變；
+    MRR 差距僅 2/11 查詢的 #1 vs #2/#3，成因明確且架構內有補償（註解頁 caption
+    走文字 lane）與再補強（註解頁含完整 caption、選配 embedding_image_ocr）。
+    退役收益為架構統一（拖放與 MinerU 同軌、免 sidecar 儲存/嵌入/簽章/遷移面）。
+    → 決定改道＋退役；再測條款：管線改寫後重跑本測試，若 C 再退化重議。**
+  - **產品整合發現**：`gbrain query --cross-modal auto/both` 的文字查詢不會帶出
+    image 頁（both＋limit 20 實測僅回文字頁）——圖片必須顯式走
+    `--cross-modal image` arm。sidecar 退役時 service route 2 需改接此 arm，
+    否則產品查詢靜默失去圖片。
 - **工具選項：Unsloth（2026-10-17 調查，未採用）**：Unsloth 是微調/量化框架＋模型發布管線，
   **不是** ollama/llama-server 的替代（Unsloth Studio 底層就是拉 llama.cpp 當推論後端，
   只差管理 UI）。對本專案的實際價值是**微調 EmbeddingGemma 2**：官方支援
