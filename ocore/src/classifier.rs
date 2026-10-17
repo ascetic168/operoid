@@ -102,6 +102,18 @@ fn verdict(pack: &Pack, path: &Path, has_ep: bool) -> Verdict {
         "csv" => Verdict::Done(classify_csv(pack, path, &p)),
         "txt" | "md" | "markdown" => text_verdict(pack, &p, read_text(path).ok(), has_ep),
         "pdf" => text_verdict(pack, &p, pdf_text::extract(path).ok(), has_ep),
+        // 圖片：副檔名即高信心（image 工廠強制逐張註解，不需讀內容）。
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "heif" | "avif"
+            if pack.spec("image").is_ok() =>
+        {
+            Verdict::Done(FileClassification {
+                path: p,
+                factory: "image".into(),
+                confidence: Confidence::High,
+                reason: "圖片檔（image 工廠，需逐張註解）".into(),
+                source: ClassifySource::Extension,
+            })
+        }
         other => Verdict::Done(FileClassification {
             path: p,
             factory: String::new(),
@@ -370,6 +382,27 @@ mod tests {
         }
         // v2 無 meeting 型：會議特徵在 v2 pack 交 LLM 判讀（可能落 analysis/note）。
         assert!(matches!(verdict(&V2_PACK, &p, true), Verdict::Llm(_)));
+    }
+
+    #[test]
+    fn image_file_detected_by_extension() {
+        let p = tmp("img", "png", "not-a-real-image");
+        // v2 有 image 工廠 → 副檔名高信心直達；LEGACY 無 image 型 → 不支援
+        match verdict(&V2_PACK, &p, true) {
+            Verdict::Done(c) => {
+                assert_eq!(c.factory, "image");
+                assert_eq!(c.confidence, Confidence::High);
+                assert_eq!(c.source, ClassifySource::Extension);
+            }
+            _ => panic!("png 應由副檔名命中 image 工廠"),
+        }
+        match verdict(&LEGACY_PACK, &p, true) {
+            Verdict::Done(c) => {
+                assert_eq!(c.factory, "");
+                assert_eq!(c.confidence, Confidence::Low);
+            }
+            _ => panic!("legacy pack 無 image 工廠，應回不支援"),
+        }
     }
 
     #[test]

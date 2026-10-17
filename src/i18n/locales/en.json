@@ -194,6 +194,11 @@
     "editorEnriching": "LLM enriching…",
     "editorSaveAndSync": "Save & Sync",
     "defs": {
+      "image": {
+        "title": "Image",
+        "desc": "Image -> media/ + mandatory annotation page; gbrain embeds multimodally and links image_of on sync",
+        "target": "media"
+      },
       "people": {
         "title": "people factory",
         "accept": "CSV (Google Contacts)",
@@ -294,6 +299,13 @@
         "noGraph": "no graph",
         "noGraphHint": "notes go through gbrain capture and are not in the graph link whitelist (DIR_PATTERN), so they don't form edges."
       }
+    },
+    "ann": {
+      "title": "Image annotations required",
+      "hint": "Each image lands in media/ with a same-name annotation page; the description becomes the page body and its import timeline. gbrain embeds multimodally and links image_of on sync.",
+      "placeholder": "What is this image? (e.g. product photo, whiteboard shot, business card…)",
+      "needAll": "Every image needs an annotation",
+      "confirm": "Add annotations & convert"
     },
     "classify": {
       "confirmTitle": "Confirm file classification",
@@ -607,6 +619,13 @@
     "fileError": "{file}: {detail}",
     "peopleSummary": "CSV rows: {rows}　merged groups: {merged}　people pages written: {written}　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
     "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
+    "writtenN": "Wrote {n} {factory} page(s)　frozen (skipped): {frozen}　dropped invalid-date timeline events: {dropped}",
+    "imageSummary": "Copied {images} image(s) (reused {reused})　wrote {written} annotation page(s)　frozen: {frozen}",
+    "imageAnnotationRequired": "{file}: annotation missing — images require a description before import",
+    "imageUnsupportedExt": "{file}: unsupported image format (.{ext})",
+    "imageEmpty": "{file}: file is empty",
+    "imageTooLarge": "{file}: exceeds the {max} limit",
+    "imageScopedUnsupported": "the image factory does not support scoped (circle) targets",
     "inboxCaptured": "Captured {n} note(s) to inbox/",
     "unknown": "Unknown factory: {factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",

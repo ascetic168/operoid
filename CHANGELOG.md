@@ -15,6 +15,30 @@
 
 ## [Unreleased]
 
+### Factory image pipeline: drop images with mandatory annotations
+
+- New `image` factory (16th type in the gbrain-base-v2 table): drop image
+  files (png/jpg/jpeg/gif/webp/heic/heif/avif, ≤20MB) and each lands in
+  `media/<name>.<ext>` with a **mandatory per-image annotation page**
+  `media/<name>.md` (same dir/stem → gbrain sync auto-links `image_of`,
+  imports the image page, and stores the 768-dim multimodal vector when a
+  multimodal embedding provider is configured — see DEPLOYMENT.md and
+  `deploy/local/mm-bridge/`).
+- The annotation becomes the annotation page's lead line and a dated
+  import anchor (`### YYYY-MM-DD — 匯入圖片`) in its timeline section.
+  Pages are written through the guarded write (enriched/hand-made pages
+  are frozen); images are copied with sha256 dedup — same content reuses
+  the existing file, different content under the same name gets `-2/-3`
+  suffixes. No LLM involved; summary reports `images/reused/written/frozen`.
+- The run API (`/api/factories/run` and the desktop command) gains an
+  optional `annotations` array (parallel to `paths`, required non-empty
+  for the image factory; other factories ignore it). The desktop factory
+  view collects the annotations in a per-file dialog (auto-classify and
+  the confirm dialog route through the same flow). Scoped (circle)
+  targets reject the image factory for now.
+- Classifier routes image extensions to the image factory by extension
+  (high confidence) when the active pack declares it.
+
 ### Factory timeline integrity: date validation + overwrite protection
 
 - Timeline events extracted by the LLM are validated in Rust: entries

@@ -1113,6 +1113,8 @@ struct FactoryRunBody {
     target_repo: Option<String>,
     /// C13c：轉換寫入目標（圈子×等級）——缺省＝企業預設來源（target_repo 流）。
     target: Option<AuthoredTarget>,
+    /// image 工廠的逐檔註解（與 paths 平行、強制非空）；其餘工廠忽略。
+    annotations: Option<Vec<String>>,
 }
 
 async fn api_factory_run(
@@ -1142,11 +1144,16 @@ async fn api_factory_run(
         let writes_repo = pack.spec(&b.factory).map(|s| !s.is_capture()).unwrap_or(false);
         let scoped = writes_repo && b.target.is_some();
         if !writes_repo {
-            let preview = run_core_sched(&cfg, &b.factory, &b.paths, None, Some((&gate, &owner))).await?;
+            let preview =
+                run_core_sched(&cfg, &b.factory, &b.paths, None, Some((&gate, &owner)), b.annotations.as_deref()).await?;
             return serde_json::to_value(preview)
                 .map_err(|e| AppError::new("server.internal").p("detail", e.to_string()));
         }
         if scoped {
+            if b.factory == "image" {
+                return Err(AppError::new("factory.imageScopedUnsupported")
+                    .p("factory", b.factory.clone()));
+            }
             let t = b.target.expect("scoped ⇒ target");
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
             let (kind, circle, level) = parse_authored_target(&t)?;
@@ -1169,7 +1176,9 @@ async fn api_factory_run(
             let store = ocore::domain::SqliteStore::open(&st.db_path)?;
             ocore::knowledge::provision::enforce_write_ceiling(&cfg, &store, &owner, &repo).await?;
         }
-        let preview = run_core_sched(&cfg, &b.factory, &b.paths, Some(&repo), Some((&gate, &owner))).await?;
+        let preview =
+            run_core_sched(&cfg, &b.factory, &b.paths, Some(&repo), Some((&gate, &owner)), b.annotations.as_deref())
+                .await?;
         serde_json::to_value(preview).map_err(|e| AppError::new("server.internal").p("detail", e.to_string()))
     })
     .await;

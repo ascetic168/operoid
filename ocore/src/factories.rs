@@ -8,8 +8,10 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
+use chrono::Local;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::agent_state::{AppState, EventKind, InboundEvent};
 use crate::app_config::AppConfig;
@@ -268,19 +270,23 @@ pub async fn run_core(
     cfg: &AppConfig,
     factory: &str,
     paths: &[String],
+    annotations: Option<&[String]>,
     target_repo: Option<&str>,
 ) -> Result<PreviewResult, AppError> {
-    run_core_sched(cfg, factory, paths, target_repo, None).await
+    run_core_sched(cfg, factory, paths, target_repo, None, annotations).await
 }
 
 /// [`run_core`] 的多工版：`gate=Some` 時逐檔經企業公平閘門（oserver 接線）；
 /// `None` 與 `run_core` 完全等價（本地 `factory_concurrency` 檔並發）。
+/// `annotations`：image 工廠的逐檔註解（與 `paths` 平行；強制非空），
+/// 其餘工廠忽略。
 pub async fn run_core_sched(
     cfg: &AppConfig,
     factory: &str,
     paths: &[String],
     target_repo: Option<&str>,
     gate: Gate<'_>,
+    annotations: Option<&[String]>,
 ) -> Result<PreviewResult, AppError> {
     let notes = PathBuf::from(target_repo.unwrap_or(&cfg.notes_repo_path));
     let max = file_concurrency(cfg);
@@ -308,6 +314,7 @@ pub async fn run_core_sched(
         results.push(match spec.pipeline {
             Pipeline::People => run_people(pack, spec, cfg, &notes, &others, gate, max).await?,
             Pipeline::Textual => run_textual(pack, spec, cfg, &notes, &others, gate, max).await?,
+            Pipeline::Image => run_images(spec, &notes, &others, annotations)?,
             Pipeline::Capture => run_inbox(spec, cfg, &others, gate, max).await?,
         });
     }
@@ -499,6 +506,172 @@ async fn run_pdf_knowledge(
         errors,
         files,
     })
+}
+
+/// 圖片工廠（`Pipeline::Image`）：圖片落 `<notes>/media/<名稱>.<副檔>`＋強制註解頁
+/// `<notes>/media/<名稱>.md`（同目錄同名 → gbrain sync 自動 `image_of` 連結）。
+/// 無 LLM；多模態向量由 gbrain sync 的 image import 產生（需 multimodal 設定，
+/// 見 DEPLOYMENT.md「多模態（圖片嵌入）」）。同步寫入匯入 timeline 錨點
+/// （TODO 項目 2 的圖片版）。
+///
+/// `annotations`：與 `paths` 平行的逐檔註解，**強制非空**（使用者決策：圖片無註解
+/// 不入庫）。註解成為註解頁的 lead line 與匯入錨點內文。
+fn run_images(
+    spec: &'static FactoryTypeSpec,
+    notes: &Path,
+    paths: &[String],
+    annotations: Option<&[String]>,
+) -> Result<PreviewResult, AppError> {
+    // 與 gbrain importImageFile 的 Voyage multimodal 上限一致。
+    const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+    let anns = annotations.unwrap_or(&[]);
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+
+    let media_dir = notes.join(spec.dir);
+    let _ = std::fs::create_dir_all(&media_dir);
+
+    let mut files: Vec<ProcessedFile> = Vec::new();
+    let mut all_pages: Vec<PreviewPage> = Vec::new();
+    let mut written: Vec<String> = Vec::new();
+    let mut errors: Vec<L10n> = Vec::new();
+    let mut frozen = 0usize;
+    let mut images_copied = 0usize;
+    let mut images_reused = 0usize;
+
+    for (i, p) in paths.iter().enumerate() {
+        let mut pf = ProcessedFile { path: p.clone(), ok: true, message: None, pages: vec![] };
+        let res: Result<PreviewPage, L10n> = (|| {
+            let ext = path_ext(p);
+            if !spec.pipeline.extensions().contains(&ext.as_str()) {
+                return Err(L10n::new("factory.imageUnsupportedExt")
+                    .p("file", p.clone())
+                    .p("ext", ext.clone()));
+            }
+            let ann = anns
+                .get(i)
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| L10n::new("factory.imageAnnotationRequired").p("file", p.clone()))?;
+            let bytes = std::fs::read(p).map_err(|e| file_err(p, e))?;
+            if bytes.is_empty() {
+                return Err(L10n::new("factory.imageEmpty").p("file", p.clone()));
+            }
+            if bytes.len() as u64 > MAX_IMAGE_BYTES {
+                return Err(L10n::new("factory.imageTooLarge")
+                    .p("file", p.clone())
+                    .p("max", "20MB"));
+            }
+            let hash = format!("{:x}", Sha256::digest(&bytes))[..16].to_string();
+            let name = Path::new(p)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .ok_or_else(|| file_err(p, "路徑沒有檔名"))?;
+            let stem = Path::new(&name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(String::from)
+                .ok_or_else(|| file_err(&name, "無法解析主檔名"))?;
+            let ext_full = if ext.is_empty() { String::new() } else { format!(".{ext}") };
+
+            // 名稱碰撞：同內容 → 重用既有圖；不同內容 → stem-2/-3…
+            let mut img_name = name.clone();
+            let mut reused = false;
+            // 順序：原名 → stem-2 → stem-3…（-2 起跳，與 csv_people 的碰撞慣例一致）
+            let candidates =
+                std::iter::once(name.clone()).chain((2..100).map(|s| format!("{stem}-{s}{ext_full}")));
+            for cand in candidates {
+                img_name = cand;
+                match std::fs::read(media_dir.join(&img_name)) {
+                    Ok(existing) => {
+                        if format!("{:x}", Sha256::digest(&existing))[..16] == hash {
+                            reused = true;
+                            break;
+                        }
+                    }
+                    Err(_) => break, // 不存在 → 此名可用
+                }
+            }
+            let img_stem = img_name.strip_suffix(&ext_full).unwrap_or(&img_name).to_string();
+            if !reused {
+                let target = media_dir.join(&img_name);
+                std::fs::write(&target, &bytes)
+                    .map_err(|e| file_err(target.to_string_lossy().into_owned(), e))?;
+                images_copied += 1;
+            } else {
+                images_reused += 1;
+            }
+
+            let markdown = build_image_annotation_page(&img_stem, &img_name, ann, &today);
+            match write_page_guarded(notes, spec.dir, &img_stem, &markdown) {
+                Ok(Some(f)) => written.push(f.to_string_lossy().into_owned()),
+                Ok(None) => frozen += 1, // 註解頁被凍結（enriched／人手頁）——圖仍已複製
+                Err(e) => errors.push(file_err(format!("{}/{}", spec.dir, img_stem), e)),
+            }
+            Ok(PreviewPage {
+                slug: img_stem.clone(),
+                target_dir: spec.dir.into(),
+                name: img_stem,
+                markdown,
+            })
+        })();
+        match res {
+            Ok(page) => {
+                all_pages.push(page.clone());
+                pf.pages = vec![page];
+            }
+            Err(m) => {
+                pf.ok = false;
+                pf.message = Some(m.clone());
+                errors.push(m);
+            }
+        }
+        files.push(pf);
+    }
+
+    let total = all_pages.len();
+    let sample: Vec<PreviewPage> = all_pages.iter().take(10).cloned().collect();
+    let summary = L10n::new("factory.imageSummary")
+        .p("images", images_copied)
+        .p("reused", images_reused)
+        .p("written", written.len())
+        .p("frozen", frozen);
+    Ok(PreviewResult {
+        factory: spec.id.into(),
+        summary,
+        sample,
+        total,
+        written,
+        errors,
+        files,
+    })
+}
+
+/// 圖片的註解頁：`type: note`＋強制註解作為 lead line＋匯入 timeline 錨點
+/// ＋指向影像檔的 wikilink（sync 後 gbrain 以 `image_of` 反向串起）。
+fn build_image_annotation_page(stem: &str, img_name: &str, annotation: &str, date: &str) -> String {
+    let fm = crate::converters::frontmatter::build(&[
+        ("type", "note".to_string()),
+        ("origin", "operoid-factory".to_string()),
+        ("title", crate::converters::frontmatter::yaml_single_quote(stem)),
+        ("tags", "[note, image]".to_string()),
+    ]);
+    let first_line = annotation
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or(stem);
+    format!(
+        "{fm}# {stem}\n\n{annotation}\n\n影像檔：[[media/{img_name}|{img_name}]]\n\n\
+         <!-- timeline -->\n### {date} — 匯入圖片\n\n{first_line}\n"
+    )
+}
+
+fn path_ext(p: &str) -> String {
+    Path::new(p)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// 並發轉換的暫存目錄序號（pid＋nanos 之外的去重——多工同拍建立不碰撞）。
@@ -1051,7 +1224,8 @@ pub async fn run_to_scope_core(
     gate: Gate<'_>,
 ) -> Result<(PreviewResult, crate::knowledge::provision::WriteTarget), AppError> {
     let target = scope_target_checked(store, cfg, kind, circle, level, owner_principal).await?;
-    let preview = run_core_sched(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref()), gate).await?;
+    let preview =
+        run_core_sched(cfg, factory, paths, Some(target.dir.to_string_lossy().as_ref()), gate, None).await?;
     commit_and_sync_scope(cfg, &target).await?;
     Ok((preview, target))
 }
@@ -1139,6 +1313,161 @@ mod write_guard_tests {
             .unwrap();
         assert!(r.is_some());
         assert!(notes.join("meeting").join("m1.md").exists());
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+}
+
+#[cfg(test)]
+mod image_run_tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("operoid-factory-image-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn image_spec() -> &'static FactoryTypeSpec {
+        crate::factory_types::V2_PACK
+            .types
+            .iter()
+            .find(|t| t.id == "image")
+            .expect("v2 pack 應含 image 工廠")
+    }
+
+    fn drop_png(dir: &Path, name: &str, payload: &[u8]) -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, payload).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn image_run_happy_path_copies_image_and_writes_annotation_page() {
+        let notes = tmpdir("happy");
+        let input = drop_png(&notes, "in-shot.png", b"PNG-fake-bytes-89");
+        let notes_s = notes.to_string_lossy().into_owned();
+        let r = run_images(image_spec(), Path::new(&notes_s), &[input], Some(&["產品外觀照".into()]))
+            .unwrap();
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert_eq!(r.total, 1);
+
+        let img = notes.join("media").join("in-shot.png");
+        assert_eq!(std::fs::read(&img).unwrap(), b"PNG-fake-bytes-89");
+        let page = notes.join("media").join("in-shot.md");
+        let md = std::fs::read_to_string(&page).unwrap();
+        assert!(md.contains("origin: operoid-factory"));
+        assert!(md.contains("type: note"));
+        assert!(md.contains("產品外觀照"));
+        assert!(md.contains("[[media/in-shot.png|in-shot.png]]"));
+        assert!(md.contains("<!-- timeline -->"));
+        assert!(md.contains("— 匯入圖片"));
+        assert_eq!(r.written.len(), 1);
+        assert_eq!(r.summary.code, "factory.imageSummary");
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn image_run_requires_annotation() {
+        let notes = tmpdir("noann");
+        let input = drop_png(&notes, "shot.png", b"abc");
+        let notes_s = notes.to_string_lossy().into_owned();
+        let r = run_images(image_spec(), Path::new(&notes_s), &[input], None).unwrap();
+        assert_eq!(r.total, 0);
+        assert!(r.errors.iter().any(|e| e.code == "factory.imageAnnotationRequired"));
+        assert!(!notes.join("media").join("shot.png").exists());
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn image_run_unsupported_ext_rejected() {
+        let notes = tmpdir("badext");
+        let input = drop_png(&notes, "doc.txt", b"plain");
+        let notes_s = notes.to_string_lossy().into_owned();
+        let r =
+            run_images(image_spec(), Path::new(&notes_s), &[input], Some(&["描述".into()])).unwrap();
+        assert!(r.errors.iter().any(|e| e.code == "factory.imageUnsupportedExt"));
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn image_run_name_collision_different_content_gets_suffix() {
+        let notes = tmpdir("collide");
+        std::fs::create_dir_all(notes.join("a")).unwrap();
+        std::fs::create_dir_all(notes.join("b")).unwrap();
+        let a = drop_png(&notes.join("a"), "shot.png", b"content-A");
+        let b = drop_png(&notes.join("b"), "shot.png", b"content-B");
+        let notes_s = notes.to_string_lossy().into_owned();
+        let r = run_images(
+            image_spec(),
+            Path::new(&notes_s),
+            &[a, b],
+            Some(&["第一張".into(), "第二張".into()]),
+        )
+        .unwrap();
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert!(notes.join("media").join("shot.png").exists());
+        assert!(notes.join("media").join("shot-2.png").exists());
+        assert_eq!(std::fs::read(notes.join("media").join("shot.png")).unwrap(), b"content-A");
+        assert_eq!(std::fs::read(notes.join("media").join("shot-2.png")).unwrap(), b"content-B");
+        assert!(notes.join("media").join("shot.md").exists());
+        assert!(notes.join("media").join("shot-2.md").exists());
+        assert_eq!(r.total, 2);
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn image_run_same_content_reused() {
+        let notes = tmpdir("reuse");
+        std::fs::create_dir_all(notes.join("a")).unwrap();
+        std::fs::create_dir_all(notes.join("b")).unwrap();
+        let a = drop_png(&notes.join("a"), "shot.png", b"same-bytes");
+        let b = drop_png(&notes.join("b"), "shot.png", b"same-bytes");
+        let notes_s = notes.to_string_lossy().into_owned();
+        let r = run_images(
+            image_spec(),
+            Path::new(&notes_s),
+            &[a, b],
+            Some(&["同一張".into(), "同一張".into()]),
+        )
+        .unwrap();
+        assert!(r.errors.is_empty());
+        // 同內容 → 第二張重用既有圖（不產生 -2）、頁面照常覆寫
+        assert!(notes.join("media").join("shot.png").exists());
+        assert!(!notes.join("media").join("shot-2.png").exists());
+        assert_eq!(r.total, 2);
+        assert_eq!(r.summary.params.get("reused").cloned().as_deref(), Some("1"));
+        assert_eq!(r.summary.params.get("images").cloned().as_deref(), Some("1"));
+        let _ = std::fs::remove_dir_all(&notes);
+    }
+
+    #[test]
+    fn image_run_frozen_enriched_annotation_page() {
+        let notes = tmpdir("frozen");
+        std::fs::create_dir_all(notes.join("media")).unwrap();
+        std::fs::write(
+            notes.join("media").join("in-shot.md"),
+            "---
+type: note
+origin: operoid-factory
+enriched: true
+---
+# shot
+人工整理內容
+",
+        )
+        .unwrap();
+        let input = drop_png(&notes, "in-shot.png", b"xyz");
+        let notes_s = notes.to_string_lossy().into_owned();
+        let r = run_images(image_spec(), Path::new(&notes_s), &[input], Some(&["描述".into()]))
+            .unwrap();
+        // 圖照拷、頁凍結
+        assert!(notes.join("media").join("in-shot.png").exists());
+        let md = std::fs::read_to_string(notes.join("media").join("in-shot.md")).unwrap();
+        assert!(md.contains("人工整理內容"));
+        assert!(!md.contains("<!-- timeline -->"));
+        assert!(r.written.is_empty()); // 凍結頁不計入 written
+        assert_eq!(r.summary.params.get("frozen").cloned().as_deref(), Some("1"));
         let _ = std::fs::remove_dir_all(&notes);
     }
 }

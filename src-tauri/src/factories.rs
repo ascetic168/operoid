@@ -159,10 +159,11 @@ pub async fn factory_run<R: Runtime>(
     app: AppHandle<R>,
     factory: String,
     paths: Vec<String>,
+    annotations: Option<Vec<String>>,
     target_repo: Option<String>,
 ) -> Result<PreviewResult, AppError> {
     let cfg = app_cfg(&app)?;
-    run_core(&cfg, &factory, &paths, target_repo.as_deref()).await
+    run_core(&cfg, &factory, &paths, annotations.as_deref(), target_repo.as_deref()).await
 }
 
 /// 覆蓋寫入(使用者預覽後編輯過的頁面)＋事件 emit。

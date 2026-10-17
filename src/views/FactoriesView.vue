@@ -294,12 +294,23 @@ async function onAuto(paths: string[]) {
   }
 }
 
+/** 單一工廠群的執行；image 工廠先收逐張註解（強制），取消則整群略過（回 null）。 */
+async function runFactoryGroup(f: string, ps: string[]): Promise<PreviewResult | null> {
+  let anns: string[] | null | undefined;
+  if (f === "image") {
+    anns = await openAnnotationDialog(ps);
+    if (!anns) return null;
+  }
+  return factoryRun(f as Factory, ps, targetRepo.value, anns ?? undefined);
+}
+
 /** 依分組跑各工廠；單群失敗不中斷其餘，轉成含 errors 的結果。 */
 async function runGroups(groups: Record<string, string[]>): Promise<PreviewResult[]> {
   const results: PreviewResult[] = [];
   for (const [f, ps] of Object.entries(groups)) {
     try {
-      results.push(await factoryRun(f as Factory, ps, targetRepo.value));
+      const r = await runFactoryGroup(f, ps);
+      if (r) results.push(r);
     } catch (e) {
       const detail = formatError(e);
       const err = { code: "factory.fileError", params: { file: f, detail } };
@@ -337,7 +348,7 @@ async function confirmClassify() {
   try {
     const groups: Record<string, string[]> = {};
     for (const it of classifyItems.value) (groups[it.chosen] ??= []).push(it.path);
-    const parts = await runGroups(groups);
+    const parts = (await runGroups(groups)).filter(Boolean);
     if (parts.length) {
       preview.value = preview.value ? mergePreview([preview.value, ...parts]) : mergePreview(parts);
     }
@@ -360,13 +371,53 @@ async function doRun(factoryId: string, paths: string[]) {
   selectedSample.value = 0;
   selectedFile.value = null;
   try {
-    preview.value = await factoryRun(factoryId as Factory, paths, targetRepo.value);
+    const anns = factoryId === "image" ? await openAnnotationDialog(paths) : undefined;
+    if (factoryId === "image" && !anns) return; // 取消 → 不跑
+    preview.value = await factoryRun(factoryId as Factory, paths, targetRepo.value, anns ?? undefined);
     syncEditedFromSample();
   } catch (e) {
     errorMsg.value = formatError(e);
   } finally {
     busy.value = null;
   }
+}
+
+// ── 圖片註解對話框（image 工廠強制逐張註解）────────────────────────
+const annOpen = ref(false);
+const annItems = ref<{ path: string; stem: string; text: string }[]>([]);
+const annError = ref("");
+let annResolver: ((anns: string[] | null) => void) | null = null;
+
+function stemOf(p: string): string {
+  const base = p.split(/[\\/]/).pop() ?? p;
+  const i = base.lastIndexOf(".");
+  return i > 0 ? base.slice(0, i) : base;
+}
+
+/** 收集逐張註解；確認回 string[]（與 paths 對齊），取消回 null。 */
+function openAnnotationDialog(paths: string[]): Promise<string[] | null> {
+  annItems.value = paths.map((p) => ({ path: p, stem: stemOf(p), text: "" }));
+  annError.value = "";
+  annOpen.value = true;
+  return new Promise((resolve) => {
+    annResolver = resolve;
+  });
+}
+
+function cancelAnnotations() {
+  annOpen.value = false;
+  annResolver?.(null);
+  annResolver = null;
+}
+
+function confirmAnnotations() {
+  if (annItems.value.some((it) => !it.text.trim())) {
+    annError.value = t("factories.ann.needAll");
+    return;
+  }
+  annOpen.value = false;
+  annResolver?.(annItems.value.map((it) => it.text.trim()));
+  annResolver = null;
 }
 
 function syncEditedFromSample() {
@@ -846,6 +897,44 @@ async function saveEditorAndSync() {
           >
             <component :is="classifyBusy ? Loader2 : CheckCircle2" :size="14" :class="classifyBusy ? 'animate-spin' : ''" />
             {{ $t("factories.classify.confirmRun") }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 圖片註解（image 工廠強制逐張註解） -->
+    <div v-if="annOpen" class="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4" @click.self="cancelAnnotations">
+      <div class="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-card shadow-2xl">
+        <div class="flex items-center justify-between border-b border-border px-5 py-3">
+          <div class="flex items-center gap-2">
+            <span class="font-medium">{{ $t("factories.ann.title") }}</span>
+          </div>
+          <button class="text-muted-foreground hover:text-foreground" @click="cancelAnnotations">
+            <X :size="18" />
+          </button>
+        </div>
+        <div class="border-b border-border px-5 py-2 text-xs text-muted-foreground">{{ $t("factories.ann.hint") }}</div>
+        <div class="flex-1 overflow-auto px-5 py-3">
+          <div v-for="(it, i) in annItems" :key="i" class="mb-3 rounded-md border border-border p-2">
+            <span class="mb-1 block truncate font-mono text-xs">{{ it.path }}</span>
+            <textarea
+              v-model="it.text"
+              rows="2"
+              class="w-full rounded border border-border bg-background px-2 py-1 text-xs"
+              :placeholder="$t('factories.ann.placeholder')"
+            ></textarea>
+          </div>
+          <div v-if="annError" class="px-1 text-xs text-destructive">{{ annError }}</div>
+        </div>
+        <div class="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button class="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent" @click="cancelAnnotations">
+            {{ $t("common.close") }}
+          </button>
+          <button
+            class="flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:opacity-90"
+            @click="confirmAnnotations"
+          >
+            {{ $t("factories.ann.confirm") }}
           </button>
         </div>
       </div>

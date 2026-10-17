@@ -194,6 +194,11 @@
     "editorEnriching": "LLM 補全中…",
     "editorSaveAndSync": "儲存並 Sync",
     "defs": {
+      "image": {
+        "title": "圖片",
+        "desc": "圖片 → media/＋強制註解頁；sync 時 gbrain 自動多模態嵌入與 image_of 連結",
+        "target": "media"
+      },
       "people": {
         "title": "people 工廠",
         "accept": "CSV（Google Contacts）",
@@ -294,6 +299,13 @@
         "noGraph": "不進圖譜",
         "noGraphHint": "note 走 gbrain capture 當速記，不在知識圖譜的連結白名單（DIR_PATTERN）內，故不與其他頁成邊。"
       }
+    },
+    "ann": {
+      "title": "圖片需要註解",
+      "hint": "每張圖會落 media/ 並生成同名註解頁；描述將成為頁面內容與匯入 timeline。sync 時 gbrain 會做多模態嵌入與 image_of 連結。",
+      "placeholder": "這張圖是什麼？（例：產品外觀照、白板照片、客戶名片…）",
+      "needAll": "每張圖都要填註解",
+      "confirm": "加入註解並轉換"
     },
     "classify": {
       "confirmTitle": "確認檔案分類",
@@ -607,6 +619,13 @@
     "fileError": "{file}：{detail}",
     "peopleSummary": "CSV 列：{rows}　合併群組：{merged}　已寫入 people 頁：{written}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
     "writtenN": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
+    "writtenN": "已寫入 {factory} 頁：{n}　凍結未覆寫：{frozen}　丟棄非法日期事件：{dropped}",
+    "imageSummary": "已複製 {images} 張圖（重用 {reused}）　寫入 {written} 個註解頁　凍結：{frozen}",
+    "imageAnnotationRequired": "{file}：缺少註解——圖片必須填寫描述才會入庫",
+    "imageUnsupportedExt": "{file}：不支援的圖片格式（.{ext}）",
+    "imageEmpty": "{file}：檔案是空的",
+    "imageTooLarge": "{file}：超過 {max} 上限",
+    "imageScopedUnsupported": "image 工廠不支援供給目標（scope）寫入",
     "inboxCaptured": "已 capture {n} 筆到 inbox/",
     "unknown": "未知工廠：{factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",

@@ -194,6 +194,11 @@
     "editorEnriching": "LLM 补全中…",
     "editorSaveAndSync": "保存并 Sync",
     "defs": {
+      "image": {
+        "title": "图片",
+        "desc": "图片 → media/＋强制注解页；sync 时 gbrain 自动多模态嵌入与 image_of 连结",
+        "target": "media"
+      },
       "people": {
         "title": "people 工厂",
         "accept": "CSV（Google 通讯录）",
@@ -294,6 +299,13 @@
         "noGraph": "不进图谱",
         "noGraphHint": "note 走 gbrain capture 当速记，不在知识图谱的链接白名单（DIR_PATTERN）内，故不与其他页成边。"
       }
+    },
+    "ann": {
+      "title": "图片需要注解",
+      "hint": "每张图会落 media/ 并生成同名注解页；描述将成为页面内容与导入 timeline。sync 时 gbrain 会做多模态嵌入与 image_of 连结。",
+      "placeholder": "这张图是什么？（例：产品外观照、白板照片、客户名片…）",
+      "needAll": "每张图都要填注解",
+      "confirm": "加入注解并转换"
     },
     "classify": {
       "confirmTitle": "确认文件分类",
@@ -607,6 +619,13 @@
     "fileError": "{file}：{detail}",
     "peopleSummary": "CSV 列：{rows}　合并群组：{merged}　已写入 people 页：{written}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
     "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
+    "writtenN": "已写入 {factory} 页：{n}　冻结未覆写：{frozen}　丢弃非法日期事件：{dropped}",
+    "imageSummary": "已复制 {images} 张图（重用 {reused}）　写入 {written} 个注解页　冻结：{frozen}",
+    "imageAnnotationRequired": "{file}：缺少注解——图片必须填写描述才会入库",
+    "imageUnsupportedExt": "{file}：不支持的图片格式（.{ext}）",
+    "imageEmpty": "{file}：文件是空的",
+    "imageTooLarge": "{file}：超过 {max} 上限",
+    "imageScopedUnsupported": "image 工厂不支持供给目标（scope）写入",
     "inboxCaptured": "已 capture {n} 笔到 inbox/",
     "unknown": "未知工厂：{factory}",
     "companiesRebuilt": "people={people}　distinct companies={distinct}　links={links}　frozen(enriched)={frozen}",

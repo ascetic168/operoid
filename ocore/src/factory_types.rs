@@ -24,6 +24,8 @@ pub enum Pipeline {
     People,
     /// txt/md/pdf → LLM 結構化
     Textual,
+    /// 圖片 → 落 media/＋強制註解頁（無 LLM；多模態向量由 gbrain sync 產生）
+    Image,
     /// gbrain capture（不寫 notes repo）
     Capture,
 }
@@ -34,6 +36,7 @@ impl Pipeline {
         match self {
             Pipeline::People => &["csv", "txt", "md"],
             Pipeline::Textual => &["txt", "md", "pdf"],
+            Pipeline::Image => &["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "avif"],
             Pipeline::Capture => &["txt", "md"],
         }
     }
@@ -149,6 +152,16 @@ pub static V2_PACK: Pack = Pack {
             synonyms: &["media", "媒體", "媒体"],
             heuristic_kind: "",
             zh: "媒體報導/報導文章/新聞剪報",
+        },
+        FactoryTypeSpec {
+            id: "image",
+            dir: "media",
+            page_type: "note",
+            default_tags: &["note", "image"],
+            pipeline: Pipeline::Image,
+            synonyms: &["image", "圖片", "图片", "照片", "photo"],
+            heuristic_kind: "",
+            zh: "圖片/照片/截圖",
         },
         FactoryTypeSpec {
             id: "tweet",
@@ -406,11 +419,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v2_pack_has_15_types() {
-        assert_eq!(V2_PACK.types.len(), 15);
+    fn v2_pack_has_16_types() {
+        assert_eq!(V2_PACK.types.len(), 16);
         assert_eq!(V2_PACK.catchall_id(), "note");
         assert_eq!(LEGACY_PACK.types.len(), 6);
         assert_eq!(LEGACY_PACK.catchall_id(), "inbox");
+    }
+
+    #[test]
+    fn image_factory_spec() {
+        let img = V2_PACK.types.iter().find(|t| t.id == "image").expect("image 型別");
+        assert_eq!(img.pipeline, Pipeline::Image);
+        assert!(img.pipeline.extensions().contains(&"png"));
+        assert!(img.pipeline.extensions().contains(&"heic"));
+        assert_eq!(V2_PACK.id_of_kind("image"), None); // heuristic 不路由圖片（副檔名分流）
     }
 
     #[test]

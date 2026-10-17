@@ -390,15 +390,17 @@ export interface FactoryTypesResult {
 export const factoryTypes = (): Promise<FactoryTypesResult> =>
   agentFetch<FactoryTypesResult>("/api/factories/types");
 
-/** 轉換 + 立即寫入 + 回傳預覽。target_repo=來源 repo 路徑（未給則用 app notes_repo_path）。 */
+/** 轉換 + 立即寫入 + 回傳預覽。target_repo=來源 repo 路徑（未給則用 app notes_repo_path）。
+ *  annotations：image 工廠的逐檔註解（與 paths 平行、強制非空）；其餘工廠忽略。 */
 export const factoryRun = (
   factory: Factory,
   paths: string[],
   targetRepo: string | null,
+  annotations?: string[],
 ): Promise<PreviewResult> =>
   agentFetch<PreviewResult>("/api/factories/run", {
     method: "POST",
-    body: { factory, paths, target_repo: targetRepo },
+    body: { factory, paths, target_repo: targetRepo, annotations },
   });
 
 /** `factory_open_dir` 回傳：以什麼方式開啟了目錄。 */
