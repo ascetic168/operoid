@@ -1,35 +1,32 @@
 //! PDF 知識入庫閉環——把 K1～K4 的管線接成產品路徑：
-//! `PDF →（K1 轉換）→ notes 入聯邦 repo → git commit → gbrain sync --no-extract
-//!  → sidecar 合併（冪等）→ 向量回填（best-effort）`。
+//! `PDF →（K1 轉換）→ notes 入聯邦 repo（圖檔＋註解頁發布）→ git commit
+//!  → gbrain sync --no-extract（圖片經 gbrain 原生 image import 取得多模態
+//!  向量與 image_of 連結）`。
 //!
 //! 冪等性（重複入庫安全）：
 //! - notes：同檔名覆寫（K1 產出檔名確定：`sNN.md`／`figN-pP.md`）。
-//! - sidecar：**doc 級重建**——先刪目標庫中同 `doc_id` 的列再插入，插入時以
-//!   `image_md5` 從舊列**攜帶既有向量**（重轉換不重嵌；升級 mmproj 只補新列）。
+//! - 圖檔發布：`影像檔：`／`原論文 PDF：` 行與匯入錨點冪等（已存在不重寫）；
+//!   同名圖檔已存在則略過。
 //!
-//! 降級紀律（同 K4）：sync 失敗／嵌入不可達都只記警告，不讓入庫失敗——
-//! notes 與 sidecar 資料已落盤，同步可事後補跑。
+//! 降級紀律：sync 失敗只記警告不讓入庫失敗——資料已落盤，同步事後可補跑
+//! （圖檔發布後的第二次 sync 為 image_of 連結保險，冪等 best-effort）。
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use super::figures::{self, Sidecar, SidecarMode};
+use super::figures::Sidecar;
 use crate::converters::mineru::{self, ConvertConfig};
 
 /// 入庫報告。
 #[derive(Debug, Clone, Serialize)]
 pub struct IngestReport {
     pub doc_id: String,
-    /// 拷貝進 notes repo 的筆記檔數。
+    /// 拷貝進 notes repo 的筆記檔數（含發布的圖檔）。
     pub notes_written: usize,
-    /// 合併後該文件在生產 sidecar 的列數。
-    pub figure_rows: usize,
-    /// 攜帶既有向量的列數（重複入庫時 >0＝冪等生效）。
-    pub vectors_carried: usize,
-    /// 本輪新嵌入的列數（回填 best-effort；失敗記 warnings）。
-    pub vectors_embedded: usize,
+    /// 本輪發布的圖檔數（gbrain 原生 image import 軌道）。
+    pub figures_published: usize,
     /// gbrain sync 是否成功（false＝notes 已入庫、同步待事後補跑）。
     pub synced: bool,
     pub warnings: Vec<String>,
@@ -104,20 +101,17 @@ pub fn default_figures_db(notes_repo: &Path) -> std::path::PathBuf {
 }
 
 /// PDF → 知識庫入庫閉環：
-/// `PDF →（K1 轉換）→ notes 拷貝進聯邦 repo → sidecar doc 級合併 → git commit
-///  → gbrain sync --no-extract → 向量回填（best-effort）`。
+/// `PDF →（K1 轉換）→ notes 拷貝進聯邦 repo（圖檔＋註解頁發布）→ git commit
+///  → gbrain sync --no-extract（圖檔發布後補第二次 sync＝image_of 保險）`。
 ///
-/// 冪等：重複入庫安全（notes 覆寫、sidecar doc 級重建＋md5 攜帶向量）。
-/// 降級：sync 失敗／嵌入不可達只記警告不讓入庫失敗——資料已落盤，同步事後可補。
+/// 冪等：重複入庫安全（notes 覆寫、發布行/錨點/圖檔冪等）。
+/// 降級：sync 失敗只記警告不讓入庫失敗——資料已落盤，同步事後可補。
 ///
-/// - `figures_db`：生產 sidecar 路徑（不存在則建立）。
 /// - `notes_repo`：既有工廠 notes repo（`source_id` 須已 `gbrain sources add`
 ///   指向此 repo——入庫只 commit＋sync，不代註冊）。
-#[allow(clippy::too_many_arguments)]
 pub async fn ingest_pdf(
     pdf: &Path,
     cfg: &ConvertConfig,
-    figures_db: &Path,
     notes_repo: &Path,
     source_id: &str,
     gbrain_exe: &str,
@@ -138,10 +132,12 @@ pub async fn ingest_pdf(
         .context("K1 轉換失敗")?;
     let doc_id = outcome.report.doc_id.clone();
 
-    // 2) notes 拷貝進聯邦 repo（冪等覆寫）。
+    // 2) notes 拷貝進聯邦 repo（冪等覆寫）＋圖檔發布（gbrain 原生 image import）。
     let src_notes = work.join("notes").join(&doc_id);
     let dst_notes = notes_repo.join(&doc_id);
     let mut notes_written = 0usize;
+    let mut figures_published = 0usize;
+    let mut publish_warnings: Vec<String> = Vec::new();
     if src_notes.exists() {
         std::fs::create_dir_all(&dst_notes)?;
         for entry in std::fs::read_dir(&src_notes)?.flatten() {
@@ -152,28 +148,18 @@ pub async fn ingest_pdf(
                 notes_written += 1;
             }
         }
+        let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let (_enriched, imgs, errors) =
+            crate::factories::publish_pdf_figures(&dst_notes, &outcome.figure_rows, &pdf.to_string_lossy(), &today);
+        figures_published = imgs.len();
+        notes_written += imgs.len();
+        for e in errors {
+            publish_warnings.push(format!("圖檔發布失敗（略過）：{}：{}", e.file, e.detail));
+        }
     }
 
-    // 3) sidecar 合併（doc 級冪等＋md5 攜帶向量）。
-    if let Some(parent) = figures_db.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let work_db = work.join("figures.sqlite");
-    let (figure_rows, vectors_carried) = if work_db.exists() {
-        merge_sidecar(&work_db, figures_db, &doc_id, source_id)?
-    } else {
-        (0, 0)
-    };
-
-    // 4) git commit＋gbrain sync --no-extract（best-effort——失敗記警告）。
-    let mut warnings = Vec::new();
-    // K5/P1.2：doc 層來源 PDF 歸檔（回覆「來源文件」開檔連結用；失敗記警告）。
-    if let Err(e) = (|| {
-        let sc = Sidecar::open(figures_db)?;
-        sc.tag_doc_source(&doc_id, &pdf.to_string_lossy())
-    })() {
-        warnings.push(format!("來源 PDF 歸檔失敗（略過）：{e}"));
-    }
+    // 3) git commit＋gbrain sync --no-extract（best-effort——失敗記警告）。
+    let mut warnings = publish_warnings;
     let mut synced = false;
     let env = crate::proc::env_for_brain(gbrain_home);
     let sink = crate::gbrain_cli::noop_sink();
@@ -197,6 +183,15 @@ pub async fn ingest_pdf(
         )),
         Err(e) => warnings.push(format!("gbrain sync spawn 失敗：{e}")),
     }
+    if synced && figures_published > 0 {
+        // image_of 保險：首輪 sync 若「圖先於註解頁」處理會靜默跳過連結
+        // （TODO 項目 3）——此時 .md 已在磁碟，補一輪冪等 sync 完成連結。
+        if let Ok((code, _, err)) = crate::gbrain_cli::run_capture(gbrain_exe, &sync_args, &env).await {
+            if code != 0 {
+                warnings.push(format!("gbrain sync（image_of 保險輪）失敗（exit {code}）：{err}"));
+            }
+        }
+    }
     if synced {
         // sync 會defer大批次嵌入——embed --stale 冪等補齊（gbrain 文字面的向量）。
         if let Ok((code, _, err)) = crate::gbrain_cli::run_capture(
@@ -212,36 +207,12 @@ pub async fn ingest_pdf(
         }
     }
 
-    // 5) 向量回填（best-effort；失敗只記警告——事後重跑即可）。
-    let stats = match figures::embed_pending(
-        figures_db,
-        figures::DEFAULT_EMBEDDING_BASE,
-        None,
-        SidecarMode::Multimodal,
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            warnings.push(format!("向量回填失敗（略過；事後重跑 embed_pending 即可）：{e}"));
-            figures::EmbedStats {
-                mode: SidecarMode::Multimodal,
-                embedded: 0,
-                deduped: 0,
-                skipped: 0,
-                warnings: vec![e.to_string()],
-            }
-        }
-    };
-
     std::fs::remove_dir_all(&work).ok();
 
     Ok(IngestReport {
         doc_id,
         notes_written,
-        figure_rows,
-        vectors_carried,
-        vectors_embedded: stats.embedded + stats.deduped,
+        figures_published,
         synced,
         warnings,
     })

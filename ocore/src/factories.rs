@@ -344,15 +344,16 @@ fn merge_previews(mut results: Vec<PreviewResult>) -> PreviewResult {
     first
 }
 
-/// PDF 知識管線（K1～K5 整合）：每個 PDF 經複雜度分流轉換為知識筆記（章節切塊
-/// ＋圖片筆記），立即寫入 notes repo（同 textual 語意），sidecar doc 級合併入
-/// 生產庫（`figures_db_path` 或 notes repo 伴隨檔）、向量回填 best-effort。
-/// 來源歸檔：以 notes repo 比對 `sources list` 解析 source id（K4 授權鐵律；
-/// 解析失敗記警告——圖列暫不可見，事後補 tag 即可）。
+/// PDF 知識管線：每個 PDF 經複雜度分流轉換為知識筆記（章節切塊＋圖片筆記），
+/// 寫入 notes repo（同 textual 語意）。圖片走 **gbrain 原生 image import 軌道**
+/// （2026-10-17 試點裁決，TODO 項目 3）：每圖發布同名圖檔＋補強註解頁至 doc
+/// 目錄（`figN-pP.jpg`／`figN-pP.md`，同目錄同名觸發 sync 的 `image_of` 自動
+/// 連結與多模態向量），不再寫 figures sidecar——舊庫由查詢端 K4 融合續讀
+/// （`figures_db_path` 接線不變），退役遷移見 `knowledge::figures_migrate`。
 ///
 /// 多工切分：**轉換**（MinerU/快速路徑子行程——重活）逐檔並發（本地上限或公平
-/// 閘門）；**sidecar 合併／向量回填／notes 複製**共享 sqlite 與覆寫語意，由
-/// 轉換完成後在父端按輸入序循序做（便宜步驟，序列化換正確性）。
+/// 閘門）；**圖檔發布／notes 複製**共享覆寫語意，由轉換完成後在父端按輸入序
+/// 循序做（便宜步驟，序列化換正確性）。
 async fn run_pdf_knowledge(
     cfg: &AppConfig,
     notes: &Path,
@@ -360,28 +361,8 @@ async fn run_pdf_knowledge(
     gate: Gate<'_>,
     max: usize,
 ) -> Result<PreviewResult, AppError> {
-    use crate::knowledge::figures::{self, Sidecar};
-    use crate::knowledge::ingest::{default_figures_db, resolve_source_id};
-
     let conv = cfg.convert_config();
     let conv = &conv; // 閉包以借用共享（async move 不得搬走——Fn 多次呼叫）
-    let figures_db =
-        cfg.figures_db_path.clone().unwrap_or_else(|| {
-            default_figures_db(notes).to_string_lossy().into_owned()
-        });
-    if let Some(parent) = Path::new(&figures_db).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let production = Sidecar::open(&figures_db)
-        .map_err(|e| AppError::new("factory.pdfSidecarFail").p("detail", e.to_string()))?;
-
-    // 授權歸檔：notes repo → source id（best-effort；失敗＝圖列暫不可見＋警告）。
-    let source_id = resolve_source_id(&cfg.gbrain_exe_path, cfg.active_env_home(), notes)
-        .await
-        .ok();
-    if source_id.is_none() {
-        // 不阻擋：筆記照寫（gbrain 文字路可檢），圖列待歸檔（事後補 tag）。
-    }
 
     // ── 階段一：逐檔並發轉換（重活；暫存目錄保留給階段二合併用）──
     let converted: Vec<(String, PathBuf, Result<crate::converters::mineru::ConversionOutcome, L10n>)> =
@@ -431,31 +412,6 @@ async fn run_pdf_knowledge(
         };
         let doc_id = outcome.report.doc_id.clone();
 
-        // sidecar doc 級合併（冪等、攜帶向量）＋來源歸檔＋向量回填 best-effort。
-        let work_db = work.join("figures.sqlite");
-        if work_db.exists() {
-            if let Err(e) = production.merge_from(&work_db, &doc_id, source_id.as_deref().unwrap_or("")) {
-                let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
-                pf.ok = false;
-                pf.message = Some(m.clone());
-                errors.push(m);
-            }
-            // K5/P1.2：doc 層來源 PDF 歸檔（回覆「來源文件」開檔連結用；best-effort）。
-            if let Err(e) = production.tag_doc_source(&doc_id, &p) {
-                let m = L10n::new("factory.fileError").p("file", p.clone()).p("detail", e.to_string());
-                errors.push(m);
-            }
-            // 回填（Multimodal；無 mmproj 時退純文字——TextOnly 重跑即升級）。
-            // embed_pending 只嵌 vec IS NULL 的列：攜帶向量不重嵌。
-            let _ = figures::embed_pending(
-                Path::new(&figures_db),
-                figures::DEFAULT_EMBEDDING_BASE,
-                None,
-                crate::knowledge::figures::SidecarMode::Multimodal,
-            )
-            .await;
-        }
-
         // 筆記寫入 notes repo（doc 子目錄；冪等覆寫）。
         let src_notes = work.join("notes").join(&doc_id);
         let dst_notes = notes.join(&doc_id);
@@ -480,6 +436,19 @@ async fn run_pdf_knowledge(
                     }
                 }
             }
+            // 圖檔發布（gbrain 原生 image import）：註解頁補強＋同名圖檔——
+            // 先 .md 後 .jpg（image_of 順序鐵律）。
+            let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+            let (_enriched, imgs, pub_errors) =
+                publish_pdf_figures(&dst_notes, &outcome.figure_rows, &p, &today);
+            written.extend(
+                imgs.iter()
+                    .map(|ip| ip.to_string_lossy().into_owned()),
+            );
+            total_notes += imgs.len();
+            errors.extend(pub_errors.into_iter().map(|e| {
+                L10n::new("factory.fileError").p("file", e.file).p("detail", e.detail)
+            }));
         }
         // 預覽頁：每篇筆記一頁（doc 子目錄；前端可編輯後覆寫）。
         for entry in std::fs::read_dir(&dst_notes).into_iter().flatten().flatten() {
@@ -818,6 +787,138 @@ fn path_ext(p: &str) -> String {
         .and_then(|e| e.to_str())
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default()
+}
+
+/// 圖檔發布的檔案層級錯誤（呼叫端包 L10n 或 warnings——工廠與 ingest 兩處消費）。
+#[derive(Debug)]
+pub(crate) struct FigurePublishError {
+    pub file: String,
+    pub detail: String,
+}
+
+/// 頁面追加一行匯入錨點（冪等增量版——與 `merge_import_anchor` 不同，本函式
+/// 用於「頁面已存在且可能已含錨點」的補強：既有錨點原位保留，新錨插在
+/// `<!-- timeline -->` 標記之後（新在上）；無標記則頁尾補 sentinel＋錨點）。
+fn append_anchor_line(md: &str, anchor_line: &str) -> String {
+    match md.find("<!-- timeline -->") {
+        Some(idx) => {
+            let after = idx + "<!-- timeline -->".len();
+            let (head, tail) = md.split_at(after);
+            let tail_trimmed = tail.trim_start_matches(['\r', '\n']);
+            format!("{head}\n\n{anchor_line}\n\n{tail_trimmed}")
+        }
+        None => {
+            let trimmed = md.trim_end();
+            format!("{trimmed}\n\n<!-- timeline -->\n\n{anchor_line}\n")
+        }
+    }
+}
+
+/// PDF 圖檔發布（gbrain 原生 image import 軌道；TODO 項目 3）。對每個圖列：
+/// 1. 補強已複製的 `figN-pP.md`：`影像檔：` wikilink＋`原論文 PDF：` 出處行
+///    （保留原始 PDF 的授權／來源語意）＋匯入 timeline 錨點（冪等——既有錨點
+///    首行相同即不再插入；`影像檔：`／`原論文 PDF：` 行已存在即不重寫）。
+/// 2. MinerU 裁圖複製為同目錄同名 `figN-pP.<ext>`（內容已存在則略過——避免
+///    mtime 攪動觸發無謂 resync）。**順序鐵律：先 .md 後 .jpg**——gbrain
+///    `image_of` 在「圖先於註解頁」時靜默跳過（TODO 項目 3）。
+///
+/// caption-only 列（`image_path` 為 None）只補錨點。回傳（補強頁數、寫入的
+/// 圖檔路徑、錯誤）。
+pub(crate) fn publish_pdf_figures(
+    doc_dir: &Path,
+    rows: &[crate::converters::mineru::FigureRow],
+    pdf_path: &str,
+    date: &str,
+) -> (usize, Vec<std::path::PathBuf>, Vec<FigurePublishError>) {
+    let doc_id = doc_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut enriched = 0usize;
+    let mut images: Vec<std::path::PathBuf> = Vec::new();
+    let mut errors: Vec<FigurePublishError> = Vec::new();
+    for row in rows {
+        let Some(fig) = row.figure_no else { continue };
+        let stem = format!("fig{fig}-p{}", row.page);
+        let md_path = doc_dir.join(format!("{stem}.md"));
+        let md = match std::fs::read_to_string(&md_path) {
+            Ok(m) => m,
+            Err(e) => {
+                errors.push(FigurePublishError {
+                    file: md_path.to_string_lossy().into_owned(),
+                    detail: format!("圖片筆記不存在（轉換與複製不一致）：{e}"),
+                });
+                continue;
+            }
+        };
+
+        // 1) 註解頁補強（冪等；additive——不動既有正文與錨點）。
+        let img_src = row
+            .image_path
+            .as_deref()
+            .filter(|p| Path::new(p).is_file());
+        let img_ext = img_src.and_then(|p| Path::new(p).extension()).map(|e| {
+            e.to_str().unwrap_or_default().to_ascii_lowercase()
+        });
+        let img_name =
+            img_ext.clone().map(|ext| format!("{stem}.{ext}"));
+        let mut next = md.clone();
+        if let Some(name) = &img_name {
+            if !next.contains("影像檔：") {
+                let trimmed = next.trim_end();
+                next = format!(
+                    "{trimmed}\n\n影像檔：[[{doc_id}/{name}|{name}]]\n原論文 PDF：{pdf_path}\n"
+                );
+            }
+        }
+        let cap_head: String = {
+            let mut s: String = row.caption.chars().take(60).collect();
+            if row.caption.chars().count() > 60 {
+                s.push('…');
+            }
+            s
+        };
+        let anchor_line = format!(
+            "### {date} — 匯入：Figure {fig}（p{}）：{cap_head}",
+            row.page
+        );
+        let next = if next.contains(&anchor_line) {
+            next
+        } else {
+            append_anchor_line(&next, &anchor_line)
+        };
+        if next != md {
+            if let Err(e) = std::fs::write(&md_path, &next) {
+                errors.push(FigurePublishError {
+                    file: md_path.to_string_lossy().into_owned(),
+                    detail: e.to_string(),
+                });
+                continue;
+            }
+            enriched += 1;
+        }
+
+        // 2) 同名圖檔（在 .md 之後落地——image_of 順序鐵律）。
+        if let (Some(src), Some(name)) = (img_src, &img_name) {
+            let dst = doc_dir.join(name);
+            if dst.exists() {
+                continue;
+            }
+            match std::fs::copy(src, &dst) {
+                Ok(_) => images.push(dst),
+                Err(e) => errors.push(FigurePublishError {
+                    file: dst.to_string_lossy().into_owned(),
+                    detail: e.to_string(),
+                }),
+            }
+        } else if row.image_path.is_some() && img_src.is_none() {
+            errors.push(FigurePublishError {
+                file: row.image_path.clone().unwrap_or_default(),
+                detail: "MinerU 裁圖不存在（工作目錄不完整）——僅發布註解頁".into(),
+            });
+        }
+    }
+    (enriched, images, errors)
 }
 
 /// 並發轉換的暫存目錄序號（pid＋nanos 之外的去重——多工同拍建立不碰撞）。
@@ -1737,5 +1838,121 @@ mod enrich_helper_tests {
     fn frontmatter_title_of_reads_quoted_value() {
         let md = "---\ntype: person\ntitle: '王小明'\n---\n";
         assert_eq!(frontmatter_title_of(md).unwrap(), "王小明");
+    }
+}
+
+#[cfg(test)]
+mod pdf_publish_tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "operoid-factory-publish-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 轉換器風格的圖片筆記（frontmatter＋`title: | text:` 正文）。
+    fn drop_fig_note(dir: &Path, stem: &str) {
+        std::fs::write(
+            dir.join(format!("{stem}.md")),
+            format!(
+                "---\norigin: operoid-employee\nproduced_by: mineru-converter\ncreated_at: 2026-10-17\ntitle: 'Test Paper · Figure 1 (p2)'\n---\n\ntitle: Test Paper | text: [Figure 1 in Section II, page 2] Figure 1. The system architecture of the two-chip IVR.\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn row(fig: u32, page: i64, image_path: Option<String>) -> crate::converters::mineru::FigureRow {
+        crate::converters::mineru::FigureRow {
+            doc_id: "doc2026".into(),
+            page,
+            image_path,
+            caption: "The system architecture of the two-chip IVR solution".into(),
+            section: "II".into(),
+            figure_no: Some(fig),
+            image_md5: None,
+            source_id: None,
+        }
+    }
+
+    #[test]
+    fn publish_enriches_note_then_copies_image_and_is_idempotent() {
+        let dir = tmpdir("happy");
+        let doc_dir = dir.join("doc2026");
+        std::fs::create_dir_all(&doc_dir).unwrap();
+        drop_fig_note(&doc_dir, "fig1-p2");
+        let work_img = dir.join("page_2_image_1.jpg");
+        std::fs::write(&work_img, b"fake-jpeg-bytes").unwrap();
+
+        let rows = vec![row(1, 2, Some(work_img.to_string_lossy().into_owned()))];
+        let (enriched, imgs, errors) =
+            publish_pdf_figures(&doc_dir, &rows, r"C:\papers\test.pdf", "2026-10-17");
+        assert!(errors.is_empty(), "errors: {errors:?}");
+        assert_eq!(enriched, 1);
+        assert_eq!(imgs, vec![doc_dir.join("fig1-p2.jpg")]);
+        assert!(doc_dir.join("fig1-p2.jpg").exists());
+
+        let md = std::fs::read_to_string(doc_dir.join("fig1-p2.md")).unwrap();
+        assert!(md.contains("影像檔：[[doc2026/fig1-p2.jpg|fig1-p2.jpg]]"));
+        assert!(md.contains(r"原論文 PDF：C:\papers\test.pdf"));
+        assert!(md.contains("### 2026-10-17 — 匯入：Figure 1（p2）："));
+        assert!(md.contains("The system architecture"), "正文保留");
+
+        // 冪等：再跑一次——錨點首行相同去重、行不重寫、圖不重複製。
+        let before = md.clone();
+        let (enriched2, imgs2, errors2) =
+            publish_pdf_figures(&doc_dir, &rows, r"C:\papers\test.pdf", "2026-10-17");
+        assert!(errors2.is_empty());
+        assert_eq!(enriched2, 0, "第二次不應有變更");
+        assert!(imgs2.is_empty(), "同名圖檔已存在不重寫");
+        let after = std::fs::read_to_string(doc_dir.join("fig1-p2.md")).unwrap();
+        assert_eq!(before, after);
+        assert_eq!(
+            after.matches("影像檔：").count(),
+            1,
+            "影像檔行不重複"
+        );
+        assert_eq!(after.matches("— 匯入：Figure 1").count(), 1, "錨點不重複");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_caption_only_gets_anchor_without_image_line() {
+        let dir = tmpdir("caption-only");
+        let doc_dir = dir.join("doc2026");
+        std::fs::create_dir_all(&doc_dir).unwrap();
+        drop_fig_note(&doc_dir, "fig3-p3");
+        let rows = vec![row(3, 3, None)];
+        let (_enriched, imgs, errors) =
+            publish_pdf_figures(&doc_dir, &rows, r"C:\papers\test.pdf", "2026-10-17");
+        assert!(errors.is_empty());
+        assert!(imgs.is_empty(), "caption-only 不發布圖檔");
+        let md = std::fs::read_to_string(doc_dir.join("fig3-p3.md")).unwrap();
+        assert!(md.contains("— 匯入：Figure 3（p3）："));
+        assert!(!md.contains("影像檔："), "無圖檔不加影像行");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_missing_note_and_missing_crop_report_errors() {
+        let dir = tmpdir("errors");
+        let doc_dir = dir.join("doc2026");
+        std::fs::create_dir_all(&doc_dir).unwrap();
+        // fig5：md 存在但裁圖遺失；fig6：md 缺失。
+        drop_fig_note(&doc_dir, "fig5-p4");
+        let rows = vec![
+            row(5, 4, Some(dir.join("gone.jpg").to_string_lossy().into_owned())),
+            row(6, 5, Some(dir.join("x.jpg").to_string_lossy().into_owned())),
+        ];
+        let (_enriched, imgs, errors) =
+            publish_pdf_figures(&doc_dir, &rows, r"C:\papers\test.pdf", "2026-10-17");
+        assert!(imgs.is_empty());
+        assert_eq!(errors.len(), 2, "裁圖遺失＋筆記缺失各一：{errors:?}");
+        assert!(errors.iter().any(|e| e.file.ends_with("fig6-p5.md")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

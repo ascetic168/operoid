@@ -1785,8 +1785,6 @@ struct IngestPdfBody {
     pdf: String,
     /// 授權歸檔 source id；缺省自動以 notes repo 比對 `sources list`。
     source_id: Option<String>,
-    /// 生產 sidecar 路徑；缺省 cfg.figures_db_path，再缺省 notes repo 伴隨檔。
-    figures_db: Option<String>,
 }
 
 /// `POST /api/knowledge/ingest-pdf`——PDF → 知識庫入庫（非同步；MinerU 解析為
@@ -1831,14 +1829,6 @@ async fn api_knowledge_ingest_pdf(
             }
         },
     };
-    let figures_db = body
-        .figures_db
-        .clone()
-        .or_else(|| cfg.figures_db_path.clone())
-        .unwrap_or_else(|| {
-            ocore::knowledge::ingest::default_figures_db(&notes).to_string_lossy().into_owned()
-        });
-
     let id = format!(
         "ing-{}-{}",
         std::process::id(),
@@ -1860,7 +1850,6 @@ async fn api_knowledge_ingest_pdf(
         let result = ocore::knowledge::ingest::ingest_pdf(
             &pdf,
             &convert_cfg,
-            std::path::Path::new(&figures_db),
             std::path::Path::new(&notes),
             &source_id,
             &gbrain_exe,
@@ -1876,9 +1865,7 @@ async fn api_knowledge_ingest_pdf(
                     "report": {
                         "doc_id": r.doc_id,
                         "notes_written": r.notes_written,
-                        "figure_rows": r.figure_rows,
-                        "vectors_carried": r.vectors_carried,
-                        "vectors_embedded": r.vectors_embedded,
+                        "figures_published": r.figures_published,
                         "synced": r.synced,
                         "warnings": r.warnings,
                     }

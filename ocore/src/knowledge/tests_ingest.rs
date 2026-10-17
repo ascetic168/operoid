@@ -2,14 +2,16 @@
 //!
 //! 跑法：`cargo test -p ocore real_ingest -- --ignored --nocapture`
 //!
-//! **生產閉環驗證**：mueller2016.pdf → ingest_pdf（K1 轉換→notes 入 repo→git→
-//! sync→sidecar 合併→向量回填）→ **二次入庫冪等**（列數不變、向量攜帶、零重嵌）。
+//! **生產閉環驗證**：mueller2016.pdf → ingest_pdf（K1 轉換→notes 入 repo→
+//! 圖檔＋註解頁發布→git→sync）→ **二次入庫冪等**（筆記覆寫、圖檔不重寫、
+//! 錨點不重複）。圖片的 gbrain 原生 import（多模態向量＋image_of）已在
+//! demo 腦試點驗證（TODO 項目 3、`tests_figures_lane`）——臨時腦未配置
+//! multimodal，sync 會跳過圖片，故本測試只驗證檔案面與文字面。
 
 use crate::converters::mineru::ConvertConfig;
 use crate::converters::mineru::router::ConvertPolicy;
 use crate::knowledge::ingest::ingest_pdf;
 use crate::gbrain_cli::run_capture;
-use crate::knowledge::figures::Sidecar;
 use std::path::Path;
 
 const PDF: &str = r"C:\Users\charl\Documents\python\pdf2zh\mueller2016.pdf";
@@ -39,7 +41,6 @@ async fn real_ingest_pdf_end_to_end_idempotent() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let notes_repo = dir.join("notes");
-    let figures_db = dir.join("figures.sqlite");
     let home_s = dir.join("home").to_string_lossy().into_owned();
     let env = crate::proc::env_for_brain(Some(&home_s));
 
@@ -86,29 +87,28 @@ async fn real_ingest_pdf_end_to_end_idempotent() {
         mineru_command: Some(mineru.to_string_lossy().into_owned()),
         ..Default::default()
     }; // policy=Auto：真實分流（S3 訊號 → MinerU）
-    // ── 第一次入庫（端到端：MinerU 解析→筆記→sync→sidecar→向量）──
+    // ── 第一次入庫（端到端：MinerU 解析→筆記→圖檔發布→sync）──
     eprintln!("[ingest] 第一次入庫（MinerU basic，CPU 約 10 秒/頁）…");
-    let r1 = ingest_pdf(
-        pdf,
-        &cfg,
-        &figures_db,
-        &notes_repo,
-        "ing",
-        &gbrain_exe,
-        Some(&home_s),
-    )
-    .await
-    .expect("第一次入庫應成功");
+    let r1 = ingest_pdf(pdf, &cfg, &notes_repo, "ing", &gbrain_exe, Some(&home_s))
+        .await
+        .expect("第一次入庫應成功");
     eprintln!(
-        "[ingest] #1 notes={} figures={} carried={} embedded={} synced={} warnings={:?}",
-        r1.notes_written, r1.figure_rows, r1.vectors_carried, r1.vectors_embedded, r1.synced, r1.warnings
+        "[ingest] #1 notes={} figures_published={} synced={} warnings={:?}",
+        r1.notes_written, r1.figures_published, r1.synced, r1.warnings
     );
-    assert_eq!(r1.notes_written, 36, "27 文字＋9 圖筆記");
-    assert_eq!(r1.figure_rows, 9);
+    assert_eq!(r1.notes_written, 44, "27 文字＋9 圖筆記＋8 圖檔");
+    assert_eq!(r1.figures_published, 8, "8 張帶檔圖（fig3 caption-only 無檔）");
     assert!(r1.synced, "sync 應成功：{:?}", r1.warnings);
-    assert!(r1.vectors_embedded >= 9, "首輪應實嵌全部圖列");
     assert!(notes_repo.join("mueller2016").join("fig8-p6.md").exists());
-
+    assert!(
+        notes_repo.join("mueller2016").join("fig8-p6.jpg").exists(),
+        "同名圖檔應發布至 doc 目錄"
+    );
+    // 註解頁補強：影像檔 wikilink＋原論文 PDF 出處＋匯入錨點。
+    let fig_md = std::fs::read_to_string(notes_repo.join("mueller2016").join("fig8-p6.md")).unwrap();
+    assert!(fig_md.contains("影像檔：[[mueller2016/fig8-p6.jpg"), "wikilink 應指向同名圖檔：{fig_md}");
+    assert!(fig_md.contains("原論文 PDF："), "應保留來源 PDF 出處");
+    assert!(fig_md.contains("— 匯入：Figure 8"), "應含匯入 timeline 錨點");
     // 檢索冒煙：gbrain 文字面應可命中（sync＋embed 已跑）。
     let (qc, qout, qerr) = run_capture(
         &gbrain_exe,
@@ -129,33 +129,17 @@ async fn real_ingest_pdf_end_to_end_idempotent() {
     assert_eq!(qc, 0, "query：{qerr}");
     assert!(qout.contains("mueller2016"), "應命中入庫的筆記：{qout}");
 
-    // ── 第二次入庫：冪等——列數不變、向量攜帶（dedup）、零重嵌 ──
-    let r2 = ingest_pdf(
-        pdf,
-        &cfg,
-        &figures_db,
-        &notes_repo,
-        "ing",
-        &gbrain_exe,
-        Some(&home_s),
-    )
-    .await
-    .expect("第二次入庫應成功");
+    // ── 第二次入庫：冪等——筆記覆寫、圖檔不重寫（0 新發布）──
+    let r2 = ingest_pdf(pdf, &cfg, &notes_repo, "ing", &gbrain_exe, Some(&home_s))
+        .await
+        .expect("第二次入庫應成功");
     eprintln!(
-        "[ingest] #2 notes={} figures={} carried={} embedded={} synced={}",
-        r2.notes_written, r2.figure_rows, r2.vectors_carried, r2.vectors_embedded, r2.synced
+        "[ingest] #2 notes={} figures_published={} synced={}",
+        r2.notes_written, r2.figures_published, r2.synced
     );
-    assert_eq!(r2.figure_rows, 9, "冪等：列數不變");
-    // 8 張帶 md5 的圖列：向量攜帶（零重嵌）；fig3（caption-only、無 md5）：
-    // caption 可能變更 → 如設計地重嵌文字向量（成本可忽略）。
-    assert_eq!(r2.vectors_carried, 8, "md5 攜帶：圖列向量全數繼承");
-    assert_eq!(r2.vectors_embedded, 1, "caption-only 列重嵌文字向量");
+    assert_eq!(r2.notes_written, 36, "md 重複製（補強行由發布步驟重加）；圖檔已存在不計");
+    assert_eq!(r2.figures_published, 0, "冪等：同名圖檔已存在不重寫");
     assert!(r2.synced);
-
-    // sidecar 的向量確實在（供 K4 融合）。
-    let sc = Sidecar::open(&figures_db).unwrap();
-    let (rows, with_vec) = sc.doc_stats("mueller2016").unwrap();
-    assert_eq!((rows, with_vec), (9, 9));
 
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -167,7 +151,7 @@ fn policy_default_is_auto() {
 }
 
 /// 拖拽流驗證（#[ignore]）：工廠 run_core 全 PDF 批次 → 知識管線自動全做
-/// （K1 轉換→筆記寫入→sidecar→向量），不需要單獨按鈕。
+/// （K1 轉換→筆記寫入→圖檔＋註解頁發布），不需要單獨按鈕。
 #[ignore = "真實環境相依：需 MinerU venv、llama-server（mmproj）"]
 #[tokio::test]
 async fn real_factory_pdf_drag_flow() {
@@ -186,11 +170,9 @@ async fn real_factory_pdf_drag_flow() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let notes = dir.join("notes");
-    let figures_db = dir.join("notes.figures.sqlite");
     let mut cfg = crate::app_config::AppConfig::default();
     cfg.notes_repo_path = notes.to_string_lossy().into_owned();
     cfg.mineru_command = Some(mineru.to_string_lossy().into_owned());
-    // figures_db_path 未設 → 工廠用 notes repo 伴隨檔（預設鏈）。
 
     let result = crate::factories::run_core(&cfg, "pdf", &[PDF.to_string()], None, None, None)
         .await
@@ -202,12 +184,15 @@ async fn real_factory_pdf_drag_flow() {
         result.written.len(),
         result.errors
     );
-    assert_eq!(result.total, 36, "27 文字＋9 圖筆記");
+    assert_eq!(result.total, 44, "27 文字＋9 圖筆記＋8 圖檔");
     assert_eq!(result.factory, "pdf-knowledge");
     assert!(notes.join("mueller2016").join("fig8-p6.md").exists());
-    let sc = Sidecar::open(&figures_db).unwrap();
-    let (rows, with_vec) = sc.doc_stats("mueller2016").unwrap();
-    assert_eq!((rows, with_vec), (9, 9), "sidecar 9 列全向量");
+    assert!(
+        notes.join("mueller2016").join("fig8-p6.jpg").exists(),
+        "同名圖檔應發布至 doc 目錄"
+    );
+    // 工廠不寫 sidecar（gbrain 原生 image import 軌道）。
+    assert!(!notes.with_file_name("notes.figures.sqlite").exists());
 
     std::fs::remove_dir_all(&dir).ok();
 }
