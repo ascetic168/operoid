@@ -574,6 +574,11 @@
     "obridgeExePlaceholder": "例：C:\\tools\\obridge.exe"
   },
   "brainsView": {
+    "removePreviewTitle": "此來源有資料——選擇處理方式",
+    "removeArchive": "封存（保留 72 小時，可還原）",
+    "removeDestroy": "永久刪除（不可逆）",
+    "removeArchiveNote": "封存＝從搜尋隱藏並保留 72 小時（gbrain sources restore 可還原，逾期清除）；永久刪除立即移除全部頁面／chunks／向量／檔案。",
+    "removeCancel": "取消",
     "title": "腦",
     "add": "新增",
     "default": "預設",

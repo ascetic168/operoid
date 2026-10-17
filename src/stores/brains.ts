@@ -9,6 +9,7 @@ import {
   brainSources,
   brainSourceAdd,
   brainSourceRemove,
+  type SourceRemoveMode,
   brainBindSourcePath,
   DEFAULT_BRAIN_ID,
   formatError,
@@ -101,13 +102,17 @@ export const useBrainsStore = defineStore("brains", () => {
     await loadSources(brainId);
   }
 
-  async function removeSource(brainId: string, sourceId: string) {
-    await brainSourceRemove(brainId, sourceId);
-    if (activeSourceId.value === sourceId) {
-      activeSourceId.value = null;
-      await brainsSetActiveSource(null);
+  async function removeSource(brainId: string, sourceId: string, mode: SourceRemoveMode = "archive") {
+    const outcome = await brainSourceRemove(brainId, sourceId, mode);
+    if (mode !== "preview") {
+      // preview 無副作用——不動作用中來源、不重載清單。
+      if (activeSourceId.value === sourceId) {
+        activeSourceId.value = null;
+        await brainsSetActiveSource(null);
+      }
+      await loadSources(brainId);
     }
-    await loadSources(brainId);
+    return outcome;
   }
 
   /** 綁定 default 來源路徑（確保 git repo → sync --repo）；成功後重載來源清單。 */

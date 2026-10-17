@@ -150,14 +150,33 @@ async function push(line: string) {
   log.value.push(line);
 }
 
-// ── 移除來源（gbrain 引擎會拒絕移除 default 來源，需顯示錯誤）──
+// ── 移除來源（兩步：preview 影響 → 選封存或永久刪除；gbrain 0.60 對有資料的
+// 來源拒絕裸 remove，2026-10-18 回歸）──
 const removeError = ref<string | null>(null);
+const removePreview = ref<{ brainId: string; sourceId: string; output: string } | null>(null);
+const removeBusy = ref(false);
 async function removeSource(brainId: string, s: GbrainSource) {
   removeError.value = null;
+  removePreview.value = null;
   try {
-    await store.removeSource(brainId, s.id);
+    const o = await store.removeSource(brainId, s.id, "preview");
+    removePreview.value = { brainId, sourceId: s.id, output: o.output };
   } catch (e) {
     removeError.value = formatError(e);
+  }
+}
+async function confirmRemove(mode: "archive" | "destroy") {
+  const p = removePreview.value;
+  if (!p || removeBusy.value) return;
+  removeBusy.value = true;
+  removeError.value = null;
+  try {
+    await store.removeSource(p.brainId, p.sourceId, mode);
+    removePreview.value = null;
+  } catch (e) {
+    removeError.value = formatError(e);
+  } finally {
+    removeBusy.value = false;
   }
 }
 
@@ -343,6 +362,21 @@ function fmtDate(s: string | null) {
 
       <div v-else class="flex h-full items-center justify-center text-sm text-muted-foreground">{{ $t("brainsView.selectPrompt") }}</div>
     </main>
+
+    <!-- 移除來源確認（preview 影響 → 封存／永久刪除） -->
+    <div v-if="removePreview" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div class="w-full max-w-lg rounded-xl border border-border bg-card p-5">
+        <h3 class="mb-2 text-base font-semibold">{{ $t("brainsView.removePreviewTitle") }}</h3>
+        <pre class="max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 font-mono text-[11px]">{{ removePreview.output }}</pre>
+        <p class="mt-2 text-xs text-muted-foreground">{{ $t("brainsView.removeArchiveNote") }}</p>
+        <div class="mt-3 flex flex-wrap gap-2 text-sm">
+          <button class="rounded-md border border-border px-3 py-1.5 hover:opacity-80 disabled:opacity-50" :disabled="removeBusy" @click="confirmRemove('archive')">{{ $t("brainsView.removeArchive") }}</button>
+          <button class="rounded-md bg-destructive px-3 py-1.5 text-destructive-foreground hover:opacity-90 disabled:opacity-50" :disabled="removeBusy" @click="confirmRemove('destroy')">{{ $t("brainsView.removeDestroy") }}</button>
+          <button class="rounded-md border border-border px-3 py-1.5 hover:opacity-80 disabled:opacity-50" :disabled="removeBusy" @click="removePreview = null">{{ $t("brainsView.removeCancel") }}</button>
+        </div>
+        <p v-if="removeError" class="mt-2 text-xs text-destructive">{{ removeError }}</p>
+      </div>
+    </div>
 
     <!-- 新增腦對話框 -->
     <div v-if="addOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">

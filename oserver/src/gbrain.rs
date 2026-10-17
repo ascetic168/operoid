@@ -712,19 +712,31 @@ async fn api_brain_source_remove(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
     AxPath((id, source_id)): AxPath<(String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if let Err(r) = require_auth(&state, &headers) {
         return r;
     }
+    // mode=preview（--dry-run 預覽影響）／archive（軟刪，預設——可逆）／
+    // destroy（--confirm-destructive 永久刪除）。gbrain 0.60 對有資料的來源
+    // 拒絕裸 remove（2026-10-18 GUI 刪 gbrain-demo 回歸）。
+    let mode = q
+        .get("mode")
+        .and_then(|m| ocore::brains::SourceRemoveMode::parse(m))
+        .unwrap_or(ocore::brains::SourceRemoveMode::Archive);
     let st = state.clone();
     let req = ocore::brains::SourceRef { brain_id: id, source_id };
     let res = tokio::spawn(async move {
         let cfg = load_cfg(&st)?;
-        remove_source_core(&cfg, &req).await
+        remove_source_core(&cfg, &req, mode).await
     })
     .await;
     match res {
-        Ok(Ok(())) => ok_json(json!({"ok": true})),
+        Ok(Ok(outcome)) => ok_json(json!({
+            "ok": true,
+            "mode": outcome.mode,
+            "output": outcome.output,
+        })),
         Ok(Err(e)) => err_response(&e),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

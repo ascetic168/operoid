@@ -574,6 +574,11 @@
     "obridgeExePlaceholder": "e.g. C:\\tools\\obridge.exe"
   },
   "brainsView": {
+    "removePreviewTitle": "This source has data — choose how to proceed",
+    "removeArchive": "Archive (kept 72h, restorable)",
+    "removeDestroy": "Delete permanently (irreversible)",
+    "removeArchiveNote": "Archive hides it from search and keeps data for 72 hours (restore via gbrain sources restore, purged after); permanent delete removes all pages/chunks/embeddings/files immediately.",
+    "removeCancel": "Cancel",
     "title": "Brains",
     "add": "Add",
     "default": "default",

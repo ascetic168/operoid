@@ -381,18 +381,67 @@ pub async fn add_source_core(c: &AppConfig, req: &SourceAdd) -> Result<(), AppEr
     Ok(())
 }
 
-/// 移除來源核心：`sources remove`。
-pub async fn remove_source_core(c: &AppConfig, req: &SourceRef) -> Result<(), AppError> {
+/// 來源刪除模式（gbrain 0.60 破壞性語意：有資料的來源裸 `remove` 會被拒，
+/// 必須 `--confirm-destructive`，或走 `archive` 軟刪——隱藏並保留 72 小時，
+/// `sources restore` 可還原）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceRemoveMode {
+    /// 預覽影響（`--dry-run`；無副作用）。
+    Preview,
+    /// 軟刪（保留 72 小時，可還原）。
+    Archive,
+    /// 永久刪除（不可逆）。
+    Destroy,
+}
+
+impl SourceRemoveMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "preview" => Some(Self::Preview),
+            "archive" => Some(Self::Archive),
+            "destroy" => Some(Self::Destroy),
+            _ => None,
+        }
+    }
+
+    fn args(self, source_id: &str) -> Vec<String> {
+        match self {
+            Self::Preview => vec!["sources", "remove", source_id, "--dry-run"],
+            Self::Archive => vec!["sources", "archive", source_id],
+            Self::Destroy => vec!["sources", "remove", source_id, "--confirm-destructive"],
+        }
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
+}
+
+/// 刪除／預覽結果：模式＋gbrain 原始輸出（影響預覽盒的文字）。
+#[derive(Debug, Serialize)]
+pub struct SourceRemoveOutcome {
+    pub mode: SourceRemoveMode,
+    pub output: String,
+}
+
+/// 移除來源核心：`mode` 決定預覽／軟刪／永久刪除（見 [`SourceRemoveMode`]）。
+pub async fn remove_source_core(
+    c: &AppConfig,
+    req: &SourceRef,
+    mode: SourceRemoveMode,
+) -> Result<SourceRemoveOutcome, AppError> {
     let entry = brain_entry(c, &req.brain_id)?;
     let exe = exe_path(c)?;
     let env = env_for_brain(entry.env_home());
-    let (code, _out, err) = run_capture(&exe, &["sources", "remove", &req.source_id], &env)
+    let args = mode.args(&req.source_id);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (code, out, err) = run_capture(&exe, &arg_refs, &env)
         .await
         .map_err(|e| e.to_string())?;
     if code != 0 {
         return Err(AppError::new("source.removeFailed").p("code", code).p("detail", err));
     }
-    Ok(())
+    Ok(SourceRemoveOutcome { mode, output: out })
 }
 
 /// 綁定 default 來源路徑核心：確保 `path` 是有 commit 的 git repo（自動 git init），
@@ -637,4 +686,35 @@ async fn real_add_brain_inherits_multimodal_and_fixes_image_dim() {
     assert!(out.contains("免改"), "維度應已修正為 768：{out}");
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 來源刪除 preview 模式（#[ignore]——真實環境：gbrain 與既有 gbrain-demo 來源；
+/// **只跑 preview**（--dry-run 無副作用），絕不執行 archive/destroy）。
+/// 跑法：`cargo test -p ocore real_source_remove_preview -- --ignored --nocapture`
+#[ignore = "真實環境相依：需 gbrain 與有資料的來源（gbrain-demo）；dry-run 無副作用"]
+#[tokio::test]
+async fn real_source_remove_preview_reports_impact() {
+    let mut c = AppConfig::default();
+    c.brains.push(BrainEntry {
+        id: "__default__".into(),
+        name: "預設腦".into(),
+        gbrain_home: None,
+    });
+    let req = SourceRef {
+        brain_id: "__default__".into(),
+        source_id: "gbrain-demo".into(),
+    };
+    let o = remove_source_core(&c, &req, SourceRemoveMode::Preview)
+        .await
+        .expect("preview 應成功");
+    assert!(
+        o.output.contains("permanently delete"),
+        "影響預覽應含刪除統計：{}",
+        o.output
+    );
+    let sources = list_sources(&c, "__default__").await.unwrap();
+    assert!(
+        sources.iter().any(|s| s.id == "gbrain-demo"),
+        "dry-run 不得真的刪除來源"
+    );
 }

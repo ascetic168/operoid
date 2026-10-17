@@ -103,9 +103,15 @@ pub async fn brain_source_add<R: Runtime>(
 pub async fn brain_source_remove<R: Runtime>(
     app: AppHandle<R>,
     req: SourceRef,
-) -> Result<(), AppError> {
+    // mode：preview／archive（預設）／destroy——見 ocore::brains::SourceRemoveMode。
+    mode: Option<String>,
+) -> Result<ocore::brains::SourceRemoveOutcome, AppError> {
     let c = cfg(&app)?;
-    remove_source_core(&c, &req).await
+    let mode = mode
+        .as_deref()
+        .and_then(ocore::brains::SourceRemoveMode::parse)
+        .unwrap_or(ocore::brains::SourceRemoveMode::Archive);
+    remove_source_core(&c, &req, mode).await
 }
 
 /// 綁定 default 來源路徑：確保 `path` 是有 commit 的 git repo（自動 git init），

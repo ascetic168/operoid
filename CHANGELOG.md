@@ -15,6 +15,22 @@
 
 ## [Unreleased]
 
+### Source removal catches up with gbrain's destructive-deletion semantics
+
+- gbrain 0.60 refuses a bare `sources remove` when the source has data and
+  demands --confirm-destructive (or sources archive), so the GUI remove
+  button failed with a raw engine message (surfaced removing gbrain-demo
+  from the default brain).
+- remove_source_core now takes a mode: preview (--dry-run, no side effects),
+  archive (soft-delete, data kept 72h, restorable), destroy
+  (--confirm-destructive); returns the engine output alongside the mode.
+- DELETE /api/brains/{id}/sources/{sid} gains ?mode= (default archive) and
+  returns the outcome; the tauri command mirrors it.
+- Desktop brains view: removal is now two-step — preview shows the impact
+  box, then the user explicitly chooses Archive (restorable) or Delete
+  permanently; locale keys added (zh-TW/zh-CN/en). Real-env test pins the
+  preview mode against the live gbrain-demo source (no side effects).
+
 ### New brains inherit multimodal embedding and self-fix the image column
 
 - Brain creation (GUI add / POST /api/brains with create=true) previously

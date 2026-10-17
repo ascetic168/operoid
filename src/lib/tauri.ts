@@ -553,9 +553,23 @@ export const brainSourceAdd = (
     method: "POST",
     body: { source_id: sourceId, path },
   });
-export const brainSourceRemove = (brainId: string, sourceId: string): Promise<void> =>
-  agentFetch<void>(
-    `/api/brains/${encodeURIComponent(brainId)}/sources/${encodeURIComponent(sourceId)}`,
+/** 來源刪除模式：preview（--dry-run 無副作用）／archive（軟刪 72h，預設）／destroy（永久）。 */
+export type SourceRemoveMode = "preview" | "archive" | "destroy";
+
+export interface SourceRemoveOutcome {
+  ok: boolean;
+  mode: SourceRemoveMode;
+  /** gbrain 原始輸出（影響預覽文字）。 */
+  output: string;
+}
+
+export const brainSourceRemove = (
+  brainId: string,
+  sourceId: string,
+  mode: SourceRemoveMode = "archive",
+): Promise<SourceRemoveOutcome> =>
+  agentFetch<SourceRemoveOutcome>(
+    `/api/brains/${encodeURIComponent(brainId)}/sources/${encodeURIComponent(sourceId)}?mode=${mode}`,
     { method: "DELETE" },
   );
 
