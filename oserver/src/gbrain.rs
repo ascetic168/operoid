@@ -97,6 +97,11 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
             "/api/knowledge/migrate-figures/{id}",
             get(api_knowledge_migrate_status),
         )
+        // MinerU 安裝目錄（Admin——階梯 1b 設定；GET 讀取＋POST 設定）
+        .route(
+            "/api/knowledge/mineru-dir",
+            get(api_knowledge_mineru_dir_get).post(api_knowledge_mineru_dir_set),
+        )
         // K5/P1：檢索命中圖片的安全服務（Req::User——只服務 sidecar 登記過的路徑）
         .route("/api/knowledge/figure-image", get(api_knowledge_figure_image))
         // K5/P1：媒體簽名（POST=Req::User，RBAC 表明列；GET=Public——簽名即驗證，
@@ -2007,6 +2012,75 @@ async fn api_knowledge_migrate_status(
         None => (
             StatusCode::NOT_FOUND,
             Json(json!({"code": "figure.migrationNotFound", "detail": id})),
+        )
+            .into_response(),
+    }
+}
+
+// ── MinerU 安裝目錄（階梯 1b；Admin）────────────────────────────────────
+
+#[derive(Deserialize)]
+struct MineruDirBody {
+    /// 安裝根目錄（支援 %VAR%／${VAR} 展開；空字串／null＝清除設定）。
+    mineru_dir: Option<String>,
+}
+
+/// `GET /api/knowledge/mineru-dir`——目前設定＋階梯解析狀態。
+async fn api_knowledge_mineru_dir_get(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let c = load_cfg(&st)?;
+        let resolved = ocore::converters::mineru::ladder::resolve(&c.convert_config()).resolved();
+        Ok(json!({ "mineru_dir": c.mineru_dir, "resolved": resolved }))
+    })
+    .await;
+    match res {
+        Ok(Ok(v)) => ok_json(v),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/knowledge/mineru-dir`——設定安裝目錄（空字串／null＝清除）；
+/// 回應帶設定後的即時階梯解析結果（企業 admin GUI 的 ✓/✗ 立即反映）。
+async fn api_knowledge_mineru_dir_set(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<MineruDirBody>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let mut c = load_cfg(&st)?;
+        c.mineru_dir = body
+            .mineru_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        save_cfg(&st, &c)?;
+        let resolved = ocore::converters::mineru::ladder::resolve(&c.convert_config()).resolved();
+        Ok(json!({ "mineru_dir": c.mineru_dir, "resolved": resolved }))
+    })
+    .await;
+    match res {
+        Ok(Ok(v)) => ok_json(v),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
         )
             .into_response(),
     }

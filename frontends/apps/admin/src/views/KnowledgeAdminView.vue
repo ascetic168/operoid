@@ -204,17 +204,56 @@ async function revokeAllTokens(id: string): Promise<void> {
 
 const humanPrincipals = computed(() => principals.value.filter((p) => p.principal_type === 'human'))
 
+// ---- MinerU 安裝目錄（階梯 1b；%USERPROFILE%／${HOME} 展開——設定字串跨機器可攜）----
+const mineruDir = ref('')
+const mineruDirSaved = ref(false)
+const mineruDirError = ref('')
+const mineruDirBusy = ref(false)
+
+async function loadHealth(): Promise<void> {
+  // 能力狀態（admin 完整面：MinerU／嵌入 vision／chat VLM）；失敗＝未知不顯示。
+  try {
+    health.value = await api.get<PipelineHealth>('/api/knowledge/health')
+    healthError.value = false
+  } catch {
+    healthError.value = true
+  }
+}
+
+async function loadMineruDir(): Promise<void> {
+  try {
+    const r = await api.get<{ mineru_dir: string | null; resolved: boolean }>(
+      '/api/knowledge/mineru-dir',
+    )
+    mineruDir.value = r.mineru_dir ?? ''
+  } catch {
+    // 讀不到（舊版伺服器）＝欄位留空、儲存時報錯。
+  }
+}
+
+async function saveMineruDir(): Promise<void> {
+  mineruDirError.value = ''
+  mineruDirSaved.value = false
+  mineruDirBusy.value = true
+  try {
+    const r = await api.post<{ mineru_dir: string | null; resolved: boolean }>(
+      '/api/knowledge/mineru-dir',
+      { mineru_dir: mineruDir.value.trim() || null },
+    )
+    mineruDir.value = r.mineru_dir ?? ''
+    mineruDirSaved.value = true
+    await loadHealth() // ✓/✗ 與解析程式即時反映新路徑
+  } catch (e) {
+    mineruDirError.value = e instanceof ApiError ? e.code : 'server.internal'
+  } finally {
+    mineruDirBusy.value = false
+  }
+}
+
 onMounted(() => {
   void load()
-  // 能力狀態（admin 完整面：MinerU／嵌入 vision／chat VLM）；失敗＝未知不顯示。
-  void api
-    .get<PipelineHealth>('/api/knowledge/health')
-    .then((h) => {
-      health.value = h
-    })
-    .catch(() => {
-      healthError.value = true
-    })
+  void loadHealth()
+  void loadMineruDir()
 })
 </script>
 
@@ -239,6 +278,27 @@ onMounted(() => {
         >
           {{ health.mineru.program }}<template v-if="health.mineru.version"> · {{ health.mineru.version }}</template>
         </p>
+        <div class="mt-2 flex flex-col gap-1">
+          <span class="muted" style="font-size: 0.72rem">{{ t('ka.mineruDirLabel') }}</span>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="mineruDir"
+              :placeholder="t('ka.mineruDirPh')"
+              class="w-full rounded-md border border-border bg-background px-2 py-1 text-xs font-mono"
+              @keyup.enter="saveMineruDir"
+            />
+            <button
+              class="shrink-0 rounded-md border border-border px-2 py-1 text-xs hover:opacity-80 disabled:opacity-50"
+              :disabled="mineruDirBusy"
+              @click="saveMineruDir"
+            >
+              {{ t('ka.mineruDirSave') }}
+            </button>
+          </div>
+          <p class="muted" style="font-size: 0.7rem">{{ t('ka.mineruDirHint') }}</p>
+          <p v-if="mineruDirSaved" class="okline" style="font-size: 0.72rem">{{ t('ka.mineruDirSaved') }}</p>
+          <ErrorBox v-if="mineruDirError" :message="mineruDirError" />
+        </div>
       </div>
       <div class="card">
         <h2>{{ t('ka.capsEmbedding') }} {{ !health.embedding.reachable ? '?' : health.embedding.vision ? '✓' : '✗' }}</h2>

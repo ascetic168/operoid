@@ -148,6 +148,9 @@ const INVENTORY: &[(&str, &str)] = &[
     // 圖 arm 退役遷移（Admin——sidecar 封存＋圖檔搬入 source repo）
     ("POST", "/api/knowledge/migrate-figures"),
     ("GET", "/api/knowledge/migrate-figures/{id}"),
+    // MinerU 安裝目錄（Admin——階梯 1b 設定讀寫）
+    ("GET", "/api/knowledge/mineru-dir"),
+    ("POST", "/api/knowledge/mineru-dir"),
     ("GET", "/api/knowledge/figure-image"),
     // K5/P1：媒體面（Req::User——簽發／來源 PDF 串流；GET /api/media/figure=
     // Public+簽名驗證，不收矩陣）
