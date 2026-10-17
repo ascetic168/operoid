@@ -145,15 +145,31 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
 3. （選用）OCR：`gbrain config set embedding_image_ocr true` +
    `embedding_image_ocr_model <多模態 chat 模型>`（expansion touchpoint；zhipu GLM-4V 或
    llama-server 上的視覺模型）→ OCR 文字進 chunk_text，文字側即可全文檢索。
-4. **唯一待實測點**：請求形狀匹配——gbrain 送
-   `{model, input:[{type:'image_url',image_url:{url:'data:<mime>;base64,...'}}], input_type}`
-   到 `<base>/embeddings`；llama.cpp 的 multimodal embedding 接受 chat 式 content 陣列
-   （llama.cpp discussion #13666）。兩者大概率兼容，落地上線前用一張圖 curl 實測；
-   若形狀不合，垫一層 10 行轉換 proxy 或等 gbrain 上游給 llama-server recipe 補
-   supports_multimodal（上游原始碼已含完整 openai-compat multimodal 路徑，補宣告是小改動）。
-5. 驗收：丟一張圖進 notes repo → sync → `gbrain schema stats` 出現 image 頁 +
-   圖片搜尋（`embedding_image` 向量）+ `image_of` 自動連結（圖旁同名 .md 註解頁——搭配項目 2
-   的強制註解）。
+4. **請求形狀實測結果（2026-10-17，已完成）**：gbrain 的形狀
+   （`input:[{type:'image_url',…}]` + `input_type`）直接打 llama.cpp 會 400——
+   llama.cpp 要求每個 input 元素包 `{content:[…]}`（chat 式 parts，官方 README 格式）。
+   **已寫好形狀轉譯 shim 並實測通過**：`C:\Users\charl\AppData\Local\llama-cpp\mm-bridge.mjs`
+   （bun 單檔，127.0.0.1:8090 → 8080；啟動器 `start-mm-bridge.cmd`，建議放 shell:startup）。
+   同步完成 schema 前置：`content_chunks.embedding_image` 由 vector(1024) ALTER 成
+   **vector(768)**（0.60 硬編 1024、無設定鍵；欄位當時全空、無損遷移；腦已備份
+   `brain.pglite.bak-20261017`；變更腳本 `~/.bun/install/global/alter-image-dim.mjs`，
+   gbrain self-upgrade 後若被重置可冪等重跑）。
+   gbrain 設定已套用：`provider_base_urls.litellm=http://127.0.0.1:8090/v1`、
+   `embedding_multimodal_model=litellm:embeddinggemma-2`、`embedding_multimodal=true`
+   （multimodal 經 litellm recipe 別名指向同一台 llama-server；文字側
+   `llama-server:embeddinggemma-2` 不動）。
+5. **端到端煙霧測試（通過）**：`images/mm-bridge-smoke-test.png` + 同名註解頁 → sync →
+   image 頁建立、`image_asset` chunk 的 `embedding_image` 實存 **768 維向量**、
+   註解頁 text chunks 照常、timeline 1 筆萃取。
+6. **剩餘事項**：
+   - shim 開機自啟未掛（`start-mm-bridge.cmd` 手動放 startup）；
+     llama-server 本體的重啟（含 --mmproj）也是手動流程。
+   - `image_of` 自動連結在「圖先於註解頁匯入」時會靜默跳過（gbrain best-effort）——
+     Operoid 實作時應先寫註解頁再丟圖，或匯入後跑連結補算。
+   - gbrain `self-upgrade`／未來 migration 可能重置 image 欄維度——升級後重跑
+     `alter-image-dim.mjs` 驗證（冪等）。
+   - 上游正道：給 gbrain 的 llama-server recipe 補 `supports_multimodal` 宣告
+     （openai-compat multimodal 路徑上游已存在，是小改動），可免除 shim。
 
 ---
 
