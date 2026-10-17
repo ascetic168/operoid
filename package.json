@@ -10,7 +10,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "dev:all": "cargo build -p oserver && npm run dev"
+    "dev:all": "cargo build -p oserver && node scripts/sync-sidecars.mjs && npm run dev"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
