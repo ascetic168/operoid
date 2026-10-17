@@ -113,11 +113,90 @@ pub struct GbrainRow {
     pub source_id: Option<String>,
 }
 
-/// 解析 gbrain stdout（可能帶前置雜訊如升級提示）——取第一個 `[` 到最後一個 `]`。
+/// 掃描文字中第一個**平衡**的 `[...]`（字串內括號與跳脫不計深度），回傳切片。
+/// gbrain stdout 帶前置雜訊（升級提示）與尾隨附加文字（`[gbrain dates] …`）——
+/// 舊式「首 `[` 到末 `]`」會被附加文字搶走切片，共用此掃描。
+pub fn find_json_array(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'[' {
+            continue;
+        }
+        if let Some(end) = array_span(s, i) {
+            return Some(&s[i..=end]);
+        }
+    }
+    None
+}
+
+/// 解析 gbrain hits 列——stdout 可能帶前置雜訊（升級提示）與**尾隨附加文字**
+/// （例如含日期欄位結果時附加的 `[gbrain dates] …` 建議行）。舊實作「首 `[` 到
+/// 末 `]`」會被附加文字裡的 `]` 搶走切片（2026-10-17 知識庫頁 raw JSON 回歸），
+/// 改為平衡括號掃描：取第一個能成功解析為列陣列的 `[...]`。
 pub fn parse_gbrain_hits(stdout: &str) -> Option<Vec<GbrainRow>> {
-    let start = stdout.find('[')?;
-    let end = stdout.rfind(']')?;
-    serde_json::from_str(&stdout[start..=end]).ok()
+    for cand in scan_array_candidates(stdout) {
+        if let Ok(rows) = serde_json::from_str::<Vec<GbrainRow>>(cand) {
+            return Some(rows);
+        }
+    }
+    None
+}
+
+/// 依序產出所有平衡 `[...]` 候選切片。
+fn scan_array_candidates(s: &str) -> impl Iterator<Item = &str> {
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    std::iter::from_fn(move || {
+        while i < bytes.len() {
+            if bytes[i] != b'[' {
+                i += 1;
+                continue;
+            }
+            match array_span(s, i) {
+                Some(end) => {
+                    let span = &s[i..=end];
+                    i = end + 1;
+                    return Some(span);
+                }
+                None => {
+                    i += 1;
+                }
+            }
+        }
+        None
+    })
+}
+
+/// 由 `open`（`[`）找配對的 `]`：字串內的括號與跳脫不計深度。
+fn array_span(s: &str, open: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut esc = false;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'[' => depth += 1,
+            b']' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// 圖 arm 命中的 slug → `FigureHit`：`<doc_id>/figN-pP.<ext>` 解析圖號與頁；
@@ -262,6 +341,41 @@ mod tests {
     #[test]
     fn image_slug_without_doc_prefix_is_dropped() {
         assert!(figure_hit_from_image_slug("fig1-p2.jpg", "s1", None).is_none());
+    }
+
+    /// 回歸（2026-10-17 知識庫頁 raw JSON）：尾隨 `[gbrain dates] …` 附加文字的
+    /// `]` 不得搶走陣列切片——舊式「首 `[` 到末 `]`」在此輸入上解析失敗，
+    /// MCP 路徑退化為 opaque 模式把原文塞給使用者。
+    #[test]
+    fn parses_rows_despite_trailing_date_advisory() {
+        let s = concat!(
+            r##"[{"slug":"companies/光寶科技","title":"光寶科技","chunk_text":"# 光寶\r\n- Louis","cosine":0.9457}]"##,
+            "\n[gbrain dates] effective_date by effective_date_source: fallback = fallback (page created/imported, not from its text). Never a contract's effective or validity date (read the text).",
+        );
+        let rows = parse_gbrain_hits(s).expect("附加文字不得破壞解析");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].slug, "companies/光寶科技");
+    }
+
+    /// chunk_text 內的方括號（如 `[Figure 5]`）不影響平衡掃描；前置雜訊容忍。
+    #[test]
+    fn parses_rows_with_brackets_inside_strings_and_leading_noise() {
+        let s = concat!(
+            "UPGRADE_AVAILABLE 0.60.262.0 0.60.271.0\n",
+            r#"[{"slug":"a/s01","chunk_text":"see [Figure 5] and [b","cosine":0.9}]"#,
+        );
+        let rows = parse_gbrain_hits(s).expect("應可解析");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].chunk_text.contains("[Figure 5]"));
+    }
+
+    /// 錯誤物件（message 內含方括號）→ None（不得把 `[text, image]` 當列陣列）。
+    #[test]
+    fn error_object_yields_none() {
+        assert!(parse_gbrain_hits(
+            r#"{"error":"invalid_params","message":"--cross-modal must be one of: text, image, both, auto; got 'true'.","suggestion":"Pass one of the declared values, e.g. gbrain query --cross-modal text."}"#
+        )
+        .is_none());
     }
 
     fn text(slug: &str, source: &str) -> FusionItem {

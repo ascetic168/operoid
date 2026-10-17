@@ -330,9 +330,7 @@ fn slug_fig(row: &serde_json::Value) -> Option<u32> {
     num.parse().ok()
 }
 
-/// gbrain `query --json` 輸出解析：stdout 可能帶前置雜訊（升級提示）——取首 `[` 起。
+/// gbrain `query --json` 輸出解析：共用平衡括號掃描（容忍前置雜訊與尾隨附加文字）。
 fn parse_query_json(stdout: &str) -> Option<Vec<serde_json::Value>> {
-    let start = stdout.find('[')?;
-    let end = stdout.rfind(']')?;
-    serde_json::from_str(&stdout[start..=end]).ok()
+    serde_json::from_str(crate::knowledge::fusion::find_json_array(stdout)?).ok()
 }

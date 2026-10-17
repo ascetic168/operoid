@@ -61,10 +61,10 @@ pub async fn list_sources(gbrain_exe: &str, home: Option<&str>) -> Result<Vec<(S
     if code != 0 {
         return Err(anyhow::anyhow!("sources list 失敗：{}", err.trim()));
     }
-    let start = out.find('[').context("sources list 非 JSON 陣列")?;
-    let end = out.rfind(']').context("sources list 非 JSON 陣列")?;
+    let span = crate::knowledge::fusion::find_json_array(&out)
+        .context("sources list 非 JSON 陣列")?;
     let rows: Vec<serde_json::Value> =
-        serde_json::from_str(&out[start..=end]).context("sources list 解析失敗")?;
+        serde_json::from_str(span).context("sources list 解析失敗")?;
     Ok(rows
         .into_iter()
         .filter_map(|r| {
