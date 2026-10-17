@@ -210,6 +210,40 @@ impl KnowledgeService {
                 Ok(_) => {}
                 Err(e) => sidecar_error = Some(e.to_string()),
             }
+        } else if ctx.mcp.is_none() {
+            // 圖 arm（gbrain 原生 image import；2026-10-17 試點裁決）：sidecar
+            // 未設定時的圖片路。`--cross-modal image` 必須顯式呼叫——auto/both
+            // 的文字查詢不會帶出 image 頁（實測，TODO 項目 3）。CLI 傳輸限定
+            // （MCP query 工具未宣告 cross-modal 參數）。命中以 slug 歸因、
+            // 同樣走錨文件鐵律：錨文件圖進排序面、他文件圖降附帶池。
+            match super::ingest::list_sources(&ctx.gbrain_exe, ctx.gbrain_home.as_deref()).await {
+                Ok(sources) => {
+                    let futs: Vec<_> = plan
+                        .source_ids
+                        .iter()
+                        .map(|sid| self.fetch_image_hits(sid, &sources, query, limit, ctx))
+                        .collect();
+                    let results = futures::future::join_all(futs).await;
+                    let mut all: Vec<FigureHit> = Vec::new();
+                    for (sid, res) in plan.source_ids.iter().zip(results) {
+                        match res {
+                            Ok(hits) => all.extend(hits),
+                            Err(e) => {
+                                errors.insert(sid.clone(), json!(e));
+                            }
+                        }
+                    }
+                    if !all.is_empty() {
+                        let (same, other) = fusion::split_by_anchor(all, anchor_doc.as_deref());
+                        if !same.is_empty() {
+                            sidecar_meta = json!({ "image_arm": same.len() });
+                            lists.push(same.into_iter().map(FusionItem::Figure).collect());
+                        }
+                        extra_related = other;
+                    }
+                }
+                Err(e) => sidecar_error = Some(format!("sources list: {e}")),
+            }
         }
         // sidecar 清單先插入：RRF 同分平手時，多模態命中（稀少模態、其像素資訊
         // 文字 chunk 無法替代——C7 純視覺答案實驗）排在等價文字命中之前。
@@ -242,6 +276,18 @@ impl KnowledgeService {
                     Ok(_) => {}
                     Err(e) => sidecar_error = Some(format!("attach: {e}")),
                 }
+            }
+        } else if !extra_related.is_empty() && !merged.is_empty() {
+            // 圖 arm 的附帶池：他文件圖以 metadata 歸因（錨文件鐵律同路2 sidecar）
+            // 接尾——不做任何向量歸因。
+            let before = merged.len();
+            merged = fusion::attach_related_figures(
+                merged,
+                std::mem::take(&mut extra_related),
+                limit as usize,
+            );
+            if let Some(obj) = sidecar_meta.as_object_mut() {
+                obj.insert("attached".into(), json!(merged.len() - before));
             }
         }
         if let Some(e) = sidecar_error {
@@ -446,6 +492,47 @@ impl KnowledgeService {
                 cosine: r.cosine,
                 opaque: false,
             })
+            .collect())
+    }
+
+    /// 圖 arm 單一 source 的命中（`--cross-modal image`；K2 前綴同路1）。
+    /// 圖檔路徑以 `local_paths`（sources list 的 id→local_path）解析。
+    async fn fetch_image_hits(
+        &self,
+        sid: &str,
+        local_paths: &[(String, String)],
+        query: &str,
+        limit: u32,
+        ctx: &ToolCtx,
+    ) -> std::result::Result<Vec<FigureHit>, String> {
+        let prefixed = retrieval_query(query);
+        let mut args = query_cli_args(&prefixed, limit, sid);
+        args.push("--cross-modal".into());
+        args.push("image".into());
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (code, out, err) = crate::gbrain_cli::run_capture(
+            &ctx.gbrain_exe,
+            &refs,
+            &crate::proc::env_for_brain(ctx.gbrain_home.as_deref()),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        if code != 0 {
+            return Err(format!("gbrain query(image) exit {code}: {}", err.trim()));
+        }
+        let rows = fusion::parse_gbrain_hits(&out).ok_or_else(|| {
+            format!(
+                "gbrain query(image) --json 解析失敗：{}",
+                out.chars().take(160).collect::<String>()
+            )
+        })?;
+        let lp = local_paths
+            .iter()
+            .find(|(id, _)| id == sid)
+            .map(|(_, p)| p.as_str());
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| fusion::figure_hit_from_image_slug(&r.slug, sid, lp))
             .collect())
     }
 

@@ -120,6 +120,48 @@ pub fn parse_gbrain_hits(stdout: &str) -> Option<Vec<GbrainRow>> {
     serde_json::from_str(&stdout[start..=end]).ok()
 }
 
+/// 圖 arm 命中的 slug → `FigureHit`：`<doc_id>/figN-pP.<ext>` 解析圖號與頁；
+/// `image_path` 以 source 的 local_path 解析（圖在 repo 內＝授權語意隨 source 走）。
+/// 無 `figN` 慣例的圖頁（使用者拖放圖等）仍保留——`figure_no` 未知、頁 0、
+/// doc 以目錄前綴歸屬（注意：同 doc 的多張此類圖在融合 key 上會併項）。
+/// 無目錄前綴的 slug 無法歸屬 → None。
+pub fn figure_hit_from_image_slug(
+    slug: &str,
+    source_id: &str,
+    local_path: Option<&str>,
+) -> Option<FigureHit> {
+    let (doc_id, stem_full) = slug.split_once('/')?;
+    let stem = stem_full.split_once('.').map(|(s, _)| s).unwrap_or(stem_full);
+    let (figure_no, page) = parse_fig_stem(stem).unwrap_or((None, 0));
+    let rel: std::path::PathBuf = slug.split('/').collect();
+    let image_path = local_path.map(|lp| {
+        std::path::PathBuf::from(lp)
+            .join(rel)
+            .to_string_lossy()
+            .into_owned()
+    });
+    Some(FigureHit {
+        doc_id: doc_id.to_string(),
+        page,
+        figure_no,
+        caption: String::new(),
+        section: String::new(),
+        image_path,
+        source_id: Some(source_id.to_string()),
+        score: 0.0,
+        attached: false,
+    })
+}
+
+/// `figN-pP` →（圖號、頁）。
+fn parse_fig_stem(stem: &str) -> Option<(Option<u32>, i64)> {
+    let rest = stem.strip_prefix("fig")?;
+    let (num, tail) = rest.split_once('-')?;
+    let fig: u32 = num.parse().ok()?;
+    let page: i64 = tail.strip_prefix('p')?.parse().ok()?;
+    Some((Some(fig), page))
+}
+
 /// RRF 融合：`lists` 為各路已排序的項；回傳依融合分數降序（同分依首次出現序）。
 pub fn rrf_merge(lists: Vec<Vec<FusionItem>>, k: f64) -> Vec<(FusionItem, f64)> {
     let mut order: Vec<String> = Vec::new();
@@ -191,6 +233,36 @@ pub fn split_by_anchor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_slug_parses_fig_page_and_resolves_local_path() {
+        let h = figure_hit_from_image_slug(
+            "mueller2016/fig5-p5.jpg",
+            "gbrain-demo",
+            Some(r"C:\repo\demo"),
+        )
+        .expect("figN slug 應可解析");
+        assert_eq!(h.doc_id, "mueller2016");
+        assert_eq!(h.figure_no, Some(5));
+        assert_eq!(h.page, 5);
+        assert_eq!(h.source_id.as_deref(), Some("gbrain-demo"));
+        assert_eq!(h.image_path.as_deref(), Some(r"C:\repo\demo\mueller2016\fig5-p5.jpg"));
+        assert!(!h.attached);
+    }
+
+    #[test]
+    fn image_slug_without_fig_convention_keeps_hit_with_unknown_figure() {
+        let h = figure_hit_from_image_slug("media/shot.png", "s1", None).expect("圖頁應保留");
+        assert_eq!(h.doc_id, "media");
+        assert_eq!(h.figure_no, None);
+        assert_eq!(h.page, 0);
+        assert_eq!(h.image_path, None);
+    }
+
+    #[test]
+    fn image_slug_without_doc_prefix_is_dropped() {
+        assert!(figure_hit_from_image_slug("fig1-p2.jpg", "s1", None).is_none());
+    }
 
     fn text(slug: &str, source: &str) -> FusionItem {
         FusionItem::Text(TextHit {

@@ -48,13 +48,8 @@ fn chr_backslash() -> char {
     char::from_u32(0x5C).unwrap()
 }
 
-/// 解析 notes repo 對應的已註冊 source id（K4 授權歸檔用）——比對
-/// `gbrain sources list --json` 的 `local_path`（分隔符／大小寫寬容比對）。
-pub async fn resolve_source_id(
-    gbrain_exe: &str,
-    home: Option<&str>,
-    notes_repo: &Path,
-) -> Result<String> {
+/// `gbrain sources list --json` → `(id, local_path)` 列（解析失敗＝Err）。
+pub async fn list_sources(gbrain_exe: &str, home: Option<&str>) -> Result<Vec<(String, String)>> {
     let env = crate::proc::env_for_brain(home);
     let (code, out, err) = crate::gbrain_cli::run_capture(
         gbrain_exe,
@@ -68,17 +63,31 @@ pub async fn resolve_source_id(
     }
     let start = out.find('[').context("sources list 非 JSON 陣列")?;
     let end = out.rfind(']').context("sources list 非 JSON 陣列")?;
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&out[start..=end])
-        .context("sources list 解析失敗")?;
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_str(&out[start..=end]).context("sources list 解析失敗")?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let id = r["id"].as_str()?.to_string();
+            let lp = r["local_path"].as_str()?.to_string();
+            Some((id, lp))
+        })
+        .collect())
+}
+
+/// 解析 notes repo 對應的已註冊 source id（K4 授權歸檔用）——比對
+/// `gbrain sources list --json` 的 `local_path`（分隔符／大小寫寬容比對）。
+pub async fn resolve_source_id(
+    gbrain_exe: &str,
+    home: Option<&str>,
+    notes_repo: &Path,
+) -> Result<String> {
+    let rows = list_sources(gbrain_exe, home).await?;
     let norm = |s: &str| s.replace(chr_backslash(), "/").trim_end_matches('/').to_ascii_lowercase();
     let want = norm(&notes_repo.to_string_lossy());
-    for r in &rows {
-        let lp = r["local_path"].as_str().map(norm);
-        if lp.as_deref() == Some(want.as_str()) {
-            return r["id"]
-                .as_str()
-                .map(|s| s.to_string())
-                .context("source 列缺 id");
+    for (id, lp) in &rows {
+        if norm(lp) == want {
+            return Ok(id.clone());
         }
     }
     Err(anyhow::anyhow!(
