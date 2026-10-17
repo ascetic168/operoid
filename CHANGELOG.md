@@ -48,6 +48,12 @@
   gbrain asset path instead of a hardcoded user path).
 - Real-env test real_add_brain_inherits_multimodal_and_fixes_image_dim
   pins the whole chain (create → inherited keys → column at 768).
+- Second layer (demo brain round two): text-query embeddings also failed on
+  new brains ("embed Not Found") because gbrain init only carries the chat
+  provider URL — provider_base_urls (llama-server et al.) are now inherited
+  wholesale from the active environment into the new brain's file plane,
+  asserted in the same real test and applied retroactively to the demo
+  brain.
 
 ### Portable MinerU detection: configurable install directory with env expansion
 

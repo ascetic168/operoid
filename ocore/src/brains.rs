@@ -209,6 +209,12 @@ pub async fn add_brain_core(
         if let Err(w) = inherit_multimodal(&exe, &c, Some(&home)).await {
             eprintln!("[brains] multimodal 繼承失敗（略過）：{w}");
         }
+        // provider 端點繼承：gbrain init 只寫 chat provider URL——嵌入 provider
+        // （llama-server）漏寫會讓新腦的查詢嵌入全數 Not Found（2026-10-18 demo
+        // 腦回歸第二層）。
+        if let Err(w) = inherit_provider_urls(&c, &exe, Some(&home)).await {
+            eprintln!("[brains] provider_base_urls 繼承失敗（略過）：{w}");
+        }
         // embedding_image 維度修正：gbrain 0.60 建 schema 硬編 vector(1024)，
         // 與 768 維嵌入模型錯位（multimodal 開了圖片 sync 仍失敗）——init 後冪等
         // 修正（腳本：deploy/local/mm-bridge/alter-image-dim.mjs；欄位有資料即中止）。
@@ -262,6 +268,16 @@ async fn inherit_multimodal(exe: &str, c: &AppConfig, home: Option<&str>) -> Res
         .unwrap_or_else(|| "litellm:embeddinggemma-2".into());
     crate::gbrain_cfg::set_multimodal_setup(exe, home, &model, &url)
         .await
+        .map_err(|e| e.to_string())
+}
+
+/// 新腦 provider 端點繼承：作用中環境的 `provider_base_urls` 整表複製
+/// （init 只寫 chat provider URL；嵌入 provider 漏寫＝新腦查詢/嵌入全 Not Found）。
+async fn inherit_provider_urls(c: &AppConfig, exe: &str, home: Option<&str>) -> Result<(), String> {
+    let view = crate::gbrain_cfg::build_config_view(Some(exe), c.active_env_home())
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::gbrain_cfg::copy_provider_base_urls(home, &view.provider_base_urls)
         .map_err(|e| e.to_string())
 }
 
@@ -668,6 +684,11 @@ async fn real_add_brain_inherits_multimodal_and_fixes_image_dim() {
         serde_json::json!("litellm:embeddinggemma-2")
     );
     assert!(cfg["provider_base_urls"]["litellm"].is_string(), "litellm URL 應已繼承");
+    assert_eq!(
+        cfg["provider_base_urls"]["llama-server"],
+        serde_json::json!("http://127.0.0.1:8080/v1"),
+        "嵌入 provider URL 應已繼承（缺它＝新腦查詢/嵌入全 Not Found）"
+    );
 
     // 斷言：embedding_image 已為 768（重跑腳本應回報「免改」）。
     let script = locate_alter_script().expect("alter 腳本應可找到");

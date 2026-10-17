@@ -331,6 +331,41 @@ pub async fn set_multimodal_setup(
     Ok(())
 }
 
+/// 新腦 provider 端點繼承：把作用中環境的 `provider_base_urls`（llama-server、
+/// zhipu、litellm…）整表複製進新腦 file plane。**gbrain init 只帶 chat provider
+/// 的 URL**——嵌入 provider（llama-server）漏寫會讓新腦所有查詢/嵌入呼叫
+/// Not Found（2026-10-18 demo 腦回歸）。直寫 file plane（含非白名單 provider）。
+pub fn copy_provider_base_urls(home: Option<&str>, urls: &serde_json::Value) -> Result<(), AppError> {
+    let Some(map) = urls.as_object() else {
+        return Ok(()); // 來源無 provider 表 → 不動
+    };
+    if map.is_empty() {
+        return Ok(());
+    }
+    let loaded = gbrain_config::load_for(home)?;
+    let mut raw = if loaded.raw.is_object() {
+        loaded.raw
+    } else {
+        serde_json::json!({})
+    };
+    let obj = raw
+        .as_object_mut()
+        .expect("raw checked to be an object above");
+    let dst = obj
+        .entry("provider_base_urls")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Some(dst_map) = dst.as_object_mut() {
+        for (k, v) in map {
+            if v.is_string() {
+                dst_map.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    gbrain_config::save_raw(&gbrain_config::config_path_for(home)?, &raw).map_err(|e| {
+        AppError::new("gbrain.cfgSaveFail").p("detail", e.to_string())
+    })
+}
+
 /// 設 provider_base_url（**直寫檔案**，因 gbrain CLI 對此 key no-op）。
 /// base_url=None → 移除該 provider 的覆寫（用預設）。
 pub fn set_provider_base_url(
