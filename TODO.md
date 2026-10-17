@@ -117,6 +117,14 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
   註解頁的 timeline 事件。
 - **待辦細節**：批次的 OCR/embed 費用估算與併發；把 doctor 的 multimodal 設定檢查接進
   Operoid 前置檢查（未設定時提前提示，而非 sync 靜默跳過）。
+- **工具選項：Unsloth（2026-10-17 調查，未採用）**：Unsloth 是微調/量化框架＋模型發布管線，
+  **不是** ollama/llama-server 的替代（Unsloth Studio 底層就是拉 llama.cpp 當推論後端，
+  只差管理 UI）。對本專案的實際價值是**微調 EmbeddingGemma 2**：官方支援
+  （`FastSentenceTransformer`，embedding 微調指南；EmbeddingGemma 2 有專頁與
+  [unsloth/embeddinggemma-2-GGUF](https://huggingface.co/unsloth/embeddinggemma-2-GGUF)），
+  用自有語料做領域適配後匯出 GGUF 經 llama-server 服務，gbrain 端零改動（維度一致即可）。
+  gbrain 原始碼（0.60.262.0 與 checkout）無任何 unsloth 專屬整合——支援是間接的
+  （任何 OpenAI 相容端點皆可用）。候選增強，非必要。
 
 ### 設定方案（2026-10-17 深度調查：全本地棧，EmbeddingGemma 2）
 
