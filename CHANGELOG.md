@@ -15,6 +15,54 @@
 
 ## [Unreleased]
 
+### Smart LLM routing for people CSV: dated notes now reach the timeline
+
+- People CSV imports no longer stop at plain parsing: after pages are
+  written, contacts whose 備註 section carries explicit date signals
+  (YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD / YYYY年M月D日 / M月D日 / 民國年) are
+  re-run through the LLM structured-extraction path so their dated events
+  land in the page timeline (validated YYYY-MM-DD, dropped counter as
+  everywhere). Pure-parse pages without date signals are untouched and
+  no API key is required when nothing hits. Enriched pages are pinned to
+  their original slug and title (prevents LLM title drift from spawning
+  duplicate pages). Summary reports hits/enriched/failed/skipped.
+- Two-phase within the same run: phase 1 writes all parse-only pages
+  immediately, phase 2 enriches only the signal-hitting subset.
+
+### Import annotations: dated timeline anchors with dedup on re-import
+
+- `run` requests accept an optional `import_annotation`; people/textual
+  pages get `### YYYY-MM-DD — 匯入：<註解>` as the first timeline entry.
+- Re-imports merge instead of losing anchors: the guarded write reads the
+  existing page's timeline, keeps previous 匯入 anchors (dropping the
+  exact duplicate of the incoming one), and appends them after the new
+  anchor. Timeline block only — body edits still need the enriched mark.
+- Desktop and enterprise user factory views expose an optional
+  匯入註解 input (cleared after each run).
+
+### Enterprise user frontend: image annotations + multimodal precheck
+
+- The enterprise user factory view now supports the image factory:
+  dropped images open the per-file annotation dialog (mandatory) before
+  conversion, matching the desktop flow; pipeline union includes
+  `image`; a cancel note is reported per group.
+- `/api/gbrain/config` view exposes `embedding_multimodal` and
+  `embedding_multimodal_model`; the factory view warns when multimodal
+  embedding is not enabled (images would be silently skipped on sync).
+
+### Server: write root from active source + stale oserver guard
+
+- `/api/factories/run` (unscoped) resolves its write root from the
+  ACTIVE SOURCE local_path instead of the retired `notes_repo_path`
+  (which could hold a stale value and misdirect writes); the response
+  now includes the resolved `repo`. Desktop `save_app_config` pins
+  `notes_repo_path` to the on-disk value so stale frontend snapshots
+  cannot overwrite a manual correction.
+- The desktop refuses to spawn an `oserver.exe` whose embedded build
+  hash differs from the shell's own (tauri build now emits
+  OPEROID_BUILD_HASH) — stale dev artifacts fail loudly instead of
+  silently serving old routes.
+
 ### Factory image pipeline: drop images with mandatory annotations
 
 - New `image` factory (16th type in the gbrain-base-v2 table): drop image
