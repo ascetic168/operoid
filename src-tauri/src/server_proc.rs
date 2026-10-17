@@ -33,52 +33,21 @@ fn probe(port: u16) -> bool {
 }
 
 /// 解析 oserver 執行檔：設定欄位 → app exe 同目錄 → dev target/debug。
-/// A3 舊碼防護：跑 `<exe> --version` 解析 build hash（5s 逾時防卡）。None＝無法判定。
-fn oserver_file_build_hash(exe: &Path) -> Option<String> {
-    use std::io::Read as _;
-    use std::process::{Command, Stdio};
-    let mut child = Command::new(exe)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .stdin(Stdio::null())
-        .spawn()
-        .ok()?;
-    let start = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break st,
-            Ok(None) => {
-                if start.elapsed() > std::time::Duration::from_secs(5) {
-                    let _ = child.kill();
-                    return None;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            Err(_) => return None,
-        }
-    };
-    if !status.success() {
-        return None;
-    }
-    let mut out = String::new();
-    if let Some(mut so) = child.stdout.take() {
-        let _ = so.read_to_string(&mut out);
-    }
-    // 格式：`oserver <ver> (build <hash> <time>)`
-    out.split("build ").nth(1)?.split([' ', ')']).next().map(String::from)
-}
-
-/// Some(訊息)＝確定不一致（拒絕帶起）；None＝一致或無法判定（不誤報）。
+/// A3 舊碼防護：`target/debug/oserver.exe` 與 deps 的最新連結輸出逐位元組比對——
+/// 不一致（tauri-build sidecar 蓋寫／建置期鎖定替換失敗）＝舊碼，拒絕帶起。
+/// deps 不存在（非 dev 佈局）→ 不檢查。注意：**不可**用跑 `--version` 的方式驗證，
+/// oserver 的 --version 不會短電路、會完整啟動伺服器（搶 port 競態）。
 fn oserver_build_mismatch(exe: &Path) -> Option<String> {
-    let child_hash = oserver_file_build_hash(exe)?;
-    let own = env!("OPEROID_BUILD_HASH");
-    if child_hash == own || child_hash == "unknown" || own == "unknown" {
+    let deps = exe.parent()?.join("deps").join("oserver.exe");
+    let fresh = std::fs::read(&deps).ok()?;
+    let cur = std::fs::read(exe).ok()?;
+    if fresh == cur {
         return None;
     }
-    Some(format!(
-        "oserver build {child_hash}，桌面殼為 {own}（請重跑 `npm run tauri dev` 或 scripts/dev-rebuild.ps1）"
-    ))
+    Some(
+        "target/debug/oserver.exe 與最新建置（deps/oserver.exe）不一致——請重跑 `npm run tauri dev` 或 scripts/dev-rebuild.ps1"
+            .to_string(),
+    )
 }
 
 fn resolve_oserver(exe_hint: Option<&str>) -> Option<std::path::PathBuf> {
