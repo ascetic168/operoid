@@ -76,6 +76,41 @@ llama-server --embedding \
 > `{"content": [{"type": "image_url", ...}, ...]}` 傳入。腦的純文字嵌入用不到，
 > 省 RAM 可不加（BF16 版約多佔 0.9 GB，Q8_0 約 0.5 GB）。
 
+### 多模態（圖片嵌入）：mm-bridge shim（EmbeddingGemma 2 必需）
+
+gbrain 的圖片匯入管線（圖片檔放進 notes repo → sync 自動建立 `type: image` 頁＋
+多模態向量＋圖片搜尋）需要 multimodal embedding。配 EmbeddingGemma 2（本機
+llama-server）時，**必須部署部署包內附的 `deploy/local/mm-bridge/` 相容層**，原因有二：
+
+- gbrain 的 `llama-server` recipe 未宣告 multimodal 支援——直接設定
+  `embedding_multimodal_model llama-server:<id>` 會被拒。
+- gbrain 與 llama.cpp 的 `/v1/embeddings` 多模態請求形狀不同：前者送扁平
+  `image_url` parts，後者要求每個 input 元素包 `{content:[…]}`。
+
+mm-bridge 是介於兩者之間的形狀轉譯 shim（bun 單檔、監聽 8090 → 8080），
+**不是對 gbrain／llama-server 本體的修改**；上游 gbrain 補上 llama-server recipe 的
+`supports_multimodal` 後可整組退役（詳見包內 README）。
+
+安裝（伺服器機，一次性）：
+
+```bash
+# 1) 啟動 shim（常駐；Windows 放 shell:startup 或排程任務，Linux 以 systemd unit 常駐）
+bun deploy/local/mm-bridge/mm-bridge.mjs        # 監聽 127.0.0.1:8090 → 8080
+
+# 2) schema 前置（僅首次；先確認無 gbrain 行程在跑、已備份腦資料庫；
+#    欄位非空時腳本會自我檢查並中止。gbrain self-upgrade 後重跑檢查）
+bun deploy/local/mm-bridge/alter-image-dim.mjs  # embedding_image: vector(1024)→vector(768)
+
+# 3) gbrain 設定（文字側 embedding_model 不動、零 reindex；multimodal 走獨立欄位）
+gbrain config set provider_base_urls.litellm http://127.0.0.1:8090/v1
+gbrain config set embedding_multimodal_model litellm:embeddinggemma-2
+gbrain config set embedding_multimodal true
+```
+
+驗證：圖片＋同名 `.md` 註解頁放進 notes repo → sync → `gbrain schema stats`
+出現 `image` 頁。注意 `image_of` 自動連結在「圖先於註解頁匯入」時會跳過，
+註解頁請先行放置。
+
 **新腦預設 embedding 模型（可選）**：伺服器上**新建腦**的 embedding 初始值可於
 `<data-dir>/app-settings.json` 的 `app_config` 區塊設定（改後重啟 oserver；企業版亦可以
 admin 身分在 web 端腦頁設定）：

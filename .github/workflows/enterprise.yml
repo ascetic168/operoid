@@ -86,6 +86,8 @@ jobs:
           }
           Copy-Item DEPLOYMENT.md "$stage/"
           Copy-Item deploy/operoid.example.toml "$stage/"
+          # 多模態（圖片嵌入）相容層——EmbeddingGemma 2 + llama-server 必需，見 DEPLOYMENT.md
+          Copy-Item deploy/local/mm-bridge "$stage/deploy/local/mm-bridge" -Recurse
           Compress-Archive -Path "stage/operoid-enterprise/*" -DestinationPath "${{ matrix.archive }}"
 
       - name: assemble package（linux）
@@ -101,6 +103,9 @@ jobs:
           done
           cp DEPLOYMENT.md "$stage/"
           cp deploy/operoid.example.toml "$stage/"
+          # 多模態（圖片嵌入）相容層——EmbeddingGemma 2 + llama-server 必需，見 DEPLOYMENT.md
+          mkdir -p "$stage/deploy/local"
+          cp -r deploy/local/mm-bridge "$stage/deploy/local/mm-bridge"
           tar -czf "${{ matrix.archive }}" -C stage operoid-enterprise
 
       # 套件先存成 workflow artifact（本地再以 PAT 附加到 Release——GITHUB_TOKEN
