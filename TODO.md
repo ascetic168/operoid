@@ -6,7 +6,9 @@
 
 ---
 
-## 1. CSV 匯入無 Timeline — 智慧 LLM 路由（推薦：heuristic gate + 背景批次富集）
+## 1. ✅ CSV 匯入無 Timeline — 智慧 LLM 路由（已實作 2026-10-17）
+
+> 實作差異：富集為同 run 兩階段（階段一純解析落盤 → 階段二對命中頁跑 LLM），非跨行程背景佇列——ocore 無佇列基礎設施；真背景列為後續增強。
 
 ### 現況與問題
 - `Pipeline::People` 的 CSV 分支（`csv_people::parse`）為純解析：無 LLM、不產生 timeline。
@@ -47,7 +49,7 @@
 
 ---
 
-## 2. 匯入註解（Import Annotation）→ 自動 Timeline 錨點
+## 2. ✅ 匯入註解（Import Annotation）→ 自動 Timeline 錨點（已實作 2026-10-17）
 
 ### 使用者提議
 CSV 匯入時要求（或預設）註解，如「從 Google Contacts 匯入的聯絡人」；Operoid 自動補上
@@ -89,7 +91,7 @@ CSV 匯入時要求（或預設）註解，如「從 Google Contacts 匯入的�
 
 ---
 
-## 3. 圖片匯入（調查完成：gbrain 已原生支援，缺口在 Operoid 編排層）
+## 3. ✅ 圖片匯入（已實作 2026-10-17：image 工廠＋企業版對話框＋multimodal 前置檢查）
 
 ### 調查結果（2026-10-17；gbrain 原始碼 checkout v0.42.52 ＋ 本機安裝版 0.60.262.0）
 - **gbrain 原生圖片管線已存在**（v0.27.1「cherry」系列，非未來計畫而是現有功能）：
@@ -194,7 +196,7 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
 
 ---
 
-## 4. 附帶 Bug（本次遷移發現，建議優先修）
+## 4. ✅ 附帶 Bug（已修復 2026-10-17，commit 9493658 之後）
 
 1. **oserver `/api/factories/run`（無 target）寫錯 repo**：
    - API 無 target 時以 `cfg.notes_repo_path` 為寫入根；GUI 則用「作用中來源 local_path」。
