@@ -145,6 +145,9 @@ const INVENTORY: &[(&str, &str)] = &[
     // K5/P1：PDF 知識入庫（user 上傳面）
     ("POST", "/api/knowledge/ingest-pdf"),
     ("GET", "/api/knowledge/ingest-pdf/{id}"),
+    // 圖 arm 退役遷移（Admin——sidecar 封存＋圖檔搬入 source repo）
+    ("POST", "/api/knowledge/migrate-figures"),
+    ("GET", "/api/knowledge/migrate-figures/{id}"),
     ("GET", "/api/knowledge/figure-image"),
     // K5/P1：媒體面（Req::User——簽發／來源 PDF 串流；GET /api/media/figure=
     // Public+簽名驗證，不收矩陣）

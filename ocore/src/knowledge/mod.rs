@@ -20,6 +20,7 @@ pub mod doctor;
 pub mod enrich;
 pub mod fake;
 pub mod figures;
+pub mod figures_migrate;
 pub mod fusion;
 pub mod grants;
 pub mod ingest;

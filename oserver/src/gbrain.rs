@@ -88,6 +88,15 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
             "/api/knowledge/ingest-pdf/{id}",
             get(api_knowledge_ingest_status),
         )
+        // 圖 arm 退役遷移（Admin——RBAC 表未列 → fail-closed 預設；非同步 202＋狀態查詢）
+        .route(
+            "/api/knowledge/migrate-figures",
+            post(api_knowledge_migrate_figures),
+        )
+        .route(
+            "/api/knowledge/migrate-figures/{id}",
+            get(api_knowledge_migrate_status),
+        )
         // K5/P1：檢索命中圖片的安全服務（Req::User——只服務 sidecar 登記過的路徑）
         .route("/api/knowledge/figure-image", get(api_knowledge_figure_image))
         // K5/P1：媒體簽名（POST=Req::User，RBAC 表明列；GET=Public——簽名即驗證，
@@ -1900,6 +1909,110 @@ async fn api_knowledge_ingest_status(
 }
 
 
+// ── figures sidecar 退役遷移（Admin；非同步 202＋狀態查詢）────────────────
+
+static MIGRATIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// `POST /api/knowledge/migrate-figures`——sidecar 已授權圖列搬進 source repo
+/// （gbrain 原生 image import 軌道），sidecar 封存為 `.retired-<date>`（不刪除）。
+/// 無 sidecar → 400。詳見 `ocore::knowledge::figures_migrate`。
+async fn api_knowledge_migrate_figures(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    let cfg = match load_cfg(&state) {
+        Ok(c) => c,
+        Err(e) => return err_response(&e),
+    };
+    let notes = std::path::PathBuf::from(cfg.notes_repo_path.trim_end_matches('/'));
+    let figures_db = cfg
+        .figures_db_path
+        .clone()
+        .unwrap_or_else(|| {
+            ocore::knowledge::ingest::default_figures_db(&notes).to_string_lossy().into_owned()
+        });
+    if !std::path::Path::new(&figures_db).is_file() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "code": "figure.noSidecar",
+                "detail": figures_db,
+                "hint": "figures sidecar 不存在——新管線直接走 gbrain 原生 image import，無可遷移資料"
+            })),
+        )
+            .into_response();
+    }
+
+    let id = format!(
+        "mig-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    MIGRATIONS
+        .lock()
+        .expect("migrations")
+        .insert(id.clone(), json!({ "state": "running", "sidecar_db": figures_db }));
+    let migration_id = id.clone();
+
+    let gbrain_exe = cfg.gbrain_exe_path.clone();
+    let home = cfg.active_env_home().map(str::to_string);
+    tokio::spawn(async move {
+        let result = async {
+            let sources = ocore::knowledge::ingest::list_sources(&gbrain_exe, home.as_deref())
+                .await
+                .map_err(|e| e.to_string())?;
+            ocore::knowledge::figures_migrate::migrate_figures_sidecar(
+                std::path::Path::new(&figures_db),
+                &sources,
+                &gbrain_exe,
+                home.as_deref(),
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+        .await;
+        let mut st = MIGRATIONS.lock().expect("migrations");
+        let entry = st.get_mut(&id).expect("migration entry");
+        match result {
+            Ok(r) => {
+                *entry = json!({ "state": "done", "report": r });
+            }
+            Err(e) => {
+                *entry = json!({ "state": "error", "error": e });
+            }
+        }
+    });
+    ok_json(json!({ "migration_id": migration_id, "state": "running" }))
+}
+
+/// `GET /api/knowledge/migrate-figures/{id}`——遷移狀態／報告。
+async fn api_knowledge_migrate_status(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    if let Err(r) = require_auth(&state, &headers) {
+        return r;
+    }
+    match MIGRATIONS.lock().expect("migrations").get(&id) {
+        Some(v) => ok_json(v.clone()),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"code": "figure.migrationNotFound", "detail": id})),
+        )
+            .into_response(),
+    }
+}
+
+
 /// `GET /api/knowledge/figure-image?path=…`——檢索命中圖片的安全服務。
 /// **allowlist 鐵律**：只服務 sidecar `figures` 表中登記過 `image_path` 的檔案
 /// （路徑攻擊天然被擋：未入庫＝未授權）。回圖位元組＋Content-Type。
@@ -1991,7 +2104,8 @@ async fn api_media_sign_figure_urls(
         Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
     };
 
-    let sidecar = ocore::knowledge::figures::Sidecar::open(&figures_db).ok();
+    // open_existing：sidecar 已封存（退役遷移）→ 無 allowlist 可查，全數拒簽。
+    let sidecar = ocore::knowledge::figures::Sidecar::open_existing(&figures_db);
     let exp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

@@ -190,7 +190,10 @@ impl KnowledgeService {
         if let Some(sc) = &self.sidecar {
             let attempt = async {
                 let qv = figures::embed_query(&sc.embedding_base, None, query).await?;
-                let sidecar = figures::Sidecar::open(&sc.db_path)?;
+                // open_existing：sidecar 已封存（退役遷移）→ 錯誤降級 meta，
+                // 絕不在原路徑重生空庫。
+                let sidecar = figures::Sidecar::open_existing(&sc.db_path)
+                    .ok_or_else(|| anyhow::anyhow!("figures sidecar 已封存（檔案不存在）"))?;
                 let hits: Vec<FigureHit> =
                     sidecar.search(&qv, Some(&plan.source_ids), limit as usize)?;
                 anyhow::Ok(hits)
@@ -259,22 +262,22 @@ impl KnowledgeService {
                     merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
                 docs.sort();
                 docs.dedup();
-                let related = figures::Sidecar::open(&sc.db_path)
-                    .and_then(|s| s.figures_for_docs(&docs, Some(&plan.source_ids), limit as usize * 2))
+                let related = figures::Sidecar::open_existing(&sc.db_path)
+                    .and_then(|s| s.figures_for_docs(&docs, Some(&plan.source_ids), limit as usize * 2).ok())
                     .map(|mut r| {
                         r.extend(extra_related.drain(..));
                         r
                     });
                 match related {
-                    Ok(related) if !related.is_empty() => {
+                    Some(related) if !related.is_empty() => {
                         let before = merged.len();
                         merged = fusion::attach_related_figures(merged, related, limit as usize);
                         if let Some(obj) = sidecar_meta.as_object_mut() {
                             obj.insert("attached".into(), json!(merged.len() - before));
                         }
                     }
-                    Ok(_) => {}
-                    Err(e) => sidecar_error = Some(format!("attach: {e}")),
+                    Some(_) => {}
+                    None => {}
                 }
             }
         } else if !extra_related.is_empty() && !merged.is_empty() {
@@ -341,11 +344,11 @@ impl KnowledgeService {
             let mut docs: Vec<String> = merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
             docs.sort();
             docs.dedup();
-            if let Ok(paths) = figures::Sidecar::open(&sc.db_path)
-                .and_then(|s| s.pdf_paths_for_docs(&docs))
-            {
-                for (d, p) in paths {
-                    source_docs.insert(d, json!(p));
+            if let Some(s) = figures::Sidecar::open_existing(&sc.db_path) {
+                if let Ok(paths) = s.pdf_paths_for_docs(&docs) {
+                    for (d, p) in paths {
+                        source_docs.insert(d, json!(p));
+                    }
                 }
             }
         }

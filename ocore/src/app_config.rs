@@ -327,12 +327,15 @@ impl AppConfig {
         }
     }
 
-    /// K4：sidecar 融合設定（`figures_db_path` 有設才啟用；嵌入端點走本地預設）。
+    /// K4：sidecar 融合設定（`figures_db_path` 有設**且檔案存在**才啟用；嵌入端點
+    /// 走本地預設）。檔案不存在（退役遷移已封存）→ None——查詢端圖 arm 接手，
+    /// 也不會有 Sidecar::open 在原路徑重生空庫。
     pub fn sidecar_config(&self) -> Option<crate::knowledge::figures::SidecarConfig> {
         self.figures_db_path
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+            .filter(|p| std::path::Path::new(p).is_file())
             .map(|p| crate::knowledge::figures::SidecarConfig {
                 db_path: p.into(),
                 embedding_base: crate::knowledge::figures::DEFAULT_EMBEDDING_BASE.into(),

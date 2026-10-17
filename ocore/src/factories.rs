@@ -866,8 +866,13 @@ pub(crate) fn publish_pdf_figures(
         if let Some(name) = &img_name {
             if !next.contains("影像檔：") {
                 let trimmed = next.trim_end();
+                let provenance = if pdf_path.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("原論文 PDF：{pdf_path}\n")
+                };
                 next = format!(
-                    "{trimmed}\n\n影像檔：[[{doc_id}/{name}|{name}]]\n原論文 PDF：{pdf_path}\n"
+                    "{trimmed}\n\n影像檔：[[{doc_id}/{name}|{name}]]\n{provenance}"
                 );
             }
         }

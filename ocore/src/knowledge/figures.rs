@@ -113,8 +113,7 @@ pub struct Sidecar {
 }
 
 impl Sidecar {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {        let path = path.as_ref().to_path_buf();
         let conn = rusqlite::Connection::open(&path)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS figures (
@@ -146,6 +145,50 @@ impl Sidecar {
             }
         }
         Ok(Self { conn, path })
+    }
+
+    /// 查詢端開檔：sidecar 檔不存在 → None（**不得**重建空庫——sidecar 退役
+    /// 遷移後的殘餘查詢端呼叫（融合／附帶／簽章／K8 補圖說）一律優雅降級，
+    /// 而不是在原路徑重 生空 schema 檔）。
+    pub fn open_existing(path: impl AsRef<Path>) -> Option<Self> {
+        let p = path.as_ref();
+        if !p.is_file() {
+            return None;
+        }
+        Sidecar::open(p).ok()
+    }
+
+    /// 退役遷移用：已授權（`source_id` 非空）的 (doc_id, source_id) 清單。
+    pub fn authorized_docs(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT doc_id, source_id FROM figures
+                      WHERE source_id IS NOT NULL AND source_id <> '' ORDER BY doc_id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    /// 退役遷移用：單一 doc 的全部圖列（含未授權——呼叫端自行過濾）。
+    pub fn rows_for_doc(&self, doc_id: &str) -> Result<Vec<crate::converters::mineru::FigureRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT doc_id, page, image_path, caption, section, figure_no, image_md5, source_id
+             FROM figures WHERE doc_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map([doc_id], |r| {
+            Ok(crate::converters::mineru::FigureRow {
+                doc_id: r.get(0)?,
+                page: r.get(1)?,
+                image_path: r.get(2)?,
+                caption: r.get(3)?,
+                section: r.get(4)?,
+                figure_no: r.get::<_, Option<i64>>(5)?.map(|n| n as u32),
+                image_md5: r.get(6)?,
+                source_id: r.get(7)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
     }
 
     /// 圖檔落地目錄：`<sidecar 旁>/figures.assets/{doc_id}/`。轉換工作目錄

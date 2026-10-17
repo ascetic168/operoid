@@ -363,7 +363,8 @@ async fn run_think_json(
         docs.sort();
         docs.dedup();
         if !docs.is_empty() {
-            if let Ok(sc) = crate::knowledge::figures::Sidecar::open(db) {
+            // open_existing：sidecar 已封存（退役遷移）→ 無圖可附，不重建空庫。
+            if let Some(sc) = crate::knowledge::figures::Sidecar::open_existing(db) {
                 let hits = sc.figures_for_docs(&docs, None, 4).unwrap_or_default();
                 let pdfs = sc.pdf_paths_for_docs(&docs).unwrap_or_default();
                 for line in sidecar_append_lines(&hits, &pdfs) {

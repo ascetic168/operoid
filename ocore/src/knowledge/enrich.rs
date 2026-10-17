@@ -116,7 +116,10 @@ pub async fn enrich_short_captions(
             .push("chat 端點為 public 第三方雲且 allow_public_egress=false——K8 補圖說整批跳過（文件外流需明確 opt-in）".into());
         return Ok(stats);
     }
-    let sc = Sidecar::open(db)?;
+    let Some(sc) = Sidecar::open_existing(db) else {
+        stats.warnings.push("figures sidecar 不存在（已退役？）——K8 補圖說跳過".into());
+        return Ok(stats);
+    };
     let rows = sc.short_captions(SHORT_CAPTION_CHARS, max_figures)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
