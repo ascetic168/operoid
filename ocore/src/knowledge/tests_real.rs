@@ -443,11 +443,21 @@ async fn real_retrieve_sources_diag() {
                     )
                     .await
                 {
-                    Ok(text) => eprintln!(
-                        "\n[diag] MCP query source={sid} → {} 字：\n{}",
-                        text.chars().count(),
-                        text.chars().take(500).collect::<String>()
-                    ),
+                    Ok(text) => {
+                        eprintln!("\n[diag] MCP query source={sid} → {} 字", text.chars().count());
+                        if let Ok(rows) = serde_json::from_str::<
+                            Vec<crate::knowledge::fusion::GbrainRow>,
+                        >(crate::knowledge::fusion::find_json_array(&text).unwrap_or_default())
+                        {
+                            for r in rows {
+                                eprintln!(
+                                    "[diag]   score={:.4} slug={}",
+                                    r.score.unwrap_or(0.0),
+                                    r.slug
+                                );
+                            }
+                        }
+                    }
                     Err(e) => eprintln!("\n[diag] MCP query source={sid} → 錯誤：{e}"),
                 }
             }

@@ -15,6 +15,24 @@
 
 ## [Unreleased]
 
+### Multi-source retrieval ranking: score-sorted merge with relevance floor
+
+- With both sources retrievable, the fused output still interleaved noise:
+  RRF merges by per-source rank only, so an unrelated source's #1 (the
+  dedup_review company-merge table, which keyword-matches any company query)
+  outranked a strong #2 from the matching source, and weak person/company
+  stubs (score 0.55-0.57) filled the page.
+- Route 1 cross-source merge is now score-based (gbrain blend scores are
+  comparable within one engine): TextHit carries the gbrain score, items
+  below RETRIEVAL_MIN_SCORE (0.6) are dropped (unscored items kept), and the
+  flattened list sorts by score. Measured on the etch-yield question: the
+  fused output went from noise-interleaved to 10 relevant gbrain-demo items
+  (0.86-1.02) at top with dedup_review demoted to the tail. C4 attribution
+  anchor now follows the top-scored document.
+- Corpus note: dedup_review is a gbrain company-merge tooling artifact at
+  the notes-repo root (dedup_review.md) that keyword-matches every company
+  query; deleting the file removes it from the index at next sync.
+
 ### Knowledge retrieval now covers non-federated sources (demo-source silent miss)
 
 - Asking the knowledge page returned only default-source hits while

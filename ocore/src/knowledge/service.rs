@@ -99,6 +99,11 @@ pub struct RetrievalReceipt {
     pub created_at: String,
 }
 
+/// 路1 跨來源相關度門檻：低於此 gbrain 混合分數的項目視為雜訊丟棄（無分數者
+/// 保留）。2026-10-18 實測（蝕刻良率查詢）：雜訊 0.55–0.57、答案 0.86–1.02，
+/// 分佈分離乾淨；`dedup_review` 這類全公司名關鍵字頁會高於門檻，靠排序壓尾。
+pub const RETRIEVAL_MIN_SCORE: f64 = 0.6;
+
 pub struct KnowledgeService {
     db_path: PathBuf,
     /// K4：sidecar 融合設定（None＝僅 gbrain 文字路；`with_sidecar`／
@@ -154,8 +159,8 @@ impl KnowledgeService {
         }
 
         // ── 路1：逐 source 取 gbrain 命中（M0-V1：`source_id` 為逐呼叫純量；
-        //    CLI `--json` 結構化——RRF 融合需要可識別的命中項）──
-        let mut gbrain_lists: Vec<Vec<FusionItem>> = Vec::new();
+        //    CLI `--json` 結構化——融合需要可識別的命中項）──
+        let mut gbrain_hits: Vec<fusion::TextHit> = Vec::new();
         let mut errors = serde_json::Map::new();
         let futs: Vec<_> = plan
             .source_ids
@@ -165,10 +170,7 @@ impl KnowledgeService {
         let results = futures::future::join_all(futs).await;
         for (sid, res) in plan.source_ids.iter().zip(results) {
             match res {
-                Ok(hits) if !hits.is_empty() => {
-                    gbrain_lists.push(hits.into_iter().map(FusionItem::Text).collect());
-                }
-                Ok(_) => {}
+                Ok(hits) => gbrain_hits.extend(hits),
                 Err(e) => {
                     errors.insert(sid.clone(), json!(e));
                 }
@@ -181,10 +183,12 @@ impl KnowledgeService {
         //    絕對門檻無法歸因；metadata 綁定才是鐵律）──
         let mut sidecar_meta = serde_json::Value::Null;
         let mut sidecar_error: Option<String> = None;
-        let anchor_doc = gbrain_lists
+        // C4 歸因錨：跨來源分數排序後的首位命中文件（原為 per-source RRF 首列）。
+        let anchor_doc = gbrain_hits
             .first()
-            .and_then(|l| l.first())
-            .and_then(|it| it.doc_id());
+            .map(|h| h.slug.split('/').next().map(|s| s.to_string()))
+            .flatten()
+            .filter(|s| !s.is_empty());
         let mut extra_related: Vec<FigureHit> = Vec::new();
         let mut lists: Vec<Vec<FusionItem>> = Vec::new();
         if let Some(sc) = &self.sidecar {
@@ -250,7 +254,14 @@ impl KnowledgeService {
         }
         // sidecar 清單先插入：RRF 同分平手時，多模態命中（稀少模態、其像素資訊
         // 文字 chunk 無法替代——C7 純視覺答案實驗）排在等價文字命中之前。
-        lists.extend(gbrain_lists);
+        // 路1 跨來源：同引擎分數可比 → 分數排序＋相關度門檻（見 merge_by_score；
+        // 2026-10-18：RRF 只看名次，default 弱相關項壓過 demo 強答案）。
+        lists.push(
+            fusion::merge_by_score(vec![std::mem::take(&mut gbrain_hits)], RETRIEVAL_MIN_SCORE)
+                .into_iter()
+                .map(FusionItem::Text)
+                .collect(),
+        );
 
         // ── RRF 合併（k=60）＋路3 附帶：命中文件的同文件圖（metadata 綁定、
         //    不需向量——純文字嵌入模式也能把圖帶出來；嚴禁二次向量配對）。
@@ -453,6 +464,7 @@ impl KnowledgeService {
                             title: r.title,
                             chunk_text: r.chunk_text,
                             cosine: r.cosine,
+                            score: r.score,
                             opaque: false,
                         })
                         .collect());
@@ -464,6 +476,7 @@ impl KnowledgeService {
                 title: String::new(),
                 chunk_text: text,
                 cosine: None,
+                score: None,
                 opaque: true,
             }]);
         }
@@ -493,6 +506,7 @@ impl KnowledgeService {
                 title: r.title,
                 chunk_text: r.chunk_text,
                 cosine: r.cosine,
+                score: r.score,
                 opaque: false,
             })
             .collect())

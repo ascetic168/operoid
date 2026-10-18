@@ -22,8 +22,10 @@ pub struct TextHit {
     pub slug: String,
     pub title: String,
     pub chunk_text: String,
-    /// gbrain 混合分數（RRF 不吃此值，僅偕同顯示）。
+    /// gbrain 原始 cosine（RRF 不吃此值，僅偕同顯示）。
     pub cosine: Option<f64>,
+    /// gbrain 混合分數（同引擎跨來源可比——route 1 跨來源排序與門檻用）。
+    pub score: Option<f64>,
     /// MCP 傳輸退路：整段文字無 slug——以 source 為單位參與融合。
     pub opaque: bool,
 }
@@ -66,12 +68,13 @@ impl FusionItem {
                 if t.opaque {
                     format!("── {} ──\n{}", t.source_id, t.chunk_text.trim())
                 } else {
-                    let score = t
-                        .cosine
-                        .map(|c| format!(" · cos {c:.3}"))
+                    let shown = t
+                        .score
+                        .or(t.cosine)
+                        .map(|v| format!(" · score {v:.2}"))
                         .unwrap_or_default();
                     format!(
-                        "── {} · {}{score} ──\n{}",
+                        "── {} · {}{shown} ──\n{}",
                         t.source_id,
                         t.slug,
                         t.chunk_text.trim()
@@ -109,6 +112,9 @@ pub struct GbrainRow {
     pub chunk_text: String,
     #[serde(default)]
     pub cosine: Option<f64>,
+    /// gbrain 混合分數（同引擎跨來源可比；融合排序用）。
+    #[serde(default)]
+    pub score: Option<f64>,
     #[serde(default, rename = "source_id")]
     pub source_id: Option<String>,
 }
@@ -241,6 +247,21 @@ fn parse_fig_stem(stem: &str) -> Option<(Option<u32>, i64)> {
     Some((Some(fig), page))
 }
 
+/// route 1 跨來源合併（同引擎分數可比）：攤平 → 丟掉低於 min_score 的弱相關項
+/// （無分數者保留）→ 依分數降序（stable）。**取代跨來源 RRF**：RRF 只看各來
+/// 源內部名次，弱相關來源的第 1 名會壓過強相關來源的第 2 名（2026-10-18
+/// 知識庫雜訊回歸：default 的 dedup_review 壓過 demo 答案）。
+pub fn merge_by_score(lists: Vec<Vec<TextHit>>, min_score: f64) -> Vec<TextHit> {
+    let mut flat: Vec<TextHit> = lists.into_iter().flatten().collect();
+    flat.retain(|h| h.score.is_none_or(|s| s >= min_score));
+    flat.sort_by(|a, b| {
+        b.score
+            .unwrap_or(f64::NEG_INFINITY)
+            .total_cmp(&a.score.unwrap_or(f64::NEG_INFINITY))
+    });
+    flat
+}
+
 /// RRF 融合：`lists` 為各路已排序的項；回傳依融合分數降序（同分依首次出現序）。
 pub fn rrf_merge(lists: Vec<Vec<FusionItem>>, k: f64) -> Vec<(FusionItem, f64)> {
     let mut order: Vec<String> = Vec::new();
@@ -312,6 +333,28 @@ pub fn split_by_anchor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// merge_by_score：跨來源按分數排序＋門檻丟棄（無分數者保留）。
+    #[test]
+    fn merge_by_score_floors_and_sorts() {
+        let h = |slug: &str, score: Option<f64>| TextHit {
+            source_id: "s".into(),
+            slug: slug.into(),
+            title: String::new(),
+            chunk_text: String::new(),
+            cosine: None,
+            score,
+            opaque: false,
+        };
+        let lists = vec![
+            vec![h("a-top", Some(0.55)), h("a-2", Some(0.40))],
+            vec![h("b-top", Some(0.95)), h("b-2", Some(0.70))],
+            vec![h("noscore", None)],
+        ];
+        let merged = merge_by_score(lists, 0.6);
+        let slugs: Vec<&str> = merged.iter().map(|h| h.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["b-top", "b-2", "noscore"], "弱分數丟棄、跨來源按分數排序、無分數保留");
+    }
 
     #[test]
     fn image_slug_parses_fig_page_and_resolves_local_path() {
@@ -385,6 +428,7 @@ mod tests {
             title: String::new(),
             chunk_text: format!("content of {slug}"),
             cosine: Some(0.9),
+            score: Some(0.9),
             opaque: false,
         })
     }
@@ -541,6 +585,7 @@ mod tests {
             title: String::new(),
             chunk_text: "raw text".into(),
             cosine: None,
+            score: None,
             opaque: true,
         });
         assert_eq!(op.render(), "── k7 ──\nraw text");
