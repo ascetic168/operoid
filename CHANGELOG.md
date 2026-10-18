@@ -15,6 +15,7 @@
 
 ## [Unreleased]
 
+## [v0.5.2] - 2026-10-18
 ### Multi-source retrieval ranking: score-sorted merge with relevance floor
 
 - With both sources retrievable, the fused output still interleaved noise:
