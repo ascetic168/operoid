@@ -53,9 +53,9 @@ fn temp_dir(tag: &str) -> PathBuf {
     d
 }
 
-/// convert_structured：筆記數量/slug/body、sidecar 列（md5/路徑）、conversion-report。
+/// convert_structured：筆記數量/slug/body、圖列（md5/路徑）、conversion-report。
 #[test]
-fn structured_to_notes_and_sidecar() {
+fn structured_to_notes_and_figure_rows() {
     let dir = temp_dir("conv");
     let zip_dir = sample_zip_dir(&dir);
     let out = dir.join("out");
@@ -93,28 +93,30 @@ fn structured_to_notes_and_sidecar() {
         std::fs::read_to_string(&n.path).unwrap().contains("Ref one.")
     }));
 
-    // figures.sqlite：3 列（fig1/3 有圖＋md5；fig2 caption-only 無圖）；vec 為 NULL。
-    let db = rusqlite::Connection::open(out.join("figures.sqlite")).unwrap();
-    let n: i64 = db.query_row("SELECT COUNT(*) FROM figures", [], |r| r.get(0)).unwrap();
-    assert_eq!(n, 3);
+    // 圖列（in-memory，發布用）：3 列（fig1/3 有圖＋md5；fig2 caption-only 無圖）。
+    assert_eq!(outcome.figure_rows.len(), 3);
     let expect_md5 = md5_file(&zip_dir.join("images/page_1_image_7.jpg")).unwrap();
-    let (path, md5): (Option<String>, Option<String>) = db
-        .query_row(
-            "SELECT image_path, image_md5 FROM figures WHERE caption LIKE 'Two-chip%'",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+    let fig1 = outcome
+        .figure_rows
+        .iter()
+        .find(|r| r.caption.starts_with("Two-chip"))
         .unwrap();
-    assert!(path.unwrap().ends_with("page_1_image_7.jpg"));
-    assert_eq!(md5.as_deref(), Some(expect_md5.as_str()));
-    let vec_null: Option<Vec<u8>> = db
-        .query_row("SELECT vec FROM figures WHERE caption LIKE 'Loss%'", [], |r| r.get(0))
+    assert!(fig1.image_path.as_deref().unwrap().ends_with("page_1_image_7.jpg"));
+    assert_eq!(fig1.image_md5.as_deref(), Some(expect_md5.as_str()));
+    let tbl = outcome
+        .figure_rows
+        .iter()
+        .find(|r| r.caption.starts_with("Efficiency"))
         .unwrap();
-    assert!(vec_null.is_none(), "K3 之前 vec 必為 NULL");
-    let tbl_path: Option<String> = db
-        .query_row("SELECT image_path FROM figures WHERE caption LIKE 'Efficiency%'", [], |r| r.get(0))
+    assert!(tbl.image_path.as_deref().unwrap().ends_with("page_1_chart_1.jpg"));
+    let caption_only = outcome
+        .figure_rows
+        .iter()
+        .find(|r| r.caption.starts_with("Loss"))
         .unwrap();
-    assert!(tbl_path.unwrap().ends_with("page_1_chart_1.jpg"));
+    assert!(caption_only.image_path.is_none(), "caption-only 拾回無圖檔");
+    // figures.sqlite 不再產出（sidecar 退役）。
+    assert!(!out.join("figures.sqlite").exists());
 
     // conversion-report.json 存在且可解析（本入口不帶 route/ladder——呼叫端補）。
     let report: serde_json::Value = serde_json::from_str(

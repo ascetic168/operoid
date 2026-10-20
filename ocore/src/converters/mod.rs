@@ -6,7 +6,7 @@
 //! - `csv_people`：Google Contacts CSV → people/*.md（移植自 csv_to_people.py）
 //! - （Phase 4/5）text_to_md、extract_companies、pdf_text
 //! - `mineru`：K1 多模態檢索升級——複雜 PDF → MinerU（複雜度分流＋取用階梯＋
-//!   egress 信任分層）→ 章節切塊筆記＋圖片筆記＋figures.sqlite sidecar 來源資料
+//!   egress 信任分層）→ 章節切塊筆記＋圖片筆記（每頁 frontmatter 帶 source_pdf）
 
 pub mod csv_people;
 pub mod extract_companies;

@@ -5,7 +5,6 @@
 //!                                       ├─ structured_content.json 解析（structured）
 //!                                       ├─ 章節切塊（chunk；實驗 V3-t 語意）
 //!                                       └─ 產出：文字 chunk 筆記＋圖片筆記
-//!                                              ＋figures.sqlite（sidecar 來源資料，K3 消費）
 //!                                              ＋conversion-report.json（路由/階梯/egress 稽核）
 //! ```
 //!
@@ -19,9 +18,9 @@
 //! 產出布局（`out_dir`）：
 //! ```text
 //! notes/<doc_slug>/s00.md … fig1-p2.md …   ← gbrain source 目錄（呼叫端 git init＋sources add）
-//! figures.sqlite                            ← 每圖一列：doc_id/page/image_path/caption/section/md5
+//!                                            （每頁 frontmatter 帶 source_pdf 出處）
 //! conversion-report.json                    ← 路由＋階梯＋egress 稽核＋警告
-//! mineru/                                   ← MinerU 原始 zip＋解壓（圖檔是 K3 嵌入來源，不清）
+//! mineru/                                   ← MinerU 原始 zip＋解壓（呼叫端結束時清除）
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -92,7 +91,8 @@ pub enum NoteKind {
     Figure,
 }
 
-/// figures.sqlite 一列（sidecar 來源資料；`vec` 由 K3 回填）。
+/// 轉換產出的一圖列（in-memory 交換型：`publish_pdf_figures` 據此發布同名
+/// 圖檔＋補強註解頁；sidecar 退役後不再落盤）。
 #[derive(Debug, Clone, Serialize)]
 pub struct FigureRow {
     pub doc_id: String,
@@ -301,7 +301,7 @@ fn paragraphs(text: &str) -> Vec<String> {
     out
 }
 
-/// 共用產出層：切塊 → 筆記檔＋figures.sqlite＋報告（不含 route/ladder——呼叫端補）。
+/// 共用產出層：切塊 → 筆記檔＋報告（不含 route/ladder——呼叫端補）。
 /// `source_pdf` 寫進每頁 frontmatter（出處鏈；None＝未知來源的舊式重解析）。
 fn emit(
     doc_id: &str,
@@ -417,9 +417,6 @@ fn emit(
         warnings,
     };
 
-    // figures.sqlite（rusqlite bundled；K3 以 image_md5 去重回填 vec）。
-    write_figures_sqlite(out_dir, &figure_rows)?;
-
     Ok(ConversionOutcome {
         report,
         notes,
@@ -459,43 +456,6 @@ fn write_note(
     let path = dir.join(format!("{stem}.md"));
     std::fs::write(&path, format!("{fm}\n{body}\n"))?;
     Ok(path)
-}
-
-/// figures.sqlite：每圖一列（vec BLOB 留 NULL——K3 以 caption＋原圖嵌入後回填）。
-fn write_figures_sqlite(out_dir: &Path, rows: &[FigureRow]) -> Result<()> {
-    let db = rusqlite::Connection::open(out_dir.join("figures.sqlite"))?;
-    db.execute_batch(
-        "CREATE TABLE IF NOT EXISTS figures (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             doc_id TEXT NOT NULL,
-             page INTEGER NOT NULL,
-             image_path TEXT,
-             caption TEXT NOT NULL DEFAULT '',
-             section TEXT NOT NULL DEFAULT '',
-             figure_no INTEGER,
-             image_md5 TEXT,
-             source_id TEXT,
-             vec BLOB
-         );
-         CREATE INDEX IF NOT EXISTS idx_figures_doc ON figures(doc_id);",
-    )?;
-    for r in rows {
-        db.execute(
-            "INSERT INTO figures (doc_id, page, image_path, caption, section, figure_no, image_md5, source_id, vec)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
-            rusqlite::params![
-                r.doc_id,
-                r.page,
-                r.image_path,
-                r.caption,
-                r.section,
-                r.figure_no,
-                r.image_md5,
-                r.source_id
-            ],
-        )?;
-    }
-    Ok(())
 }
 
 fn md5_file(path: &Path) -> Result<String> {

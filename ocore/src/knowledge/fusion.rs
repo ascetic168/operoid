@@ -1,4 +1,5 @@
-//! K4 三路融合——gbrain 文字路（路1）＋sidecar 圖向量路（路2）＋metadata 附帶（路3）。
+//! K4 融合——gbrain 文字路（路1）＋圖 arm（路2；gbrain 原生 `--cross-modal image`，
+//! sidecar 已退役）＋metadata 附帶（路3，錨文件鐵律）。
 //!
 //! 融合＝**RRF（k=60）**：各路各自排序，每項得 Σ 1/(k + rank)，跨路分數可加——
 //! 不需把 cosine 分數與 gbrain 混合分數放在同一把尺上（實驗 §7 的歸因鐵律：

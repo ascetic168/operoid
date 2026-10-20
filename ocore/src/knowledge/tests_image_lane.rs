@@ -1,33 +1,25 @@
-//! Figures lane 對照試點（#[ignore] real test——sidecar 聯合向量 vs gbrain 原生圖向量）。
+//! 圖 lane 回歸閘（#[ignore] real test）——sidecar 退役後，檢索圖路只剩
+//! **gbrain 原生 `--cross-modal image`** 一條；本測試以 2026-10-17 試點的同一組
+//! 帶圖查詢（11 條，逐字移植）常駐驗證兩個視圖：
 //!
-//! 跑法：`cargo test -p ocore real_figures_lane -- --ignored --nocapture`
-//!
-//! 實測 TODO 項目 3「方向決議候選」：同一組帶圖目標的查詢打四條路徑——
-//! - **Lane A（現行，單臂）**：K3 sidecar（caption＋原圖聯合向量；brute-force
-//!   cosine）。語料 `pdf2zh/embed-exp/zip-full/mueller2016` 純 JSON 轉換＋mmproj 回填。
-//! - **Lane B（候選，單臂）**：gbrain 原生 `query --cross-modal image`
-//!   （`embedding_image` 純圖向量；demo 腦已同步 8 張 MinerU 圖；OCR 未啟用）。
-//! - **Lane A′（現行產品視圖）**：sidecar arm＋gbrain 文字查詢，RRF（k=60）融合、
-//!   sidecar 列在前——即 `service.rs` route 2 融合的模擬。
-//! - **Lane C（候選產品視圖）**：gbrain 圖 arm＋文字查詢，同款 RRF——改道後的
-//!   產品視圖（圖頁與同名註解頁在 repo 內並存，caption 訊號走文字 lane）。
+//! - **IMG**：圖 arm 單臂（`embedding_image` 純圖向量）。
+//! - **PROD**：圖 arm×文字路 RRF（k=60）——即 `service.rs` route 2 的產品視圖
+//!   （圖頁與同名註解頁在 repo 內並存，caption 訊號走文字 lane）。
 //!
 //! 指標：hit@5（目標圖進前 5）＋MRR。主裁決子集＝實驗 IMG_QUERIES 定義的 6 條
-//! 圖片主目標＋3 條 pixel-only 純視覺查詢；查詢 1/2 帶 fig 目標但主目標為章節，
-//! 另列參考（四 lane 均以 fig 目標計位）。
+//! 圖片主目標＋3 條 pixel-only 純視覺查詢（9 條）。
 //!
-//! **決策閘**（人讀，不硬斷言）：lane C（候選產品視圖）hit@5 與 MRR 不劣於
-//! lane A′（現行產品視圖）→ PDF figures 改道 gbrain 原生 image import（改寫
-//! run_pdf_knowledge／ingest_pdf）、sidecar 退役遷移。
+//! **硬斷言**：主裁決子集 hit@5 = 9/9（2026-10-17 四 lane 試點中 A′/C 全 lane
+//! 持平的底線；退役裁決見 TODO 項目 3）。MRR 印出供人讀（試點值 C=0.909；
+//! #1 vs #2/#3 的波動屬 LLM/嵌入非確定性，不硬斷言）。
 //!
-//! 環境：本機 llama-server（mmproj 已掛）＋ gbrain 預設腦。來源 id 可用
-//! `FIGURES_LANE_SOURCE` 覆寫（預設 `gbrain-demo`）。
+//! 環境：本機 llama-server（mmproj 已掛）＋ gbrain 預設腦（demo 腦已同步 8 圖）。
+//! 來源 id 可用 `FIGURES_LANE_SOURCE` 覆寫（預設 `gbrain-demo`）。
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::gbrain_cli::run_capture;
-use crate::knowledge::figures::{embed_pending, embed_query, Sidecar, SidecarMode};
 use crate::proc::env_for_brain;
 
 /// 帶圖目標的查詢集（`(query, 目標圖號, 主裁決子集)`）。
@@ -89,9 +81,9 @@ fn figure_queries() -> Vec<(&'static str, u32, bool)> {
     ]
 }
 
-#[ignore = "真實環境相依：需本機 llama-server（mmproj）、embed-exp/zip-full 語料與 demo 腦已同步 8 圖"]
+#[ignore = "真實環境相依：需本機 llama-server（mmproj）與 demo 腦已同步 8 圖"]
 #[tokio::test]
-async fn real_figures_lane_comparison() {
+async fn real_image_lane_regression() {
     let queries = figure_queries();
     let source = std::env::var("FIGURES_LANE_SOURCE").unwrap_or_else(|_| "gbrain-demo".into());
     let gbrain_exe = dirs::home_dir()
@@ -101,7 +93,8 @@ async fn real_figures_lane_comparison() {
     let exe_s = gbrain_exe.to_string_lossy().into_owned();
     let env = env_for_brain(None);
 
-    // ── Lane A 語料：K1 轉換（純 JSON 解析）＋sidecar 多模態回填 ──────────
+    // slug → figs（文字面歸因用：sNN chunk 引用的圖號；figN-pP 即自身）——
+    // 以 K1 純 JSON 解析取得（不入庫、不嵌向量）。
     let zip_dir = PathBuf::from(
         r"C:\Users\charl\Documents\python\pdf2zh\embed-exp\zip-full\mueller2016",
     );
@@ -111,7 +104,7 @@ async fn real_figures_lane_comparison() {
         zip_dir.display()
     );
     let dir = std::env::temp_dir().join(format!(
-        "figures-lane-{}-{}",
+        "image-lane-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -122,37 +115,15 @@ async fn real_figures_lane_comparison() {
     let outcome =
         crate::converters::mineru::convert_structured(&zip_dir, &dir, Some("mueller2016"), None)
             .expect("K1 轉換應成功");
-    assert_eq!(outcome.report.figure_rows, 9);
-    // slug → figs（文字面歸因用：sNN chunk 引用的圖號；figN-pP 即自身）。
     let attrs_by_slug: BTreeMap<String, Vec<u32>> = outcome
         .notes
         .iter()
         .map(|n| (n.slug.clone(), n.figs.clone()))
         .collect();
 
-    let db = dir.join("figures.sqlite");
-    {
-        let sc = Sidecar::open(&db).unwrap();
-        assert_eq!(sc.tag_source("mueller2016", "k7").unwrap(), 9);
-    }
-    let base = crate::knowledge::figures::DEFAULT_EMBEDDING_BASE;
-    let stats = embed_pending(&db, base, None, SidecarMode::Multimodal)
-        .await
-        .expect("多模態回填應成功");
-    assert_eq!(
-        stats.embedded + stats.deduped,
-        9,
-        "9 列全數有向量：{:?}",
-        stats.warnings
-    );
-    let sidecar = Sidecar::open(&db).unwrap();
-    let authorized = ["k7".to_string()];
-
-    // ── 逐查詢：文字 arm＋圖 arm（gbrain）＋sidecar arm → 四 lane 計位 ────
-    let mut lane_a: Vec<Option<usize>> = Vec::new();
-    let mut lane_ap: Vec<Option<usize>> = Vec::new();
-    let mut lane_b: Vec<Option<usize>> = Vec::new();
-    let mut lane_c: Vec<Option<usize>> = Vec::new();
+    // ── 逐查詢：文字 arm＋圖 arm（gbrain）→ 兩視圖計位 ───────────────────
+    let mut lane_img: Vec<Option<usize>> = Vec::new();
+    let mut lane_prod: Vec<Option<usize>> = Vec::new();
     for (q, target, _primary) in &queries {
         let prefixed = crate::knowledge::service::retrieval_query(q);
 
@@ -169,17 +140,17 @@ async fn real_figures_lane_comparison() {
         ];
         let (code, stdout, stderr) = run_capture(&exe_s, &t_args, &env).await.expect("gbrain spawn");
         assert_eq!(code, 0, "gbrain query（text）失敗：{stderr}");
-        let text_rows: Vec<(String, bool)> = parse_query_json(&stdout)
+        let text_items: Vec<(String, bool)> = parse_query_json(&stdout)
             .expect("query --json 應可解析")
             .iter()
             .filter_map(|r| {
                 let slug = r["slug"].as_str()?.to_string();
                 let figs = attrs_by_slug.get(&slug)?;
-                Some((slug, figs.contains(target)))
+                Some((format!("slug:{slug}"), figs.contains(target)))
             })
             .collect();
 
-        // 圖 arm（候選路徑；embedding_image 純圖向量）。
+        // 圖 arm（embedding_image 純圖向量）。
         let i_args = [
             "query",
             prefixed.as_str(),
@@ -194,76 +165,35 @@ async fn real_figures_lane_comparison() {
         ];
         let (code, stdout, stderr) = run_capture(&exe_s, &i_args, &env).await.expect("gbrain spawn");
         assert_eq!(code, 0, "gbrain query（image）失敗：{stderr}");
-        let image_figs: Vec<Option<u32>> = parse_query_json(&stdout)
+        let image_items: Vec<(String, bool)> = parse_query_json(&stdout)
             .expect("query --json 應可解析")
             .iter()
-            .map(slug_fig)
+            .map(|r| {
+                let f = slug_fig(r);
+                (item_key(f), f == Some(*target))
+            })
             .collect();
 
-        // sidecar arm（現行路徑；聯合向量 brute-force）。
-        let qv = embed_query(base, Some("embeddinggemma-2"), q).await.unwrap();
-        let hits = sidecar.search(&qv, Some(&authorized), 5).unwrap();
-        let sidecar_figs: Vec<Option<u32>> = hits.iter().map(|h| h.figure_no).collect();
-
-        let to_items = |figs: &[Option<u32>]| -> Vec<(String, bool)> {
-            figs.iter()
-                .map(|f| (item_key(*f), *f == Some(*target)))
-                .collect()
-        };
-        let sidecar_items = to_items(&sidecar_figs);
-        let image_items = to_items(&image_figs);
-        let text_items: Vec<(String, bool)> = text_rows
-            .iter()
-            .map(|(slug, hit)| (format!("slug:{slug}"), *hit))
-            .collect();
-
-        lane_a.push(sidecar_items.iter().position(|(_, h)| *h).map(|i| i + 1));
-        lane_b.push(image_items.iter().position(|(_, h)| *h).map(|i| i + 1));
-        lane_ap.push(rrf_first_hit(&[&sidecar_items, &text_items]));
-        lane_c.push(rrf_first_hit(&[&image_items, &text_items]));
+        lane_img.push(image_items.iter().position(|(_, h)| *h).map(|i| i + 1));
+        lane_prod.push(rrf_first_hit(&[&image_items, &text_items]));
     }
     std::fs::remove_dir_all(&dir).ok();
 
     // ── 對照表與指標 ────────────────────────────────────────────────────
     eprintln!(
-        "\n[figures-lane] ── 對照（A=sidecar 單臂 / B=gbrain 圖單臂 / A′=現行產品融合 / C=候選產品融合；top-5）──"
+        "\n[image-lane] ── 對照（IMG=圖 arm 單臂 / PROD=圖 arm×文字 RRF 產品視圖；top-5）──"
     );
-    for (i, ((q, target, primary), (((a, ap), b), c))) in queries
-        .iter()
-        .zip(lane_a.iter().zip(&lane_ap).zip(&lane_b).zip(&lane_c))
-        .enumerate()
+    for (i, ((q, target, primary), (img, prod))) in
+        queries.iter().zip(lane_img.iter().zip(&lane_prod)).enumerate()
     {
         let label: String = q.chars().take(48).collect();
         eprintln!(
-            "Q{:>2}{} {label:<48} fig{:<2}  A={:>4} B={:>4}  A′={:>4} C={:>4}",
+            "Q{:>2}{} {label:<48} fig{:<2}  IMG={:>4} PROD={:>4}",
             i + 1,
             if *primary { "*" } else { " " },
             target,
-            fmt_rank(a),
-            fmt_rank(b),
-            fmt_rank(ap),
-            fmt_rank(c)
-        );
-    }
-    for (name, subset_only) in [
-        ("主裁決子集（IMG_QUERIES＋pixel，9 條）", true),
-        ("全部帶圖查詢（11 條）", false),
-    ] {
-        let idx: Vec<usize> = queries
-            .iter()
-            .enumerate()
-            .filter(|(_, (_, _, p))| !subset_only || *p)
-            .map(|(i, _)| i)
-            .collect();
-        let n = idx.len();
-        let (a_hits, a_mrr) = metrics(&idx, &lane_a);
-        let (b_hits, b_mrr) = metrics(&idx, &lane_b);
-        let (ap_hits, ap_mrr) = metrics(&idx, &lane_ap);
-        let (c_hits, c_mrr) = metrics(&idx, &lane_c);
-        eprintln!(
-            "[figures-lane] {name}:\n  \
-             單臂  A hit@5 {a_hits}/{n} MRR {a_mrr:.3}  |  B hit@5 {b_hits}/{n} MRR {b_mrr:.3}\n  \
-             產品  A′ hit@5 {ap_hits}/{n} MRR {ap_mrr:.3} |  C hit@5 {c_hits}/{n} MRR {c_mrr:.3}"
+            fmt_rank(img),
+            fmt_rank(prod)
         );
     }
     let idx: Vec<usize> = queries
@@ -272,14 +202,18 @@ async fn real_figures_lane_comparison() {
         .filter(|(_, (_, _, p))| *p)
         .map(|(i, _)| i)
         .collect();
-    let (ap_hits, ap_mrr) = metrics(&idx, &lane_ap);
-    let (c_hits, c_mrr) = metrics(&idx, &lane_c);
-    let verdict = if c_hits >= ap_hits && c_mrr >= ap_mrr {
-        "lane C（候選產品視圖）不劣於 A′（現行）——支持改道＋sidecar 退役"
-    } else {
-        "lane C 劣於 A′——暫緩退役，人工複核"
-    };
-    eprintln!("[figures-lane] 決策閘：{verdict}");
+    let n = idx.len();
+    let (img_hits, img_mrr) = metrics(&idx, &lane_img);
+    let (prod_hits, prod_mrr) = metrics(&idx, &lane_prod);
+    eprintln!(
+        "[image-lane] 主裁決子集（IMG_QUERIES＋pixel，{n} 條）:\n  \
+         單臂  IMG hit@5 {img_hits}/{n} MRR {img_mrr:.3}\n  \
+         產品  PROD hit@5 {prod_hits}/{n} MRR {prod_mrr:.3}"
+    );
+    assert_eq!(
+        prod_hits, n,
+        "產品視圖 hit@5 必須全中（退役裁決底線；目標圖必進前 5）"
+    );
 }
 
 fn item_key(fig: Option<u32>) -> String {

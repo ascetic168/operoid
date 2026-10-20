@@ -19,8 +19,6 @@ pub mod bootstrap;
 pub mod doctor;
 pub mod enrich;
 pub mod fake;
-pub mod figures;
-pub mod figures_migrate;
 pub mod fusion;
 pub mod grants;
 pub mod ingest;
@@ -48,13 +46,7 @@ mod tests_c9;
 mod tests_real;
 
 #[cfg(test)]
-mod tests_k3;
-
-#[cfg(test)]
-mod tests_k4;
-
-#[cfg(test)]
 mod tests_ingest;
 
 #[cfg(test)]
-mod tests_figures_lane;
+mod tests_image_lane;

@@ -145,8 +145,7 @@ async fn real_k7_end_to_end_mueller2016() {
         "表 I–V 全覆蓋"
     );
     assert!(out.join("conversion-report.json").exists());
-    assert!(out.join("figures.sqlite").exists());
-    assert_eq!(outcome.figure_rows.len(), 9, "sidecar 每圖一列");
+    assert_eq!(outcome.figure_rows.len(), 9, "每圖一列（發布用）");
 
     // ── 臨時腦：git → init → sources add → sync（--no-extract）→ embed ────
     let home_s = dir.join("home").to_string_lossy().into_owned();

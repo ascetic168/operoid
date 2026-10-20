@@ -16,7 +16,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use super::figures::Sidecar;
 use crate::converters::mineru::{self, ConvertConfig};
 
 /// 入庫報告。
@@ -30,17 +29,6 @@ pub struct IngestReport {
     /// gbrain sync 是否成功（false＝notes 已入庫、同步待事後補跑）。
     pub synced: bool,
     pub warnings: Vec<String>,
-}
-
-/// sidecar 合併：`from`（轉換產出）→ `to`（生產庫），doc 級冪等＋md5 攜帶向量。
-/// 回傳（該文件合併後列數、攜帶向量數）。
-pub fn merge_sidecar(
-    from: &Path,
-    to: &Path,
-    doc_id: &str,
-    source_id: &str,
-) -> Result<(usize, usize)> {
-    Sidecar::open(to)?.merge_from(from, doc_id, source_id)
 }
 
 /// 反斜線字元（避免在字面中書寫）。
@@ -94,18 +82,6 @@ pub async fn resolve_source_id(
         "notes repo 未註冊為 source（{}）——請先 gbrain sources add <id> --path {}",
         notes_repo.display(),
         notes_repo.display()
-    ))
-}
-
-/// 預設 sidecar 路徑：notes repo 的伴隨檔（repo 外——避免被 git/sync 掃入）。
-/// `figures_db_path` 未設定時的後備；K4 融合要生效仍建議寫進設定。
-pub fn default_figures_db(notes_repo: &Path) -> std::path::PathBuf {
-    std::path::PathBuf::from(format!(
-        "{}.figures.sqlite",
-        notes_repo
-            .to_string_lossy()
-            .trim_end_matches('/')
-            .trim_end_matches(char::from_u32(0x5C).unwrap())
     ))
 }
 
@@ -281,88 +257,4 @@ pub async fn ingest_pdf(
         synced,
         warnings,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn row(
-        doc: &str,
-        page: i64,
-        fig: u32,
-        caption: &str,
-        md5: Option<&str>,
-        source: Option<&str>,
-    ) -> crate::converters::mineru::FigureRow {
-        crate::converters::mineru::FigureRow {
-            doc_id: doc.into(),
-            page,
-            image_path: None,
-            caption: caption.into(),
-            section: "I".into(),
-            figure_no: Some(fig),
-            image_md5: md5.map(|s| s.into()),
-            source_id: source.map(|s| s.into()),
-        }
-    }
-
-    fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "ingest-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&d).unwrap();
-        d
-    }
-
-    /// 合併：doc 級冪等（重複合併列數不變）＋md5 攜帶向量＋source_id 歸檔。
-    #[test]
-    fn merge_sidecar_is_idempotent_and_carries_vectors() {
-        let dir = temp_dir("merge");
-        let from = dir.join("from.sqlite");
-        let to = dir.join("to.sqlite");
-        {
-            let s = Sidecar::open(&from).unwrap();
-            s.insert_row(
-                &row("doc-a", 1, 1, "A chart.", Some("md5-a1"), None),
-                None,
-            )
-            .unwrap();
-        }
-        {
-            let s = Sidecar::open(&to).unwrap();
-            // 舊列帶向量（模擬已回填）＋同文件雜列（應被 doc 級重建清掉）。
-            s.insert_row(
-                &row("doc-a", 1, 1, "OLD A chart.", Some("md5-a1"), Some("old-src")),
-                Some(&[1.0, 0.0]),
-            )
-            .unwrap();
-            s.insert_row(
-                &row("doc-a", 9, 9, "stale row", Some("md5-stale"), Some("old-src")),
-                Some(&[0.5]),
-            )
-            .unwrap();
-            s.insert_row(&row("doc-b", 1, 1, "Other doc.", None, Some("k7")), None)
-            .unwrap();
-        }
-        let (rows, carried) = merge_sidecar(&from, &to, "doc-a", "k7").unwrap();
-        assert_eq!(rows, 1, "doc 級重建後只剩來源的列");
-        assert_eq!(carried, 1, "md5 相同 → 攜帶舊向量");
-
-        let s = Sidecar::open(&to).unwrap();
-        let (rows, with_vec) = s.doc_stats("doc-a").unwrap();
-        assert_eq!(rows, 1, "同文件雜列被清除");
-        assert_eq!(with_vec, 1, "向量應被攜帶");
-        let hits = s.figures_for_docs(&["doc-a".into()], None, 10).unwrap();
-        assert_eq!(hits[0].source_id.as_deref(), Some("k7"), "歸檔新 source");
-        assert_eq!(hits[0].figure_no, Some(1));
-        // 他文件不受影響。
-        assert_eq!(s.doc_stats("doc-b").unwrap(), (1, 0));
-        std::fs::remove_dir_all(&dir).ok();
-    }
 }

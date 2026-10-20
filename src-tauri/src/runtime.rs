@@ -463,7 +463,6 @@ pub async fn agent_run_team<R: tauri::Runtime>(
     let store = SqliteStore::open(agent_db_path(&app)?)?;
 
     // C6：團隊成員的知識檢索同樣走 KnowledgeService（I1/I4——與單人 run 同語意）。
-    // K4：sidecar 融合隨設定接線（figures_db_path 未設＝僅文字路，行為不變）。
     let knowledge = std::sync::Arc::new(ocore::knowledge::service::service_for_config(
         agent_db_path(&app)?,
         &cfg,

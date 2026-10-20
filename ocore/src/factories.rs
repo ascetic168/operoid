@@ -348,8 +348,8 @@ fn merge_previews(mut results: Vec<PreviewResult>) -> PreviewResult {
 /// 寫入 notes repo（同 textual 語意）。圖片走 **gbrain 原生 image import 軌道**
 /// （2026-10-17 試點裁決，TODO 項目 3）：每圖發布同名圖檔＋補強註解頁至 doc
 /// 目錄（`figN-pP.jpg`／`figN-pP.md`，同目錄同名觸發 sync 的 `image_of` 自動
-/// 連結與多模態向量），不再寫 figures sidecar——舊庫由查詢端 K4 融合續讀
-/// （`figures_db_path` 接線不變），退役遷移見 `knowledge::figures_migrate`。
+/// 連結與多模態向量）。figures sidecar 已完全退役（v0.5.3）——查詢端圖路只有
+/// gbrain 圖 arm；發布後背景補圖說（K8，best-effort）。
 ///
 /// 多工切分：**轉換**（MinerU/快速路徑子行程——重活）逐檔並發（本地上限或公平
 /// 閘門）；**圖檔發布／notes 複製**共享覆寫語意，由轉換完成後在父端按輸入序

@@ -21,7 +21,6 @@ use serde_json::json;
 
 use super::backend::RetrieveKind;
 use super::bootstrap::load_policy_fail_closed;
-use super::figures;
 use super::fusion::{self, FigureHit, FusionItem, TextHit};
 use super::policy::{authorized_scope_ids_with_grants, authorized_sources};
 use super::types::AccessContext;
@@ -106,23 +105,13 @@ pub const RETRIEVAL_MIN_SCORE: f64 = 0.6;
 
 pub struct KnowledgeService {
     db_path: PathBuf,
-    /// K4：sidecar 融合設定（None＝僅 gbrain 文字路；`with_sidecar`／
-    /// `service_for_config` 接線）。
-    sidecar: Option<figures::SidecarConfig>,
 }
 
 impl KnowledgeService {
     pub fn new(db_path: impl Into<PathBuf>) -> Self {
         Self {
             db_path: db_path.into(),
-            sidecar: None,
         }
-    }
-
-    /// K4：啟用 sidecar 融合（路 2 圖向量＋路 3 metadata 附帶）。
-    pub fn with_sidecar(mut self, sidecar: figures::SidecarConfig) -> Self {
-        self.sidecar = Some(sidecar);
-        self
     }
 
     /// 授權檢索入口。`query`/`anchor` 來自工具輸入（I4：scope 意圖**不在**輸入面——
@@ -177,12 +166,14 @@ impl KnowledgeService {
             }
         }
 
-        // ── 路2：sidecar 圖向量（K4；best-effort——嵌入/開檔失敗只降級記 meta，
-        //    絕不讓檢索失效）。C4 歸因：以文字路首位命中文件為錨——同文件圖參與
-        //    融合排序，他文件圖降為附帶池（聯合空間的跨主題基線 cosine 高達 ~0.6，
-        //    絕對門檻無法歸因；metadata 綁定才是鐵律）──
-        let mut sidecar_meta = serde_json::Value::Null;
-        let mut sidecar_error: Option<String> = None;
+        // ── 路2：圖 arm（gbrain 原生 image import；2026-10-17 試點裁決，sidecar
+        //    已退役）。`--cross-modal image` 必須顯式呼叫——auto/both 的文字查詢
+        //    不會帶出 image 頁（實測，TODO 項目 3）。CLI 傳輸限定（MCP query 工具
+        //    未宣告 cross-modal 參數）。best-effort——失敗只降級記 meta，絕不讓
+        //    檢索失效。C4 歸因：以文字路首位命中文件為錨——錨文件圖進排序面、
+        //    他文件圖降附帶池（metadata 綁定是鐵律，不做二次向量配對）──
+        let mut images_meta = serde_json::Value::Null;
+        let mut images_error: Option<String> = None;
         // C4 歸因錨：跨來源分數排序後的首位命中文件（原為 per-source RRF 首列）。
         let anchor_doc = gbrain_hits
             .first()
@@ -191,38 +182,7 @@ impl KnowledgeService {
             .filter(|s| !s.is_empty());
         let mut extra_related: Vec<FigureHit> = Vec::new();
         let mut lists: Vec<Vec<FusionItem>> = Vec::new();
-        if let Some(sc) = &self.sidecar {
-            let attempt = async {
-                let qv = figures::embed_query(&sc.embedding_base, None, query).await?;
-                // open_existing：sidecar 已封存（退役遷移）→ 錯誤降級 meta，
-                // 絕不在原路徑重生空庫。
-                let sidecar = figures::Sidecar::open_existing(&sc.db_path)
-                    .ok_or_else(|| anyhow::anyhow!("figures sidecar 已封存（檔案不存在）"))?;
-                let hits: Vec<FigureHit> =
-                    sidecar.search(&qv, Some(&plan.source_ids), limit as usize)?;
-                anyhow::Ok(hits)
-            };
-            match attempt.await {
-                Ok(hits) if !hits.is_empty() => {
-                    // 排序面只收「錨文件＋高於門檻」的命中；他文件命中降入附帶池。
-                    let (mut same, other) =
-                        fusion::split_by_anchor(hits, anchor_doc.as_deref());
-                    same.retain(|h| h.score >= figures::SIDECAR_FUSION_MIN_COSINE);
-                    if !same.is_empty() {
-                        sidecar_meta = json!({ "figures": same.len() });
-                        lists.push(same.into_iter().map(FusionItem::Figure).collect());
-                    }
-                    extra_related = other;
-                }
-                Ok(_) => {}
-                Err(e) => sidecar_error = Some(e.to_string()),
-            }
-        } else if ctx.mcp.is_none() {
-            // 圖 arm（gbrain 原生 image import；2026-10-17 試點裁決）：sidecar
-            // 未設定時的圖片路。`--cross-modal image` 必須顯式呼叫——auto/both
-            // 的文字查詢不會帶出 image 頁（實測，TODO 項目 3）。CLI 傳輸限定
-            // （MCP query 工具未宣告 cross-modal 參數）。命中以 slug 歸因、
-            // 同樣走錨文件鐵律：錨文件圖進排序面、他文件圖降附帶池。
+        if ctx.mcp.is_none() {
             match super::ingest::list_sources(&ctx.gbrain_exe, ctx.gbrain_home.as_deref()).await {
                 Ok(sources) => {
                     let futs: Vec<_> = plan
@@ -243,16 +203,16 @@ impl KnowledgeService {
                     if !all.is_empty() {
                         let (same, other) = fusion::split_by_anchor(all, anchor_doc.as_deref());
                         if !same.is_empty() {
-                            sidecar_meta = json!({ "image_arm": same.len() });
+                            images_meta = json!({ "image_arm": same.len() });
                             lists.push(same.into_iter().map(FusionItem::Figure).collect());
                         }
                         extra_related = other;
                     }
                 }
-                Err(e) => sidecar_error = Some(format!("sources list: {e}")),
+                Err(e) => images_error = Some(format!("sources list: {e}")),
             }
         }
-        // sidecar 清單先插入：RRF 同分平手時，多模態命中（稀少模態、其像素資訊
+        // 圖清單先插入：RRF 同分平手時，多模態命中（稀少模態、其像素資訊
         // 文字 chunk 無法替代——C7 純視覺答案實驗）排在等價文字命中之前。
         // 路1 跨來源：同引擎分數可比 → 分數排序＋相關度門檻（見 merge_by_score；
         // 2026-10-18：RRF 只看名次，default 弱相關項壓過 demo 強答案）。
@@ -263,53 +223,26 @@ impl KnowledgeService {
                 .collect(),
         );
 
-        // ── RRF 合併（k=60）＋路3 附帶：命中文件的同文件圖（metadata 綁定、
-        //    不需向量——純文字嵌入模式也能把圖帶出來；嚴禁二次向量配對）。
-        //    附帶池＝metadata 命中文件圖＋路2 的他文件降級命中（去重後接尾）──
+        // ── RRF 合併（k=60）＋附帶池：他文件圖以 metadata 歸因（錨文件鐵律）
+        //    接尾——不做任何向量歸因──
         let mut merged = fusion::rrf_merge(lists, fusion::RRF_K);
-        if self.sidecar.is_some() && !merged.is_empty() {
-            if let Some(sc) = &self.sidecar {
-                let mut docs: Vec<String> =
-                    merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
-                docs.sort();
-                docs.dedup();
-                let related = figures::Sidecar::open_existing(&sc.db_path)
-                    .and_then(|s| s.figures_for_docs(&docs, Some(&plan.source_ids), limit as usize * 2).ok())
-                    .map(|mut r| {
-                        r.extend(extra_related.drain(..));
-                        r
-                    });
-                match related {
-                    Some(related) if !related.is_empty() => {
-                        let before = merged.len();
-                        merged = fusion::attach_related_figures(merged, related, limit as usize);
-                        if let Some(obj) = sidecar_meta.as_object_mut() {
-                            obj.insert("attached".into(), json!(merged.len() - before));
-                        }
-                    }
-                    Some(_) => {}
-                    None => {}
-                }
-            }
-        } else if !extra_related.is_empty() && !merged.is_empty() {
-            // 圖 arm 的附帶池：他文件圖以 metadata 歸因（錨文件鐵律同路2 sidecar）
-            // 接尾——不做任何向量歸因。
+        if !extra_related.is_empty() && !merged.is_empty() {
             let before = merged.len();
             merged = fusion::attach_related_figures(
                 merged,
                 std::mem::take(&mut extra_related),
                 limit as usize,
             );
-            if let Some(obj) = sidecar_meta.as_object_mut() {
+            if let Some(obj) = images_meta.as_object_mut() {
                 obj.insert("attached".into(), json!(merged.len() - before));
             }
         }
-        if let Some(e) = sidecar_error {
+        if let Some(e) = images_error {
             // 錯誤與成功計數並存（部分成功也要如實呈現），不互相覆蓋。
-            if !sidecar_meta.is_object() {
-                sidecar_meta = json!({});
+            if !images_meta.is_object() {
+                images_meta = json!({});
             }
-            sidecar_meta
+            images_meta
                 .as_object_mut()
                 .expect("just made object")
                 .insert("error".into(), json!(e));
@@ -366,7 +299,7 @@ impl KnowledgeService {
                 "sources_with_errors": errors,
                 "receipt_kind": kind_str,
                 "fused_items": merged.len(),
-                "sidecar": sidecar_meta,
+                "images": images_meta,
                 "source_docs": source_docs,
             }),
             images: figure_images,
@@ -629,16 +562,13 @@ pub fn service_arc(db_path: impl Into<PathBuf>) -> Arc<KnowledgeService> {
     Arc::new(KnowledgeService::new(db_path))
 }
 
-/// 便利建構（K4）：依 AppConfig 接 sidecar 融合（`figures_db_path` 有設才啟用）。
+/// 便利建構：放進 `ToolCtx.knowledge`（圖路＝gbrain 圖 arm；sidecar 已退役，
+/// 保留 cfg 參數供未來的組態接線）。
 pub fn service_for_config(
     db_path: impl Into<PathBuf>,
-    cfg: &crate::app_config::AppConfig,
+    _cfg: &crate::app_config::AppConfig,
 ) -> Arc<KnowledgeService> {
-    let mut svc = KnowledgeService::new(db_path);
-    if let Some(sc) = cfg.sidecar_config() {
-        svc = svc.with_sidecar(sc);
-    }
-    Arc::new(svc)
+    Arc::new(KnowledgeService::new(db_path))
 }
 
 #[cfg(test)]
