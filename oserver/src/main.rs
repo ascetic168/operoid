@@ -344,6 +344,9 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         server_port: port,
         // 工廠轉換公平調度閘門（全域一個；上限隨每次請求讀熱設定）。
         factory_gate: Arc::new(ocore::factory_sched::FactoryGate::new()),
+        media_sources: Arc::new(tokio::sync::RwLock::new(
+            crate::gbrain::MediaSourcesCache::default(),
+        )),
     });
 
     // 驗 DB（spawn_blocking——rusqlite 同步 API）。

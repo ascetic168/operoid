@@ -88,24 +88,14 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
             "/api/knowledge/ingest-pdf/{id}",
             get(api_knowledge_ingest_status),
         )
-        // 圖 arm 退役遷移（Admin——RBAC 表未列 → fail-closed 預設；非同步 202＋狀態查詢）
-        .route(
-            "/api/knowledge/migrate-figures",
-            post(api_knowledge_migrate_figures),
-        )
-        .route(
-            "/api/knowledge/migrate-figures/{id}",
-            get(api_knowledge_migrate_status),
-        )
         // MinerU 安裝目錄（Admin——階梯 1b 設定；GET 讀取＋POST 設定）
         .route(
             "/api/knowledge/mineru-dir",
             get(api_knowledge_mineru_dir_get).post(api_knowledge_mineru_dir_set),
         )
-        // K5/P1：檢索命中圖片的安全服務（Req::User——只服務 sidecar 登記過的路徑）
-        .route("/api/knowledge/figure-image", get(api_knowledge_figure_image))
         // K5/P1：媒體簽名（POST=Req::User，RBAC 表明列；GET=Public——簽名即驗證，
-        // <img> 標籤帶不了 Bearer，is_public 放行後由 handler 查驗 HMAC＋sidecar）
+        // <img> 標籤帶不了 Bearer，is_public 放行後由 handler 查驗 HMAC＋
+        // 「路徑落在登記來源 repo 內」包含制）
         .route("/api/media/figure-urls", post(api_media_sign_figure_urls))
         .route("/api/media/figure", get(api_media_figure))
         // K5/P1.2：來源 PDF 串流（Req::User，RBAC 表明列；web 前端 Bearer fetch→blob——
@@ -1939,109 +1929,6 @@ async fn api_knowledge_ingest_status(
 }
 
 
-// ── figures sidecar 退役遷移（Admin；非同步 202＋狀態查詢）────────────────
-
-static MIGRATIONS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// `POST /api/knowledge/migrate-figures`——sidecar 已授權圖列搬進 source repo
-/// （gbrain 原生 image import 軌道），sidecar 封存為 `.retired-<date>`（不刪除）。
-/// 無 sidecar → 400。詳見 `ocore::knowledge::figures_migrate`。
-async fn api_knowledge_migrate_figures(
-    State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
-) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
-    let cfg = match load_cfg(&state) {
-        Ok(c) => c,
-        Err(e) => return err_response(&e),
-    };
-    let notes = std::path::PathBuf::from(cfg.notes_repo_path.trim_end_matches('/'));
-    let figures_db = cfg
-        .figures_db_path
-        .clone()
-        .unwrap_or_else(|| {
-            ocore::knowledge::ingest::default_figures_db(&notes).to_string_lossy().into_owned()
-        });
-    if !std::path::Path::new(&figures_db).is_file() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "code": "figure.noSidecar",
-                "detail": figures_db,
-                "hint": "figures sidecar 不存在——新管線直接走 gbrain 原生 image import，無可遷移資料"
-            })),
-        )
-            .into_response();
-    }
-
-    let id = format!(
-        "mig-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    );
-    MIGRATIONS
-        .lock()
-        .expect("migrations")
-        .insert(id.clone(), json!({ "state": "running", "sidecar_db": figures_db }));
-    let migration_id = id.clone();
-
-    let gbrain_exe = cfg.gbrain_exe_path.clone();
-    let home = cfg.active_env_home().map(str::to_string);
-    tokio::spawn(async move {
-        let result = async {
-            let sources = ocore::knowledge::ingest::list_sources(&gbrain_exe, home.as_deref())
-                .await
-                .map_err(|e| e.to_string())?;
-            ocore::knowledge::figures_migrate::migrate_figures_sidecar(
-                std::path::Path::new(&figures_db),
-                &sources,
-                &gbrain_exe,
-                home.as_deref(),
-            )
-            .await
-            .map_err(|e| e.to_string())
-        }
-        .await;
-        let mut st = MIGRATIONS.lock().expect("migrations");
-        let entry = st.get_mut(&id).expect("migration entry");
-        match result {
-            Ok(r) => {
-                *entry = json!({ "state": "done", "report": r });
-            }
-            Err(e) => {
-                *entry = json!({ "state": "error", "error": e });
-            }
-        }
-    });
-    ok_json(json!({ "migration_id": migration_id, "state": "running" }))
-}
-
-/// `GET /api/knowledge/migrate-figures/{id}`——遷移狀態／報告。
-async fn api_knowledge_migrate_status(
-    State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
-    AxPath(id): AxPath<String>,
-) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
-    match MIGRATIONS.lock().expect("migrations").get(&id) {
-        Some(v) => ok_json(v.clone()),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"code": "figure.migrationNotFound", "detail": id})),
-        )
-            .into_response(),
-    }
-}
-
 // ── MinerU 安裝目錄（階梯 1b；Admin）────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -2112,28 +1999,6 @@ async fn api_knowledge_mineru_dir_set(
 }
 
 
-/// `GET /api/knowledge/figure-image?path=…`——檢索命中圖片的安全服務。
-/// **allowlist 鐵律**：只服務 sidecar `figures` 表中登記過 `image_path` 的檔案
-/// （路徑攻擊天然被擋：未入庫＝未授權）。回圖位元組＋Content-Type。
-async fn api_knowledge_figure_image(
-    State(state): State<Arc<ServerState>>,
-    headers: HeaderMap,
-    Query(q): Query<std::collections::HashMap<String, String>>,
-) -> Response {
-    if let Err(r) = require_auth(&state, &headers) {
-        return r;
-    }
-    let Some(path) = q.get("path").cloned() else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"code": "figure.pathRequired"})),
-        )
-            .into_response();
-    };
-    serve_registered_figure(&state, &path).await
-}
-
-
 // ── K5/P1：媒體簽名 URL（企業瀏覽器讀圖的認證面擴充）────────────────────
 
 static MEDIA_SIGNER: std::sync::LazyLock<ocore::knowledge::media::MediaSigner> =
@@ -2143,9 +2008,87 @@ static MEDIA_SIGNER: std::sync::LazyLock<ocore::knowledge::media::MediaSigner> =
 
 const MEDIA_URL_TTL_SECS: u64 = 300;
 
+/// `gbrain sources list` 的短 TTL 快取——媒體端點（簽名／serve）不必每次 spawn
+/// gbrain（web ChatView 以秒級輪詢重簽）。過期即重拉；拉取失敗沿用舊值
+/// （無舊值 → 空清單＝全數拒絕，fail-closed）；重啟即清。
+#[derive(Default)]
+pub struct MediaSourcesCache {
+    fetched_at: Option<std::time::Instant>,
+    sources: Vec<ocore::brains::GbrainSource>,
+}
+
+const MEDIA_SOURCES_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+impl MediaSourcesCache {
+    async fn get(state: &Arc<ServerState>, cfg: &AppConfig) -> Vec<ocore::brains::GbrainSource> {
+        {
+            let guard = state.media_sources.read().await;
+            if let Some(at) = guard.fetched_at {
+                if at.elapsed() < MEDIA_SOURCES_TTL {
+                    return guard.sources.clone();
+                }
+            }
+        }
+        let brain_id = cfg
+            .active_brain_id
+            .clone()
+            .unwrap_or_else(|| "__default__".into());
+        let fresh = ocore::brains::list_sources(cfg, &brain_id).await.ok();
+        let mut guard = state.media_sources.write().await;
+        if let Some(s) = fresh {
+            guard.sources = s;
+            guard.fetched_at = Some(std::time::Instant::now());
+        }
+        guard.sources.clone()
+    }
+}
+
+/// 圖檔副檔名白名單（與工廠 image 管線一致）。
+const IMAGE_EXTS: [&str; 5] = ["jpg", "jpeg", "png", "gif", "webp"];
+
+/// 授權來源 repo 根（canonicalize 後）：`allowed=None` 取全部登記來源，
+/// `Some(ids)` 過濾至 principal 的 authorized_sources。`local_path` 缺失
+/// （federated／未綁定）或目錄不存在的來源跳過。
+fn source_roots(
+    sources: &[ocore::brains::GbrainSource],
+    allowed: Option<&[String]>,
+) -> Vec<(String, std::path::PathBuf)> {
+    sources
+        .iter()
+        .filter(|s| allowed.map_or(true, |ids| ids.iter().any(|a| a == &s.id)))
+        .filter_map(|s| {
+            let lp = s.local_path.as_deref()?.trim();
+            if lp.is_empty() {
+                return None;
+            }
+            let root = std::path::Path::new(lp).canonicalize().ok()?;
+            Some((s.id.clone(), root))
+        })
+        .collect()
+}
+
+/// 路徑包含制檢查：圖檔路徑必須 canonicalize 落在某個來源 repo 根之下
+/// （canonicalize 解析 `..` 與符號連結——包含制在真實路徑上判定，遍歷攻擊無效）
+/// 且副檔名在白名單內。回傳命中的 source_id；檔案不存在 → None（fail-closed）。
+fn containing_image_source(
+    path: &str,
+    roots: &[(String, std::path::PathBuf)],
+) -> Option<String> {
+    let p = std::path::Path::new(path);
+    match p.extension().and_then(|e| e.to_str()) {
+        Some(e) if IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()) => {}
+        _ => return None,
+    }
+    let canon = p.canonicalize().ok()?;
+    roots
+        .iter()
+        .find(|(_, root)| canon.starts_with(root))
+        .map(|(id, _)| id.clone())
+}
+
 /// `POST /api/media/figure-urls`——批量簽發圖片短時 URL。
-/// **簽名前先過知識織網授權**（M1 鐵律）：圖的 source 必須在請求者 principal
-/// 的 authorized_sources 內，否則拒簽。
+/// **allowlist＝repo 包含制**（sidecar 退役後）：路徑必須落在請求者 principal
+/// 授權來源（M1 authorized_sources）的 repo 目錄內，否則拒簽。
 async fn api_media_sign_figure_urls(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -2169,16 +2112,6 @@ async fn api_media_sign_figure_urls(
         Ok(c) => c,
         Err(e) => return err_response(&e),
     };
-    let figures_db = cfg
-        .figures_db_path
-        .clone()
-        .unwrap_or_else(|| {
-            ocore::knowledge::ingest::default_figures_db(std::path::Path::new(
-                cfg.notes_repo_path.trim_end_matches('/'),
-            ))
-            .to_string_lossy()
-            .into_owned()
-        });
 
     // M1 授權面：以請求者 principal 評估 authorized_sources（複用 KnowledgeService 鐵律）。
     let store = match ocore::domain::SqliteStore::open(&state.db_path) {
@@ -2203,8 +2136,8 @@ async fn api_media_sign_figure_urls(
         Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
     };
 
-    // open_existing：sidecar 已封存（退役遷移）→ 無 allowlist 可查，全數拒簽。
-    let sidecar = ocore::knowledge::figures::Sidecar::open_existing(&figures_db);
+    let sources = MediaSourcesCache::get(&state, &cfg).await;
+    let roots = source_roots(&sources, Some(&plan.source_ids));
     let exp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -2213,12 +2146,7 @@ async fn api_media_sign_figure_urls(
     let mut out: Vec<serde_json::Value> = Vec::new();
     for p in paths {
         let Some(path) = p.as_str() else { continue };
-        // 授權：圖的 source ∈ 請求者 authorized_sources（未登記/未授權 → 拒簽）。
-        let authorized = sidecar
-            .as_ref()
-            .and_then(|s| s.source_of_path(path).ok().flatten())
-            .map(|src| plan.source_ids.iter().any(|a| a == &src))
-            .unwrap_or(false);
+        let authorized = containing_image_source(path, &roots).is_some();
         if !authorized {
             out.push(json!({ "path": path, "authorized": false }));
             continue;
@@ -2236,9 +2164,10 @@ async fn api_media_sign_figure_urls(
     ok_json(json!({ "urls": out }))
 }
 
-/// `GET /api/media/figure`——帶簽圖片服務：簽名驗證＋sidecar allowlist
-/// （路徑必須登記過）雙重查驗後回圖位元組。路由為 Public——簽名即驗證
-/// （綁 path＋principal＋過期，開機隨機金鑰）。
+/// `GET /api/media/figure`——帶簽圖片服務：簽名驗證＋repo 包含制
+/// （路徑必須落在某登記來源 repo 內）雙重查驗後回圖位元組。路由為 Public——
+/// 簽名即驗證（綁 path＋principal＋過期，開機隨機金鑰；per-principal 授權
+/// 在簽名端已過 M1，serve 端包含制為防禦縱深）。
 async fn api_media_figure(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -2276,34 +2205,16 @@ async fn api_media_figure(
     serve_registered_figure(&state, &path).await
 }
 
-/// 共用：sidecar allowlist 查驗＋讀檔回圖。
+/// 共用：repo 包含制查驗＋讀檔回圖（回傳碼沿用 `figure.notRegistered`——
+/// 路徑不在任何登記來源 repo 內）。
 async fn serve_registered_figure(state: &Arc<ServerState>, path: &str) -> Response {
     let cfg = match load_cfg(state) {
         Ok(c) => c,
         Err(e) => return err_response(&e),
     };
-    let figures_db = cfg
-        .figures_db_path
-        .clone()
-        .unwrap_or_else(|| {
-            ocore::knowledge::ingest::default_figures_db(std::path::Path::new(
-                cfg.notes_repo_path.trim_end_matches('/'),
-            ))
-            .to_string_lossy()
-            .into_owned()
-        });
-    let registered = std::path::Path::new(&figures_db).is_file()
-        && rusqlite::Connection::open(&figures_db)
-            .and_then(|db| {
-                db.query_row(
-                    "SELECT COUNT(*) FROM figures WHERE image_path = ?1",
-                    [path],
-                    |r| r.get::<_, i64>(0),
-                )
-            })
-            .map(|n| n > 0)
-            .unwrap_or(false);
-    if !registered {
+    let sources = MediaSourcesCache::get(state, &cfg).await;
+    let roots = source_roots(&sources, None);
+    if containing_image_source(path, &roots).is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"code": "figure.notRegistered"})),
@@ -2514,4 +2425,83 @@ fn lookup_registered_pdf(
         sources.push(r?);
     }
     Ok(Some((doc, pdf_path, sources)))
+}
+
+#[cfg(test)]
+mod media_allowlist_tests {
+    use super::{containing_image_source, source_roots};
+
+    fn src(id: &str, local_path: Option<&str>) -> ocore::brains::GbrainSource {
+        ocore::brains::GbrainSource {
+            id: id.into(),
+            name: id.into(),
+            local_path: local_path.map(str::to_string),
+            federated: false,
+            page_count: 0,
+            last_sync_at: None,
+        }
+    }
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("oserver-media-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// 授權 root 內的圖 → 命中該 source；allowed 過濾把未授權來源整個排除。
+    #[test]
+    fn image_inside_authorized_root_is_contained_and_filter_works() {
+        let root = temp_root("in");
+        let sub = root.join("doc");
+        std::fs::create_dir_all(&sub).unwrap();
+        let img = sub.join("fig1-p1.jpg");
+        std::fs::write(&img, b"x").unwrap();
+
+        let sources = vec![src("sA", root.to_str()), src("sB", None)];
+        let all = source_roots(&sources, None);
+        assert_eq!(
+            containing_image_source(img.to_str().unwrap(), &all).as_deref(),
+            Some("sA")
+        );
+        // allowed=["sB"] → sA 的 root 被濾掉，同一張圖即不可及。
+        let filtered = source_roots(&sources, Some(&["sB".into()]));
+        assert!(containing_image_source(img.to_str().unwrap(), &filtered).is_none());
+        // local_path 缺失（federated）的 sB 從不產生 root。
+        assert!(filtered.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `..` 修飾成「看似在 root 內」的路徑，canonicalize 後仍在 root 外 → 拒；
+    /// repo 外檔案 → 拒；非圖檔副檔名 → 拒；檔案不存在 → 拒（fail-closed）。
+    #[test]
+    fn traversal_outside_and_non_image_are_rejected() {
+        let root = temp_root("trav");
+        let sibling = temp_root("out");
+        let img = sibling.join("secret.jpg");
+        std::fs::write(&img, b"x").unwrap();
+        let txt = sibling.join("notes.txt");
+        std::fs::write(&txt, b"x").unwrap();
+
+        let roots = source_roots(&[src("sA", root.to_str())], None);
+        let sneaky = root
+            .join("..")
+            .join("..")
+            .join(sibling.file_name().unwrap())
+            .join("secret.jpg");
+        assert!(containing_image_source(sneaky.to_str().unwrap(), &roots).is_none());
+        assert!(containing_image_source(img.to_str().unwrap(), &roots).is_none());
+        // 副檔名白名單：root 內的 .txt 也不可及。
+        let inside_txt = root.join("doc").join("x.txt");
+        std::fs::create_dir_all(root.join("doc")).unwrap();
+        std::fs::write(&inside_txt, b"x").unwrap();
+        assert!(containing_image_source(inside_txt.to_str().unwrap(), &roots).is_none());
+        assert!(containing_image_source(
+            root.join("doc").join("ghost.png").to_str().unwrap(),
+            &roots
+        )
+        .is_none());
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&sibling);
+    }
 }

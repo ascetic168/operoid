@@ -45,6 +45,9 @@ pub struct ServerState {
     /// 工廠轉換的公平調度閘門（多工核心）：全域 ≤ `factory_concurrency` 名額、
     /// 飽和時每位遠端使用者 1 線程（`ocore::factory_sched`）。
     pub factory_gate: Arc<ocore::factory_sched::FactoryGate>,
+    /// 媒體端點的來源清單快取（`gbrain sources list`，TTL 300s——簽名輪詢不每次
+    /// spawn gbrain；見 `gbrain::MediaSourcesCache`）。
+    pub media_sources: Arc<tokio::sync::RwLock<crate::gbrain::MediaSourcesCache>>,
 }
 
 /// 統一錯誕回應：`AppError` → JSON＋status 映射。

@@ -119,7 +119,7 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
 
 /// 公開路徑（免 authn）——OPTIONS preflight 另於中介層放行。
 /// `/api/media/figure` 為帶簽圖片服務：免 Bearer（<img> 帶不了 header），
-/// 由 handler 查驗 HMAC 簽名（綁 path＋principal＋過期）＋sidecar allowlist。
+/// 由 handler 查驗 HMAC 簽名（綁 path＋principal＋過期）＋來源 repo 包含制。
 pub fn is_public(path: &str) -> bool {
     path == "/healthz"
         || path == "/"
