@@ -2,7 +2,8 @@
 
 > 個人版本地部署的相容性 shim。**不是對 gbrain / llama-server 本體的修改**——
 > 它是一個介於兩者之間的小型 HTTP 轉譯服務，加上一個一次性的 schema 前置變更。
-> 上游（gbrain）補上 llama-server recipe 的 `supports_multimodal` 後可整組退役。
+> 上游（gbrain）補上 llama-server recipe 的 `supports_multimodal` 後可整組退役
+> （已回報 upstream：[garrytan/gbrain#7094](https://github.com/garrytan/gbrain/issues/7094)，2026-10-20）。
 
 ## 解決什麼
 

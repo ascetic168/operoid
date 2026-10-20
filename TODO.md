@@ -221,13 +221,17 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
    - ~~shim 開機自啟未掛~~ **已完成（2026-10-17）**：Startup 資料夾 + VBS 隱藏包裝
      （`shell:startup\mm-bridge.vbs`，免 admin；部署副本 `deploy/local/mm-bridge/mm-bridge-autostart.vbs`）。
      S4U 排程任務版（`register-mm-bridge-task.ps1`）因需提權未採用，留作替代。
-     llama-server 本體的重啟（含 --mmproj）仍是手動流程。
+     ~~llama-server 本體的重啟（含 --mmproj）仍是手動流程~~ **已自動化（2026-10-20）**：
+     llama-server 本體改為開機自動啟動，此殘餘事項解除。
    - `image_of` 自動連結在「圖先於註解頁匯入」時會靜默跳過（gbrain best-effort）——
      Operoid 實作時應先寫註解頁再丟圖，或匯入後跑連結補算。
    - gbrain `self-upgrade`／未來 migration 可能重置 image 欄維度——升級後重跑
      `alter-image-dim.mjs` 驗證（冪等）。
-   - 上游正道：給 gbrain 的 llama-server recipe 補 `supports_multimodal` 宣告
-     （openai-compat multimodal 路徑上游已存在，是小改動），可免除 shim。
+   - ~~上游正道：給 gbrain 的 llama-server recipe 補 `supports_multimodal` 宣告~~
+     **已回報上游（2026-10-20，[garrytan/gbrain#7094](https://github.com/garrytan/gbrain/issues/7094)）**：
+     recipe 宣告＋llama.cpp 請求形狀（缺 `content` 包裝）＋`embedding_image` 硬編
+     vector(1024) 維度三點一併提出（ollama／Unsloth Studio 亦提供 EmbeddingGemma 2，
+     主張 generic openai-compat opt-in）。上游修復後 mm-bridge shim 可整組退役。
    - ~~Operoid 工廠的 image 管線仍未實作~~ **已實作（2026-10-17，commit f601657）**：
      新增 `image` 工廠（v2 pack 第 16 型、`Pipeline::Image`）——拖放圖片（單/批）→
      強制逐張註解對話框 → 圖落 `media/<名稱>.<ext>`＋同名註解頁（`type: note`＋

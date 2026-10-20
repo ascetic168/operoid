@@ -56,7 +56,8 @@
 > 模型 GGUF 下載位置：[ggml-org/embeddinggemma-2-GGUF](https://huggingface.co/ggml-org/embeddinggemma-2-GGUF)
 > （上游 [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2)）。
 
-建腦與檢索前須先啟動：
+建腦與檢索前須先啟動（下方為手動啟動指令，供首次安裝與除錯；正式環境應設開機自啟——
+Windows 登入排程任務／Linux systemd unit——本機參考部署已配置自動啟動）：
 
 ```bash
 llama-server --embedding \

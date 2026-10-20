@@ -15,6 +15,23 @@
 
 ## [Unreleased]
 
+### Docs: local embedding stack records and upstream report
+
+- llama-server (with `--mmproj`) now auto-starts at boot on the reference
+  machine; manual-restart caveats removed from the records (TODO.md,
+  DEPLOYMENT.md — the manual command stays as first-install/debug reference).
+- Upstream report filed ([garrytan/gbrain#7094]): llama-server recipe lacks
+  `supports_multimodal`, gbrain's openai-compat multimodal request shape
+  mismatches llama.cpp (missing `{content:[…]}` wrapper), and
+  `content_chunks.embedding_image` is hardcoded to vector(1024) — breaking
+  768-dim EmbeddingGemma 2 (worked around with an idempotent ALTER script).
+  Upstream fixes retire the mm-bridge shim. Also notes that ollama and
+  Unsloth Studio distribute the same model, arguing for a generic
+  openai-compat multimodal opt-in.
+- gbrain 0.60.129 embed regression against llama-server (404 Not Found)
+  closed locally: not reproducible on 0.60.262.0 (figures migration ran
+  `sync×2 + embed --stale` clean on 2026-10-17).
+
 ## [v0.5.2] - 2026-10-18
 ### Multi-source retrieval ranking: score-sorted merge with relevance floor
 
