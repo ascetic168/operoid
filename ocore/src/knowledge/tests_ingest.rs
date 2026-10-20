@@ -150,6 +150,43 @@ fn policy_default_is_auto() {
     assert_eq!(ConvertConfig::default().policy, ConvertPolicy::Auto);
 }
 
+/// W2 出處鏈：doc 目錄頁的 `source_pdf` frontmatter 可讀出（含路徑內空白——
+/// 單引號 scalar）；無鍵 → None（fail-closed）。
+#[test]
+fn read_doc_source_pdf_reads_frontmatter() {
+    let dir = std::env::temp_dir().join(format!("srcpdf-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let doc = dir.join("mueller2016");
+    std::fs::create_dir_all(&doc).unwrap();
+    std::fs::write(
+        doc.join("s00.md"),
+        "---\norigin: operoid-employee\nsource_pdf: 'C:/papers/mueller 2016.pdf'\n---\nbody\n",
+    )
+    .unwrap();
+    assert_eq!(
+        crate::knowledge::ingest::read_doc_source_pdf(&doc).as_deref(),
+        Some("C:/papers/mueller 2016.pdf")
+    );
+    let doc2 = dir.join("nokey");
+    std::fs::create_dir_all(&doc2).unwrap();
+    std::fs::write(doc2.join("s00.md"), "---\norigin: x\n---\nbody\n").unwrap();
+    assert!(crate::knowledge::ingest::read_doc_source_pdf(&doc2).is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// W2 出處鏈：來源清單取得失敗（CLI 不存在）→ 空表——best-effort，
+/// 檢索面不得因出處鏈失敗而失效。
+#[tokio::test]
+async fn collect_source_docs_fails_open_empty() {
+    let out = crate::knowledge::ingest::collect_source_docs(
+        "definitely-not-a-real-exe",
+        None,
+        &["mueller2016".to_string()],
+    )
+    .await;
+    assert!(out.is_empty());
+}
+
 /// 拖拽流驗證（#[ignore]）：工廠 run_core 全 PDF 批次 → 知識管線自動全做
 /// （K1 轉換→筆記寫入→圖檔＋註解頁發布），不需要單獨按鈕。
 #[ignore = "真實環境相依：需 MinerU venv、llama-server（mmproj）"]

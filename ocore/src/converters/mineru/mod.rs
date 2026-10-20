@@ -163,6 +163,7 @@ pub async fn convert(pdf: &Path, out_dir: &Path, cfg: &ConvertConfig) -> Result<
         pdf.file_stem().and_then(|s| s.to_str()).unwrap_or("document"),
         "document",
     );
+    let source_pdf = pdf.to_string_lossy().into_owned();
 
     // 分流：先 pdf_extract 抽訊號（毫秒級）；硬錯誤 → 例外路徑升級 MinerU。
     let extracted = router::extract_text(pdf).ok();
@@ -179,7 +180,8 @@ pub async fn convert(pdf: &Path, out_dir: &Path, cfg: &ConvertConfig) -> Result<
                         .parent()
                         .map(|p| p.to_path_buf())
                         .unwrap_or_else(|| out_dir.to_path_buf());
-                    let mut outcome = convert_structured(&zip_dir, out_dir, Some(&doc_id))?;
+                    let mut outcome =
+                        convert_structured(&zip_dir, out_dir, Some(&doc_id), Some(&source_pdf))?;
                     outcome.report.route = route_report(&route);
                     merge_ladder(&mut outcome.report, &ladder_out, &warnings);
                     write_report(out_dir, &outcome.report)?;
@@ -204,7 +206,7 @@ pub async fn convert(pdf: &Path, out_dir: &Path, cfg: &ConvertConfig) -> Result<
     let text = extracted.ok_or_else(|| {
         anyhow::anyhow!("pdf_extract 失敗且 MinerU 不可用（見 conversion-report.json 的警告）")
     })?;
-    let mut outcome = convert_fast(&text, out_dir, &doc_id)?;
+    let mut outcome = convert_fast(&text, out_dir, &doc_id, Some(&source_pdf))?;
     outcome.report.route = route_report(&route);
     outcome.report.warnings.extend(warnings);
     write_report(out_dir, &outcome.report)?;
@@ -217,11 +219,13 @@ fn ladder_preview_warnings(_cfg: &ConvertConfig) -> Vec<String> {
 }
 
 /// 從既有 MinerU 解析目錄（unzipped：structured_content.json＋images/）產出筆記。
-/// MinerU 已跑過（重跑/批次場景）時跳過分流與階梯。
+/// MinerU 已跑過（重跑/批次場景）時跳過分流與階梯。`source_pdf` 已知時寫進
+/// 每頁 frontmatter（`/api/media/source-pdf` 與 `meta.source_docs` 的出處鏈）。
 pub fn convert_structured(
     zip_dir: &Path,
     out_dir: &Path,
     doc_id_hint: Option<&str>,
+    source_pdf: Option<&str>,
 ) -> Result<ConversionOutcome> {
     let sc = zip_dir.join("structured_content.json");
     let json = std::fs::read_to_string(&sc)
@@ -230,13 +234,18 @@ pub fn convert_structured(
     let doc_id = doc_id_hint
         .map(|s| s.to_string())
         .unwrap_or_else(|| crate::slug::slugify(&zip_dir.file_name().and_then(|s| s.to_str()).unwrap_or("document"), "document"));
-    let outcome = emit(&doc_id, &parsed, Some(zip_dir), out_dir)?;
+    let outcome = emit(&doc_id, &parsed, Some(zip_dir), out_dir, source_pdf)?;
     write_report(out_dir, &outcome.report)?;
     Ok(outcome)
 }
 
 /// 快速路徑：naive 文字 → 段落切塊 → 純文字筆記（無圖）。
-pub fn convert_fast(text: &str, out_dir: &Path, doc_id: &str) -> Result<ConversionOutcome> {
+pub fn convert_fast(
+    text: &str,
+    out_dir: &Path,
+    doc_id: &str,
+    source_pdf: Option<&str>,
+) -> Result<ConversionOutcome> {
     let title = text
         .lines()
         .map(|l| l.trim())
@@ -262,7 +271,7 @@ pub fn convert_fast(text: &str, out_dir: &Path, doc_id: &str) -> Result<Conversi
         is_full_document: true,
         blocks,
     };
-    let mut outcome = emit(doc_id, &parsed, None, out_dir)?;
+    let mut outcome = emit(doc_id, &parsed, None, out_dir, source_pdf)?;
     outcome
         .report
         .warnings
@@ -293,7 +302,14 @@ fn paragraphs(text: &str) -> Vec<String> {
 }
 
 /// 共用產出層：切塊 → 筆記檔＋figures.sqlite＋報告（不含 route/ladder——呼叫端補）。
-fn emit(doc_id: &str, parsed: &Parsed, image_root: Option<&Path>, out_dir: &Path) -> Result<ConversionOutcome> {
+/// `source_pdf` 寫進每頁 frontmatter（出處鏈；None＝未知來源的舊式重解析）。
+fn emit(
+    doc_id: &str,
+    parsed: &Parsed,
+    image_root: Option<&Path>,
+    out_dir: &Path,
+    source_pdf: Option<&str>,
+) -> Result<ConversionOutcome> {
     let title = if parsed.title.is_empty() { doc_id.to_string() } else { parsed.title.clone() };
     let chunks = chunk::pack_chunks(&parsed.blocks);
     let notes_dir = out_dir.join("notes").join(doc_id);
@@ -307,7 +323,7 @@ fn emit(doc_id: &str, parsed: &Parsed, image_root: Option<&Path>, out_dir: &Path
     for (i, ch) in chunks.iter().enumerate() {
         let slug = format!("{doc_id}/s{i:02}");
         let body = chunk::text_body(&title, ch);
-        let path = write_note(&notes_dir, &format!("s{i:02}"), &title_note_title(&title, &ch.section_label), &body, &today)?;
+        let path = write_note(&notes_dir, &format!("s{i:02}"), &title_note_title(&title, &ch.section_label), &body, &today, source_pdf)?;
         notes.push(NoteRecord {
             slug,
             path,
@@ -334,6 +350,7 @@ fn emit(doc_id: &str, parsed: &Parsed, image_root: Option<&Path>, out_dir: &Path
             &format!("{} · Figure {fig} (p{page})", title),
             &body,
             &today,
+            source_pdf,
         )?;
         notes.push(NoteRecord {
             slug,
@@ -415,8 +432,15 @@ fn title_note_title(title: &str, section_label: &str) -> String {
 }
 
 /// 寫一篇筆記（frontmatter 對齊實驗 corpus／gbrain schema pack 慣例）。
-fn write_note(dir: &Path, stem: &str, fm_title: &str, body: &str, created_at: &str) -> Result<PathBuf> {
-    let fm = crate::converters::frontmatter::build(&[
+fn write_note(
+    dir: &Path,
+    stem: &str,
+    fm_title: &str,
+    body: &str,
+    created_at: &str,
+    source_pdf: Option<&str>,
+) -> Result<PathBuf> {
+    let mut entries = vec![
         ("origin", "operoid-employee".into()),
         ("produced_by", "mineru-converter".into()),
         ("created_at", created_at.into()),
@@ -424,7 +448,14 @@ fn write_note(dir: &Path, stem: &str, fm_title: &str, body: &str, created_at: &s
             "title",
             crate::converters::frontmatter::yaml_single_quote(fm_title),
         ),
-    ]);
+    ];
+    if let Some(pdf) = source_pdf {
+        entries.push((
+            "source_pdf",
+            crate::converters::frontmatter::yaml_single_quote(pdf),
+        ));
+    }
+    let fm = crate::converters::frontmatter::build(&entries);
     let path = dir.join(format!("{stem}.md"));
     std::fs::write(&path, format!("{fm}\n{body}\n"))?;
     Ok(path)

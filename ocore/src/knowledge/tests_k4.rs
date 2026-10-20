@@ -40,9 +40,9 @@ async fn real_k4_fusion_and_attribution() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let out = dir.join("out");
-    let m = crate::converters::mineru::convert_structured(mueller_zip, &out, Some("mueller2016"))
+    let m = crate::converters::mineru::convert_structured(mueller_zip, &out, Some("mueller2016"), None)
         .expect("mueller2016 轉換");
-    let h = crate::converters::mineru::convert_structured(mhc_zip, &out, Some("mhc2512"))
+    let h = crate::converters::mineru::convert_structured(mhc_zip, &out, Some("mhc2512"), None)
         .expect("mhc2512 轉換");
     eprintln!(
         "[k4] corpus: mueller {}+{} notes, mhc {}+{} notes",

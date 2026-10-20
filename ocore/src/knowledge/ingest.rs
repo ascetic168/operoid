@@ -109,6 +109,55 @@ pub fn default_figures_db(notes_repo: &Path) -> std::path::PathBuf {
     ))
 }
 
+/// doc_id → 來源 PDF 路徑（W2 sidecar 退役後的出處鏈）：讀 doc 目錄頁 frontmatter
+/// 的 `source_pdf`（K1 轉換時寫入）。根集合＝gbrain 登記來源的 local_path
+/// （best-effort：CLI 失敗／doc 不在任何來源 repo → 該 doc 不進表，與 sidecar
+/// 缺檔同特性——`meta.source_docs` 留空即可）。
+pub async fn collect_source_docs(
+    gbrain_exe: &str,
+    gbrain_home: Option<&str>,
+    docs: &[String],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    if docs.is_empty() {
+        return out;
+    }
+    let Ok(sources) = list_sources(gbrain_exe, gbrain_home).await else {
+        return out;
+    };
+    for doc in docs {
+        for (_, lp) in &sources {
+            let dir = Path::new(lp).join(doc);
+            if !dir.is_dir() {
+                continue;
+            }
+            if let Some(pdf) = read_doc_source_pdf(&dir) {
+                out.insert(doc.clone(), serde_json::json!(pdf));
+            }
+            break;
+        }
+    }
+    out
+}
+
+/// 讀 doc 目錄頁 frontmatter 的 `source_pdf`（依檔名排序掃描，找到即回）。
+pub fn read_doc_source_pdf(doc_dir: &Path) -> Option<String> {
+    let mut pages: Vec<std::path::PathBuf> = std::fs::read_dir(doc_dir)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
+        .collect();
+    pages.sort();
+    for p in pages {
+        let text = std::fs::read_to_string(&p).ok()?;
+        let (fm, _) = crate::converters::frontmatter::split(&text);
+        if let Some(v) = crate::converters::frontmatter::get(fm, "source_pdf") {
+            return Some(v);
+        }
+    }
+    None
+}
+
 /// PDF → 知識庫入庫閉環：
 /// `PDF →（K1 轉換）→ notes 拷貝進聯邦 repo（圖檔＋註解頁發布）→ git commit
 ///  → gbrain sync --no-extract（圖檔發布後補第二次 sync＝image_of 保險）`。

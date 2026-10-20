@@ -58,8 +58,14 @@ fn test_state(dir: &std::path::Path) -> Arc<ServerState> {
 }
 
 fn test_router(dir: &std::path::Path) -> axum::Router {
+    test_router_and_state(dir).0
+}
+
+/// 同 test_router，但回傳 state——媒體面測試需直接 seed 來源快取
+/// （`state.media_sources`；免 spawn 真 gbrain）。
+fn test_router_and_state(dir: &std::path::Path) -> (axum::Router, Arc<ServerState>) {
     let state = test_state(dir);
-    crate::routes::router(state.clone())
+    let app = crate::routes::router(state.clone())
         .merge(crate::writes::write_routes().with_state(state.clone()))
         .merge(crate::knowledge_admin::knowledge_admin_routes().with_state(state.clone()))
         .merge(crate::accounts::account_routes().with_state(state.clone()))
@@ -69,7 +75,8 @@ fn test_router(dir: &std::path::Path) -> axum::Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::rbac::rbac_middleware,
-        ))
+        ));
+    (app, state)
 }
 
 /// 全路由清單（method, pattern）——與四個 router + accounts 逐一對應。
@@ -269,8 +276,8 @@ async fn ingest_pdf_validates_input() {
 }
 
 /// K5/P1.2：來源 PDF 串流參數面——缺 `doc_id`/`path` 或兩者都給 → 400
-/// `media.paramsRequired`；未登記 doc → 404 `figure.docNotRegistered`（sidecar
-/// 缺檔同樣視為未登記——fail-closed）。
+/// `media.paramsRequired`；無任何授權來源 root／doc 不在授權 repo 內 →
+/// 404 `figure.docNotRegistered`（fail-closed）。
 #[tokio::test]
 async fn source_pdf_validates_input() {
     let dir = temp_dir("sourcepdf");
@@ -311,36 +318,49 @@ async fn source_pdf_validates_input() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// K5/P1.2：來源 PDF 串流資料面——`doc_id` 與 `path` 皆可達已登記 PDF（200＋
-/// `application/pdf`＋`Content-Disposition: inline`）；doc 帶 figures source 而請求者
-/// 知識面無授權（空 plan）→ 403 `media.sourceDenied`（M1 與角色層級無關——admin 亦擋）。
+/// K5/P1.2：來源 PDF 串流資料面——`doc_id`（frontmatter `source_pdf`）與 `path`
+/// （直接包含制）皆可達 repo 內 PDF（200＋`application/pdf`＋
+/// `Content-Disposition: inline`）；doc 落在請求者知識面未授權的來源 repo →
+/// 404 `figure.docNotRegistered`（M1 與角色層級無關——admin 亦擋；404 不洩漏
+/// 未授權文件的存在性）。
 #[tokio::test]
 async fn source_pdf_serves_registered_doc_and_enforces_m1() {
-    use ocore::knowledge::figures::Sidecar;
-
     let dir = temp_dir("sourcepdf2");
-    let figdb = dir.join("figures.sqlite");
-    // 庫內登記路徑一律正斜線——與 URI 查詢字串相容（Windows 讀檔亦接受）。
-    let pdf_str = format!("{}/mueller2016.pdf", dir.to_string_lossy().replace('\\', "/"));
-    std::fs::write(&pdf_str, b"%PDF-1.4 test").unwrap();
-    // sidecar：只登記 figure_docs（純文字命中——無 figures 列，僅登記查驗）
-    let sc = Sidecar::open(&figdb).unwrap();
-    sc.tag_doc_source("mueller2016", &pdf_str).unwrap();
-    drop(sc);
-    // load_cfg 讀 settings_dir 的 app-settings.json → 指到測試 sidecar
+    // 兩個來源 repo：srcA（授權）／srcB（未授權）——各帶一個 doc 目錄＋PDF。
+    let repo_a = dir.join("repo-a");
+    let repo_b = dir.join("repo-b");
+    let pdf_str = {
+        let pdf = repo_a.join("mueller2016.pdf");
+        std::fs::create_dir_all(repo_a.join("mueller2016")).unwrap();
+        std::fs::create_dir_all(repo_b.join("otherdoc")).unwrap();
+        std::fs::write(&pdf, b"%PDF-1.4 test").unwrap();
+        std::fs::write(
+            repo_a.join("mueller2016").join("s00.md"),
+            format!(
+                "---\norigin: operoid-employee\nsource_pdf: '{}'\n---\nbody\n",
+                pdf.to_string_lossy().replace('\\', "/")
+            ),
+        )
+        .unwrap();
+        pdf.to_string_lossy().replace('\\', "/")
+    };
+    // load_cfg 讀 settings_dir 的 app-settings.json（不含 figures_db_path——sidecar 已退役）。
     std::fs::write(
         dir.join("app-settings.json"),
-        format!(
-            r#"{{"app_config": {{"notes_repo_path": "C:/notes", "gbrain_exe_path": "C:/gbrain.exe", "figures_db_path": "{}"}}}}"#,
-            figdb.to_string_lossy().replace('\\', "/")
-        ),
+        r#"{"app_config": {"notes_repo_path": "C:/notes", "gbrain_exe_path": "C:/gbrain.exe"}}"#,
     )
     .unwrap();
-    // M1 面：企業 db schema 先建好（空授權 → 任何 source 都拒）
-    ocore::domain::SqliteStore::open(&dir.join("matrix.db")).unwrap();
-    let app = test_router(&dir);
+    // M1 面：db schema＋bootstrap（只授權 srcA——allow-all policy 經 co-common scope）
+    let store = ocore::domain::SqliteStore::open(&dir.join("matrix.db")).unwrap();
+    ocore::knowledge::bootstrap::bootstrap_with_sources(&store, &["srcA".to_string()]).unwrap();
+    let (app, state) = test_router_and_state(&dir);
+    // 來源快取預熱（免 spawn 真 gbrain）：srcA＋srcB 皆在登記清單，M1 由 plan 過濾。
+    *state.media_sources.write().await = crate::gbrain::MediaSourcesCache::seeded(vec![
+        gsource("srcA", &repo_a),
+        gsource("srcB", &repo_b),
+    ]);
 
-    // ① doc_id 查詢 → 200＋application/pdf＋inline
+    // ① doc_id 查詢（srcA，已授權）→ 200＋application/pdf＋inline
     let req = Request::builder()
         .method(Method::GET)
         .uri("/api/media/source-pdf?doc_id=mueller2016")
@@ -361,7 +381,7 @@ async fn source_pdf_serves_registered_doc_and_enforces_m1() {
     let bytes = axum::body::to_bytes(resp.into_body(), 100_000).await.unwrap();
     assert_eq!(&bytes[..], b"%PDF-1.4 test");
 
-    // ② path 查詢（精確比對 figure_docs.pdf_path 登記值）→ 同樣 200
+    // ② path 查詢（repo 內路徑，包含制）→ 同樣 200
     let req = Request::builder()
         .method(Method::GET)
         .uri(format!("/api/media/source-pdf?path={pdf_str}"))
@@ -371,29 +391,33 @@ async fn source_pdf_serves_registered_doc_and_enforces_m1() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // ③ doc 帶 figures source（srcA）→ 空授權 plan → 403 media.sourceDenied
-    let db = rusqlite::Connection::open(&figdb).unwrap();
-    db.execute(
-        "INSERT INTO figures (doc_id, page, image_path, caption, source_id)
-         VALUES ('mueller2016', 4, 'x.png', 'c', 'srcA')",
-        [],
-    )
-    .unwrap();
-    drop(db);
+    // ③ doc 落在未授權來源（srcB）→ adm/usr 皆 404 figure.docNotRegistered
     for token in ["adm", "usr"] {
         let req = Request::builder()
             .method(Method::GET)
-            .uri("/api/media/source-pdf?doc_id=mueller2016")
+            .uri("/api/media/source-pdf?doc_id=otherdoc")
             .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{token} 應被 M1 擋");
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{token} 應被 M1 擋");
         let bytes = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(v["code"], "media.sourceDenied");
+        assert_eq!(v["code"], "figure.docNotRegistered");
     }
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 測試用 GbrainSource 建構（媒體面來源快取 seed）。
+fn gsource(id: &str, local_path: &std::path::Path) -> ocore::brains::GbrainSource {
+    ocore::brains::GbrainSource {
+        id: id.to_string(),
+        name: id.to_string(),
+        local_path: Some(local_path.to_string_lossy().into_owned()),
+        federated: false,
+        page_count: 0,
+        last_sync_at: None,
+    }
 }
 
 /// K6：`/api/knowledge/health`——admin 200＋三區塊形狀（探測皆可失敗，回報不中斷；

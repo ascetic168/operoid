@@ -120,7 +120,7 @@ async fn real_figures_lane_comparison() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let outcome =
-        crate::converters::mineru::convert_structured(&zip_dir, &dir, Some("mueller2016"))
+        crate::converters::mineru::convert_structured(&zip_dir, &dir, Some("mueller2016"), None)
             .expect("K1 轉換應成功");
     assert_eq!(outcome.report.figure_rows, 9);
     // slug → figs（文字面歸因用：sNN chunk 引用的圖號；figN-pP 即自身）。

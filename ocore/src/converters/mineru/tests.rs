@@ -59,7 +59,7 @@ fn structured_to_notes_and_sidecar() {
     let dir = temp_dir("conv");
     let zip_dir = sample_zip_dir(&dir);
     let out = dir.join("out");
-    let outcome = convert_structured(&zip_dir, &out, Some("mueller2016")).unwrap();
+    let outcome = convert_structured(&zip_dir, &out, Some("mueller2016"), None).unwrap();
 
     // 文字 chunk：front＋I＋II.A＝3；圖筆記：fig1/2/3＝3（Figure 2 由 table caption 拾回）。
     assert_eq!(outcome.report.text_notes, 3, "notes: {:#?}", outcome.notes);
@@ -140,7 +140,7 @@ fn fast_path_plain_text() {
         para.repeat(40),
         para.repeat(4)
     );
-    let outcome = convert_fast(&text, &out, "memo").unwrap();
+    let outcome = convert_fast(&text, &out, "memo", None).unwrap();
     assert!(outcome.report.text_notes >= 2, "長段落應切塊");
     assert_eq!(outcome.report.figure_notes, 0);
     assert!(outcome.figure_rows.is_empty());

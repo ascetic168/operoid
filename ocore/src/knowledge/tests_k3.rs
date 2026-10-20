@@ -47,8 +47,9 @@ async fn real_k3_sidecar_multimodal_visual_queries() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let outcome = crate::converters::mineru::convert_structured(zip_dir, &dir, Some("mueller2016"))
-        .expect("K1 轉換應成功");
+    let outcome =
+        crate::converters::mineru::convert_structured(zip_dir, &dir, Some("mueller2016"), None)
+            .expect("K1 轉換應成功");
     assert_eq!(outcome.report.figure_rows, 9);
 
     let db = dir.join("figures.sqlite");

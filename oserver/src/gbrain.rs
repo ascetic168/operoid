@@ -99,8 +99,8 @@ pub fn gbrain_routes() -> Router<Arc<ServerState>> {
         .route("/api/media/figure-urls", post(api_media_sign_figure_urls))
         .route("/api/media/figure", get(api_media_figure))
         // K5/P1.2：來源 PDF 串流（Req::User，RBAC 表明列；web 前端 Bearer fetch→blob——
-        // <a> 帶不了 header。handler 內 allowlist＝figure_docs 登記查驗，
-        // 有圖來源再過知識織網 M1）
+        // <a> 帶不了 header。handler 內 allowlist＝授權來源 repo 包含制
+        // （doc_id 讀 frontmatter source_pdf／path 直接包含制）＋知識織網 M1）
         .route("/api/media/source-pdf", get(api_media_source_pdf))
         .layer(crate::routes::cors_layer())
 }
@@ -2020,6 +2020,14 @@ pub struct MediaSourcesCache {
 const MEDIA_SOURCES_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl MediaSourcesCache {
+    /// 測試／預熱：直接注入來源清單（跳過 spawn；視為新鮮）。
+    pub fn seeded(sources: Vec<ocore::brains::GbrainSource>) -> Self {
+        Self {
+            fetched_at: Some(std::time::Instant::now()),
+            sources,
+        }
+    }
+
     async fn get(state: &Arc<ServerState>, cfg: &AppConfig) -> Vec<ocore::brains::GbrainSource> {
         {
             let guard = state.media_sources.read().await;
@@ -2067,9 +2075,21 @@ fn source_roots(
         .collect()
 }
 
-/// 路徑包含制檢查：圖檔路徑必須 canonicalize 落在某個來源 repo 根之下
-/// （canonicalize 解析 `..` 與符號連結——包含制在真實路徑上判定，遍歷攻擊無效）
-/// 且副檔名在白名單內。回傳命中的 source_id；檔案不存在 → None（fail-closed）。
+/// 路徑包含制檢查（一般形）：路徑 canonicalize 後須落在某來源 repo 根之下
+/// （canonicalize 解析 `..` 與符號連結——包含制在真實路徑上判定，遍歷攻擊無效）。
+/// 回傳 (canonical 路徑, source_id)；檔案不存在 → None（fail-closed）。
+fn contained_in_roots(
+    path: &str,
+    roots: &[(String, std::path::PathBuf)],
+) -> Option<(std::path::PathBuf, String)> {
+    let canon = std::path::Path::new(path).canonicalize().ok()?;
+    roots
+        .iter()
+        .find(|(_, root)| canon.starts_with(root))
+        .map(|(id, _)| (canon, id.clone()))
+}
+
+/// 路徑包含制檢查（圖檔）：含副檔名白名單。回傳命中的 source_id。
 fn containing_image_source(
     path: &str,
     roots: &[(String, std::path::PathBuf)],
@@ -2079,11 +2099,7 @@ fn containing_image_source(
         Some(e) if IMAGE_EXTS.contains(&e.to_ascii_lowercase().as_str()) => {}
         _ => return None,
     }
-    let canon = p.canonicalize().ok()?;
-    roots
-        .iter()
-        .find(|(_, root)| canon.starts_with(root))
-        .map(|(id, _)| id.clone())
+    contained_in_roots(path, roots).map(|(_, id)| id)
 }
 
 /// `POST /api/media/figure-urls`——批量簽發圖片短時 URL。
@@ -2255,10 +2271,12 @@ async fn serve_registered_figure(state: &Arc<ServerState>, path: &str) -> Respon
 }
 
 /// `GET /api/media/source-pdf`——來源文件 PDF 串流（Req::User；企業 web 前端以
-/// Bearer fetch→blob 開啟——`<a>` 帶不了 header）。allowlist＝figure_docs 登記表：
-/// `doc_id` 或 `path` **恰一**，精確比對後一律以**庫內字串**讀檔——客戶端字串永不
-/// 觸檔案系統（嚴防路徑探測）。doc 有 figures 列（可解析 source）時再過知識織網 M1：
-/// source ∈ 請求者 authorized_sources；純文字命中的 doc 無 source 可查，退登記查驗。
+/// Bearer fetch→blob 開啟——`<a>` 帶不了 header）。allowlist＝repo 包含制（sidecar
+/// 退役後）：`doc_id` 或 `path` **恰一**——`doc_id` 在授權來源 repo 內找 doc 目錄、
+/// 讀頁 frontmatter 的 `source_pdf`；`path` 直接過包含制。兩者都以 **canonical
+/// 解析路徑**讀檔——客戶端字串只做包含制判定，永不直接觸檔案系統（嚴防路徑探測）。
+/// doc 目錄落在哪個來源 repo，就必須在請求者 authorized_sources 內（M1 鐵律；
+/// 授權集合外的 doc 一律 404——不洩漏存在性）。
 async fn api_media_source_pdf(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
@@ -2284,75 +2302,63 @@ async fn api_media_source_pdf(
         Ok(c) => c,
         Err(e) => return err_response(&e),
     };
-    let figures_db = cfg
-        .figures_db_path
-        .clone()
-        .unwrap_or_else(|| {
-            ocore::knowledge::ingest::default_figures_db(std::path::Path::new(
-                cfg.notes_repo_path.trim_end_matches('/'),
-            ))
-            .to_string_lossy()
-            .into_owned()
-        });
-    // 登記查驗＋doc 的 source 蒐集（spawn_blocking——SQLite 不佔 async executor）。
-    let key_doc = doc_id.map(str::to_string);
-    let key_path = path.map(str::to_string);
-    let lookup = tokio::task::spawn_blocking({
-        let figures_db = figures_db.clone();
-        move || lookup_registered_pdf(&figures_db, key_doc.as_deref(), key_path.as_deref())
-    })
-    .await;
-    let Some((_doc, pdf_path, sources)) = lookup.ok().and_then(|r| r.ok()).flatten() else {
+    // M1 授權面：以請求者 principal 評估 authorized_sources（複用 figure-urls 同款建構），
+    // 並據此取授權來源的 repo 根（包含制的容器集合）。
+    let store = match ocore::domain::SqliteStore::open(&state.db_path) {
+        Ok(s) => s,
+        Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
+    };
+    let access = ocore::knowledge::types::AccessContext {
+        principal_id: identity.name.clone(),
+        principal_type: ocore::knowledge::types::PrincipalType::Human,
+        employee_id: None,
+        workspace_id: ocore::runtime::AGENT_WS.into(),
+        roles: identity.roles.clone(),
+        departments: vec![],
+        projects: vec![],
+        task_id: None,
+        purpose: Some("media-read".into()),
+        clearance: None,
+    };
+    let svc = ocore::knowledge::service::KnowledgeService::new(&state.db_path);
+    let plan = match svc.plan(&store, &access) {
+        Ok(p) => p,
+        Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
+    };
+    let sources = MediaSourcesCache::get(&state, &cfg).await;
+    let roots = source_roots(&sources, Some(&plan.source_ids));
+
+    // 解析（doc_id → frontmatter source_pdf；path → 直接包含制）。
+    let resolved: Option<std::path::PathBuf> = if let Some(d) = doc_id {
+        let mut found = None;
+        for (_sid, root) in &roots {
+            let dir = root.join(d);
+            if dir.is_dir() {
+                if let Some(pdf) = ocore::knowledge::ingest::read_doc_source_pdf(&dir) {
+                    found = contained_in_roots(&pdf, &roots).map(|(canon, _)| canon);
+                }
+                break;
+            }
+        }
+        found
+    } else {
+        contained_in_roots(path.unwrap_or_default(), &roots).map(|(canon, _)| canon)
+    };
+    let Some(pdf_path) = resolved else {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"code": "figure.docNotRegistered"})),
         )
             .into_response();
     };
-    // M1 授權面：以請求者 principal 評估 authorized_sources（複用 figure-urls 同款建構）。
-    if !sources.is_empty() {
-        let store = match ocore::domain::SqliteStore::open(&state.db_path) {
-            Ok(s) => s,
-            Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
-        };
-        let access = ocore::knowledge::types::AccessContext {
-            principal_id: identity.name.clone(),
-            principal_type: ocore::knowledge::types::PrincipalType::Human,
-            employee_id: None,
-            workspace_id: ocore::runtime::AGENT_WS.into(),
-            roles: identity.roles.clone(),
-            departments: vec![],
-            projects: vec![],
-            task_id: None,
-            purpose: Some("media-read".into()),
-            clearance: None,
-        };
-        let svc = ocore::knowledge::service::KnowledgeService::new(&state.db_path);
-        let plan = match svc.plan(&store, &access) {
-            Ok(p) => p,
-            Err(e) => return err_response(&AppError::new("server.internal").p("detail", e.to_string())),
-        };
-        let authorized = sources
-            .iter()
-            .any(|src| plan.source_ids.iter().any(|a| a == src));
-        if !authorized {
-            return (
-                StatusCode::FORBIDDEN,
-                Json(json!({"code": "media.sourceDenied"})),
-            )
-                .into_response();
-        }
-    }
-    // 存在性檢查 → 讀檔（讀的是庫內登記字串，非客戶端字串）。
-    let p = std::path::Path::new(&pdf_path);
-    if !p.is_file() {
+    if !pdf_path.is_file() {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"code": "figure.fileMissing"})),
         )
             .into_response();
     }
-    let filename: String = p
+    let filename: String = pdf_path
         .file_name()
         .map(|n| {
             n.to_string_lossy()
@@ -2362,7 +2368,7 @@ async fn api_media_source_pdf(
         })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "source.pdf".into());
-    match tokio::fs::read(p).await {
+    match tokio::fs::read(&pdf_path).await {
         Ok(bytes) => (
             StatusCode::OK,
             [
@@ -2388,43 +2394,6 @@ async fn api_media_source_pdf(
         )
             .into_response(),
     }
-}
-
-/// figure_docs 登記查驗：`doc_id` 或 `path` 精確比對 →
-/// （doc_id, 庫內 pdf_path, doc 的 source 清單）。
-/// 未登記／sidecar 缺檔缺表 → None（fail-closed，同 serve_registered_figure 語意）。
-fn lookup_registered_pdf(
-    figures_db: &str,
-    doc_id: Option<&str>,
-    path: Option<&str>,
-) -> rusqlite::Result<Option<(String, String, Vec<String>)>> {
-    if !std::path::Path::new(figures_db).is_file() {
-        return Ok(None);
-    }
-    let db = rusqlite::Connection::open(figures_db)?;
-    let (doc, pdf_path): (String, String) = if let Some(d) = doc_id {
-        db.query_row(
-            "SELECT doc_id, pdf_path FROM figure_docs WHERE doc_id = ?1",
-            [d],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-    } else {
-        db.query_row(
-            "SELECT doc_id, pdf_path FROM figure_docs WHERE pdf_path = ?1",
-            [path.unwrap_or_default()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-    };
-    let mut stmt = db.prepare(
-        "SELECT DISTINCT source_id FROM figures
-         WHERE doc_id = ?1 AND source_id IS NOT NULL AND source_id <> ''",
-    )?;
-    let rows = stmt.query_map([&doc], |r| r.get::<_, String>(0))?;
-    let mut sources = Vec::new();
-    for r in rows {
-        sources.push(r?);
-    }
-    Ok(Some((doc, pdf_path, sources)))
 }
 
 #[cfg(test)]

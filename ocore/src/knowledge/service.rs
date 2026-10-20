@@ -349,20 +349,14 @@ impl KnowledgeService {
             })
             .take(4)
             .collect();
-        // K5/P1.2：命中文件的來源 PDF 路徑（回覆「來源文件」開檔連結用）。
-        let mut source_docs = serde_json::Map::new();
-        if let Some(sc) = &self.sidecar {
-            let mut docs: Vec<String> = merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
-            docs.sort();
-            docs.dedup();
-            if let Some(s) = figures::Sidecar::open_existing(&sc.db_path) {
-                if let Ok(paths) = s.pdf_paths_for_docs(&docs) {
-                    for (d, p) in paths {
-                        source_docs.insert(d, json!(p));
-                    }
-                }
-            }
-        }
+        // K5/P1.2：命中文件的來源 PDF 路徑（回覆「來源文件」開檔連結用）——
+        // 讀 doc 目錄頁的 `source_pdf` frontmatter（sidecar 退役後的出處鏈）。
+        let mut docs: Vec<String> = merged.iter().filter_map(|(it, _)| it.doc_id()).collect();
+        docs.sort();
+        docs.dedup();
+        let source_docs =
+            super::ingest::collect_source_docs(&ctx.gbrain_exe, ctx.gbrain_home.as_deref(), &docs)
+                .await;
         Ok(ToolOutput {
             text,
             meta: json!({
