@@ -13,13 +13,49 @@
 
 ---
 
-## [Unreleased]
+## [v0.5.3] - 2026-10-20
+
+### Figures sidecar fully retired; media allowlist becomes repo containment
+
+The sidecar (figures.sqlite vector/registration DB) existed only for
+pre-migration data; with the machine migrated (2026-10-17) and no
+external users, the compatibility layer is gone entirely (-2.5k lines).
+
+- Media endpoints (`/api/media/figure-urls`, `/api/media/figure`,
+  `/api/media/source-pdf`) authorize by containment: the requested path
+  must canonicalize inside a principal-authorized gbrain source repo
+  (M1 plan source_ids) and carry an image extension. `gbrain sources
+  list` is cached with a 300 s TTL so per-second re-sign polls never
+  spawn gbrain. `..` traversal resolves on the real path; docs in
+  unauthorized sources return 404 (existence not leaked).
+- Dropped endpoints: `GET /api/knowledge/figure-image` (unused by any
+  frontend; the signed-URL flow superseded it) and the migrate-figures
+  pair (migration fully consumed).
+- doc→PDF provenance moves to frontmatter: the MinerU converter writes
+  `source_pdf` on every page; `meta.source_docs` and source-pdf serving
+  read it instead of the sidecar figure_docs table — text-only PDFs get
+  provenance for the first time.
+- K8 VLM caption enrichment now triggers automatically after publish
+  with a repo-scanned queue (short captions + same-stem image + no AI
+  marker); idempotent re-runs (the old append duplicated blocks);
+  egress gating unchanged; failures only log, never block ingestion.
+- Deleted: figures.rs (1,275 lines), figures_migrate.rs, merge_sidecar,
+  default_figures_db, `figures_db_path` config, service sidecar fusion
+  lane, the dead think-time sidecar append, and the converter's
+  figures.sqlite output. `meta.sidecar` renamed to `meta.images`.
+  Shared types (FigureHit, read_image_data_uri) moved to fusion.rs.
+- tests_figures_lane rewritten as tests_image_lane — the standing
+  regression gate (IMG arm single / PROD image×text RRF) with a hard
+  assert of primary hit@5 = 9/9 on the 2026-10-17 pilot query set.
+- Real-env verification: real_k7 12/12 MRR 0.903 (P0 baseline intact),
+  real_ingest idempotent round, real_factory_pdf_drag_flow, and
+  real_image_lane hit@5 9/9; workspace tests green with 0 warnings.
 
 ### Docs: local embedding stack records and upstream report
 
 - llama-server (with `--mmproj`) now auto-starts at boot on the reference
-  machine; manual-restart caveats removed from the records (TODO.md,
-  DEPLOYMENT.md — the manual command stays as first-install/debug reference).
+  machine; manual-restart caveats removed from the records (the manual
+  command stays as first-install/debug reference in DEPLOYMENT.md).
 - Upstream report filed ([garrytan/gbrain#7094]): llama-server recipe lacks
   `supports_multimodal`, gbrain's openai-compat multimodal request shape
   mismatches llama.cpp (missing `{content:[…]}` wrapper), and
@@ -31,6 +67,8 @@
 - gbrain 0.60.129 embed regression against llama-server (404 Not Found)
   closed locally: not reproducible on 0.60.262.0 (figures migration ran
   `sync×2 + embed --stale` clean on 2026-10-17).
+
+## [Unreleased]
 
 ## [v0.5.2] - 2026-10-18
 ### Multi-source retrieval ranking: score-sorted merge with relevance floor

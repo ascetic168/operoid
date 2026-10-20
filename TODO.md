@@ -270,6 +270,43 @@ OCR/向量搜尋，重造只會與其演進衝突。改為：
 
 ---
 
+## 5. ✅ Figures sidecar 完全退役（已實作 2026-10-20，v0.5.3）
+
+> 項目 3 改道後，sidecar（`figures.sqlite` 向量/登記庫）僅為向上相容而保留。專案無外部
+> 使用者、本機已遷移（2026-10-17），相容層失去存在理由——經使用者同意（2026-10-20）全數移除。
+
+### 實作內容（commits a006419／5f24a10／5cbfdaa／76d9063）
+- **媒體端點 allowlist → repo 包含制**：`/api/media/figure-urls`、`/api/media/figure`、
+  `/api/media/source-pdf` 的授權改為「路徑 canonicalize 後落在 principal 授權來源
+  （M1 authorized_sources）的 repo 目錄內」＋圖檔副檔名白名單；`gbrain sources list`
+  以 TTL 300s 快取（簽名輪詢不重複 spawn）。刪除 `GET /api/knowledge/figure-image`
+  （前端零使用的死端點）與 migrate-figures 端點（遷移已消費完畢）。
+- **doc→PDF 出處鏈 → frontmatter**：K1 轉換器在每頁 frontmatter 寫 `source_pdf`；
+  `meta.source_docs` 與 `/api/media/source-pdf` 改讀 frontmatter（取代 sidecar
+  `figure_docs`）。純文字 PDF 也得出處（sidecar 版本做不到）；授權外 doc 一律 404
+  （不洩漏存在性）。
+- **K8 補圖說 → repo 掃描佇列＋發布後自動觸發**：掃 doc 目錄短 caption 圖頁
+  （<80 字元、帶同名圖檔、無 AI 標記——重跑冪等，舊 append 會重複的缺陷一併修掉）；
+  `run_pdf_knowledge`／`ingest_pdf` 發布後 fire-and-forget（egress 閘門照舊、
+  失敗只記 log）。新增真實結論：補圖說在無 chat 端點時正確降級。
+- **本體刪除**：`figures.rs`（1,275 行）＋`figures_migrate.rs`（395 行）＋
+  merge_sidecar／default_figures_db／`figures_db_path` 設定鍵／service sidecar lane／
+  gbrain_cli think 收尾 sidecar 反查（死碼）／converter 的 figures.sqlite 寫出；
+  `meta.sidecar` → `meta.images`；共用件搬移（`FigureHit`／`read_image_data_uri`
+  → `fusion.rs`）。淨 −2,511 行。
+- **測試整備**：tests_k3/k4 刪除；tests_figures_lane 重寫為 **tests_image_lane**
+  （IMG 單臂＋PROD 圖 arm×文字 RRF 雙視圖；硬斷言主裁決子集 hit@5 = 9/9）——退役後
+  的常駐回歸閘。
+
+### 驗收（2026-10-20 實測）
+- workspace `cargo test` 全綠 0 warning（ocore 351／oserver 45）。
+- 真實環境：real_k7 **hit@5 12/12、MRR 0.903**（P0 基準不變）；real_ingest 冪等閉環
+  （44 筆記＋8 圖檔、二次 0 重寫）；real_factory_pdf_drag_flow 44/0 錯誤；
+  **real_image_lane hit@5 9/9**（試點裁決底線通過，多數 #1）。
+- 待辦細節殘留（併入後續）：企業 web 前端簽名 URL／PDF 開檔實測一輪（人工）。
+
+---
+
 ## 相關紀錄（2026-10-17 contacts.csv 重包實測）
 
 - CSV 匯入：2,009 列 → 合併 44 群 → 寫入 1,963 頁（`person/`，gbrain-base-v2；
