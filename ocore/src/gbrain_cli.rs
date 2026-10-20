@@ -408,11 +408,11 @@ fn citation_line(c: &ThinkCitation) -> String {
 /// ＋`圖檔：<絕對路徑>`（前端渲染為行內圖）；來源文件為 `原論文 PDF：<路徑>`
 /// （前端渲染為開檔按鈕）。無原圖的命中不收。
 fn sidecar_append_lines(
-    hits: &[crate::knowledge::figures::FigureHit],
+    hits: &[crate::knowledge::fusion::FigureHit],
     pdfs: &[(String, String)],
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let with_img: Vec<&crate::knowledge::figures::FigureHit> = hits
+    let with_img: Vec<&crate::knowledge::fusion::FigureHit> = hits
         .iter()
         .filter(|h| h.image_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false))
         .take(4)
@@ -688,7 +688,7 @@ mod tests {
     /// 來源文件為 `原論文 PDF：` 行；無原圖的命中不收。
     #[test]
     fn sidecar_append_lines_format() {
-        use crate::knowledge::figures::FigureHit;
+        use crate::knowledge::fusion::FigureHit;
         let hit = FigureHit {
             doc_id: "mueller2016".into(),
             page: 4,

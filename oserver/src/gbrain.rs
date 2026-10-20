@@ -2021,6 +2021,7 @@ const MEDIA_SOURCES_TTL: std::time::Duration = std::time::Duration::from_secs(30
 
 impl MediaSourcesCache {
     /// 測試／預熱：直接注入來源清單（跳過 spawn；視為新鮮）。
+    #[cfg(test)]
     pub fn seeded(sources: Vec<ocore::brains::GbrainSource>) -> Self {
         Self {
             fetched_at: Some(std::time::Instant::now()),

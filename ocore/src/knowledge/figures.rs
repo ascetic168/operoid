@@ -31,6 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 
+use super::fusion::FigureHit;
 use crate::knowledge::service::RETRIEVAL_QUERY_PREFIX;
 
 /// 預設本地 llama-server（與 doctor／gbrain provider 慣例一致）。
@@ -74,23 +75,6 @@ pub struct EmbedStats {
     /// 跳過數（API 失敗／維度不符等；原因在 warnings）。
     pub skipped: usize,
     pub warnings: Vec<String>,
-}
-
-/// 檢索命中（K4 融合的「路 2」項；路 3 附帶以 `attached` 標記）。
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct FigureHit {
-    pub doc_id: String,
-    pub page: i64,
-    pub figure_no: Option<u32>,
-    pub caption: String,
-    pub section: String,
-    pub image_path: Option<String>,
-    pub source_id: Option<String>,
-    /// cosine 相似度（[-1, 1]；嵌入已近 L2 正規化時即內積）。附帶項為 0。
-    pub score: f64,
-    /// 路3 結構性附帶（同文件 metadata 帶出，非向量命中）。
-    #[serde(default)]
-    pub attached: bool,
 }
 
 /// 待嵌列（自 figures.sqlite 讀出）。
@@ -730,7 +714,9 @@ pub async fn embed_pending(
             }
         }
         let image = match mode {
-            SidecarMode::Multimodal => row.image_path.as_deref().and_then(read_image_data_uri),
+            SidecarMode::Multimodal => {
+                row.image_path.as_deref().and_then(super::fusion::read_image_data_uri)
+            }
             SidecarMode::TextOnly => None,
         };
         jobs.push((row, image));
@@ -823,18 +809,6 @@ pub async fn embed_pending(
         }
     }
     Ok(stats)
-}
-
-/// 讀圖檔 → data URI（jpg/png；其他副檔名以 jpeg 試探）。
-pub(crate) fn read_image_data_uri(path: &str) -> Option<String> {
-    let p = Path::new(path);
-    let bytes = std::fs::read(p).ok()?;
-    let mime = match p.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()) {
-        Some(e) if e == "png" => "image/png",
-        _ => "image/jpeg",
-    };
-    use base64::Engine as _;
-    Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 /// 解析 `/v1/models` 第一個 id 作為嵌入模型。

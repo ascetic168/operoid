@@ -214,6 +214,13 @@ pub async fn ingest_pdf(
         for e in errors {
             publish_warnings.push(format!("圖檔發布失敗（略過）：{}：{}", e.file, e.detail));
         }
+        // K8：發布後背景補圖說（best-effort——egress 閘門照舊，失敗只記 log）。
+        crate::knowledge::enrich::spawn_after_publish(
+            gbrain_home.map(str::to_string),
+            cfg.allow_public_egress,
+            notes_repo.to_path_buf(),
+            doc_id.clone(),
+        );
     }
 
     // 3) git commit＋gbrain sync --no-extract（best-effort——失敗記警告）。

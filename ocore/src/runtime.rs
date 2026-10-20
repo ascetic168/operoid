@@ -919,7 +919,7 @@ async fn run_conversational_turn(
                             let uris: Vec<String> = images
                                 .iter()
                                 .filter_map(|p| {
-                                    crate::knowledge::figures::read_image_data_uri(p)
+                                    crate::knowledge::fusion::read_image_data_uri(p)
                                 })
                                 .collect();
                             if uris.is_empty() {

@@ -10,7 +10,41 @@
 
 use serde::Deserialize;
 
-use super::figures::FigureHit;
+/// 檢索命中（融合的「圖」項；sidecar 圖向量路與 gbrain 圖 arm 共用型）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct FigureHit {
+    pub doc_id: String,
+    pub page: i64,
+    pub figure_no: Option<u32>,
+    pub caption: String,
+    pub section: String,
+    pub image_path: Option<String>,
+    pub source_id: Option<String>,
+    /// cosine 相似度（[-1, 1]；嵌入已近 L2 正規化時即內積）。附帶項為 0。
+    pub score: f64,
+    /// 路3 結構性附帶（同文件 metadata 帶出，非向量命中）。
+    #[serde(default)]
+    pub attached: bool,
+}
+
+/// 讀圖檔 → data URI（jpg/png；其他副檔名以 jpeg 試探）。
+pub(crate) fn read_image_data_uri(path: &str) -> Option<String> {
+    let p = std::path::Path::new(path);
+    let bytes = std::fs::read(p).ok()?;
+    let mime = match p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+    {
+        Some(e) if e == "png" => "image/png",
+        _ => "image/jpeg",
+    };
+    use base64::Engine as _;
+    Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
 
 /// RRF 常數（計畫 §K4；標準值）。
 pub const RRF_K: f64 = 60.0;

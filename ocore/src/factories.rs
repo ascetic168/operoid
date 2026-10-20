@@ -449,6 +449,13 @@ async fn run_pdf_knowledge(
             errors.extend(pub_errors.into_iter().map(|e| {
                 L10n::new("factory.fileError").p("file", e.file).p("detail", e.detail)
             }));
+            // K8：發布後背景補圖說（best-effort——egress 閘門照舊，失敗只記 log）。
+            crate::knowledge::enrich::spawn_after_publish(
+                cfg.active_env_home().map(str::to_string),
+                cfg.allow_public_egress,
+                notes.to_path_buf(),
+                doc_id.clone(),
+            );
         }
         // 預覽頁：每篇筆記一頁（doc 子目錄；前端可編輯後覆寫）。
         for entry in std::fs::read_dir(&dst_notes).into_iter().flatten().flatten() {

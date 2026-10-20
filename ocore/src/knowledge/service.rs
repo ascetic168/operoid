@@ -21,8 +21,8 @@ use serde_json::json;
 
 use super::backend::RetrieveKind;
 use super::bootstrap::load_policy_fail_closed;
-use super::figures::{self, FigureHit};
-use super::fusion::{self, FusionItem, TextHit};
+use super::figures;
+use super::fusion::{self, FigureHit, FusionItem, TextHit};
 use super::policy::{authorized_scope_ids_with_grants, authorized_sources};
 use super::types::AccessContext;
 use crate::domain::store::Store;
