@@ -13,6 +13,45 @@
 
 ---
 
+## [v0.5.5] - 2026-10-25
+
+### In-app updates — signed auto-updater (Personal) and release checks (Enterprise)
+
+Both editions can now see when a new release ships. As always with Operoid,
+**releases are not guaranteed to be backward-compatible** — that is exactly why
+the fully automatic path is off by default.
+
+**Personal (desktop)** — built on the official Tauri updater:
+
+- Release artifacts are now signed (minisign) and accompanied by a generated
+  `latest.json` (`createUpdaterArtifacts` + `TAURI_SIGNING_PRIVATE_KEY` secrets
+  in `release.yml`). Updates install through the platform-native path: silent
+  NSIS (the installer hooks stop/restart the `Operoid` service and now also
+  clear non-service sidecars), `.app` replacement on macOS, AppImage swap on
+  Linux; deb/rpm users keep using the Releases page.
+- Settings → App gains a "Version & updates" section: current version, manual
+  "Check for updates" with release notes, download+install with progress, and
+  relaunch. Two options: **update notices** (on by default — checks on startup
+  and every 24h, shows a dismissible banner; installing always needs a click)
+  and **automatic updates** (off by default — downloads and installs as soon as
+  a new version is detected, then prompts to relaunch).
+
+**Enterprise (oserver + admin console)** — check and notify only:
+
+- New admin endpoint `GET /api/admin/update/check` (Admin role, fail-closed RBAC)
+  queries GitHub releases/latest (drafts/prereleases excluded), compares with
+  semver, and caches the result for 24h. `[update] check_enabled = false` in
+  `operoid.toml` turns it off for offline/air-gapped servers.
+- Admin console Home gains a Version card and a dismissible new-version banner
+  linking to the release page. Upgrades stay manual deployments — **DEPLOYMENT.md
+  §12** documents the full procedure (stop service → back up the data dir →
+  replace binaries + frontends → start service).
+
+> 注意：v0.5.5 是第一個帶 `latest.json` 與簽章的版本；更舊的安裝（≤ v0.5.4）沒有
+> App 內更新功能，仍請到手動下載安裝檔升級到本版之後，後續版本即可 App 內更新。
+
+各平台安裝包（Windows `.msi`／macOS `.dmg`／Linux `.deb` `.rpm` `.AppImage`）見下方 assets。
+
 ## [v0.5.4] - 2026-10-24
 
 ### Token-level streaming output (F1 reversal) — one path, both editions
