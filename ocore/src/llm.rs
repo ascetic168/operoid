@@ -135,6 +135,14 @@ struct ChatRequest<'a> {
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<WireTool<'a>>>,
+    /// F1 串流：僅 `chat_streaming` 帶 `stream:true`；非串流請求整個欄位不上線
+    /// （少數相容端點對未知/恆常欄位敏感，維持原 wire 最小面）。
+    #[serde(skip_serializing_if = "is_false")]
+    stream: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// 助理訊息上的 tool_calls 之 wire 形（`arguments` 須為 JSON **字串**）。
@@ -292,6 +300,69 @@ fn retry_backoff(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_millis((10u64 << attempt).min(40))
 }
 
+/// 400 且訊息提及 tool/function → 判定 provider 不支援原生工具呼叫（僅在真的帶了
+/// tools 時成立）。`post_chat` 與 `post_chat_streaming` 共用，讓呼叫端降級文字 JSON
+/// 協議（見 [`ToolsUnsupported`] 文檔）。
+fn tools_unsupported_400(status: u16, sent_tools: bool, text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    sent_tools
+        && status == 400
+        && (lower.contains("tool") || lower.contains("function"))
+}
+
+/// K5 降級共用：剝除所有訊息的圖片並在原含圖訊息尾端注入定位者指示。
+fn strip_images_add_locator(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .map(|m| {
+            let mut m = m.clone();
+            if !m.images.is_empty() {
+                m.images.clear();
+                if !m.content.ends_with(LOCATOR_DIRECTIVE) {
+                    m.content.push_str(LOCATOR_DIRECTIVE);
+                }
+            }
+            m
+        })
+        .collect()
+}
+
+/// 組 OpenAI 相容 wire 請求體（`chat`／`chat_streaming` 共用；`tools` 空 → 欄位不上線）。
+fn build_chat_request<'a>(
+    endpoint: &'a LlmEndpoint,
+    sampling: &SamplingParams,
+    messages: &'a [ChatMessage],
+    tools: &'a [ToolDef],
+    stream: bool,
+) -> ChatRequest<'a> {
+    let wire_msgs: Vec<WireMessage<'_>> = messages.iter().map(build_wire_message).collect();
+    let wire_tools = if tools.is_empty() {
+        None
+    } else {
+        Some(
+            tools
+                .iter()
+                .map(|t| WireTool {
+                    typ: "function",
+                    function: WireToolFn {
+                        name: t.name.as_str(),
+                        description: t.description.as_str(),
+                        parameters: &t.parameters,
+                    },
+                })
+                .collect(),
+        )
+    };
+    ChatRequest {
+        model: &endpoint.model,
+        messages: wire_msgs,
+        temperature: sampling.temperature,
+        max_tokens: sampling.max_tokens,
+        tools: wire_tools,
+        stream,
+    }
+}
+
 /// 送出請求並處理 HTTP 層（暫態重試、4xx 分類）；成功回傳解析後的 JSON。
 /// `sent_tools` 只影響 400 的錯誤分類（provider 不支援 tools → [`ToolsUnsupported`]）。
 async fn post_chat(
@@ -339,11 +410,7 @@ async fn post_chat(
         // 400 且訊息提及 tool/function → 判定 provider 不支援原生工具呼叫
         // （ollama 舊模型、少數相容端點）。啟發式判定：僅在真的帶了 tools 時成立，
         // 讓呼叫端降級文字 JSON 協議（見 ToolsUnsupported 文檔）。
-        if sent_tools
-            && status.as_u16() == 400
-            && (text.to_ascii_lowercase().contains("tool")
-                || text.to_ascii_lowercase().contains("function"))
-        {
+        if tools_unsupported_400(status.as_u16(), sent_tools, &text) {
             return Err(anyhow::Error::new(ToolsUnsupported).context(format!(
                 "LLM 回應 400（tools）：{text}"
             )));
@@ -372,6 +439,7 @@ pub async fn complete(
         temperature: sampling.temperature,
         max_tokens: sampling.max_tokens,
         tools: None,
+        stream: false,
     };
     let v = post_chat(endpoint, &body, false).await?;
     let chat: ChatResponse =
@@ -450,31 +518,7 @@ pub async fn chat(
     tools: &[ToolDef],
 ) -> Result<LlmTurn> {
     let has_images = messages.iter().any(|m| !m.images.is_empty());
-    let wire_msgs: Vec<WireMessage<'_>> = messages.iter().map(build_wire_message).collect();
-    let wire_tools = if tools.is_empty() {
-        None
-    } else {
-        Some(
-            tools
-                .iter()
-                .map(|t| WireTool {
-                    typ: "function",
-                    function: WireToolFn {
-                        name: t.name.as_str(),
-                        description: t.description.as_str(),
-                        parameters: &t.parameters,
-                    },
-                })
-                .collect(),
-        )
-    };
-    let body = ChatRequest {
-        model: &endpoint.model,
-        messages: wire_msgs,
-        temperature: sampling.temperature,
-        max_tokens: sampling.max_tokens,
-        tools: wire_tools.clone(),
-    };
+    let body = build_chat_request(endpoint, sampling, messages, tools, false);
     let v = match post_chat(endpoint, &body, !tools.is_empty()).await {
         Ok(v) => v,
         // K5 定位者降級：provider 拒收多模態 content（400）→ 剝除圖片＋注入
@@ -483,28 +527,8 @@ pub async fn chat(
             eprintln!(
                 "[llm] provider 拒收多模態 content（400）——降級為文字＋定位者指示重試"
             );
-            let stripped: Vec<ChatMessage> = messages
-                .iter()
-                .map(|m| {
-                    let mut m = m.clone();
-                    if !m.images.is_empty() {
-                        m.images.clear();
-                        if !m.content.ends_with(LOCATOR_DIRECTIVE) {
-                            m.content.push_str(LOCATOR_DIRECTIVE);
-                        }
-                    }
-                    m
-                })
-                .collect();
-            let wire_msgs: Vec<WireMessage<'_>> =
-                stripped.iter().map(build_wire_message).collect();
-            let body = ChatRequest {
-                model: &endpoint.model,
-                messages: wire_msgs,
-                temperature: sampling.temperature,
-                max_tokens: sampling.max_tokens,
-                tools: wire_tools.clone(),
-            };
+            let stripped = strip_images_add_locator(messages);
+            let body = build_chat_request(endpoint, sampling, &stripped, tools, false);
             post_chat(endpoint, &body, !tools.is_empty()).await?
         }
         Err(e) => return Err(e),
@@ -538,6 +562,216 @@ pub async fn chat(
         finish_reason: choice.finish_reason,
         usage: chat.usage,
     })
+}
+
+// ───────────────── F1 串流（OpenAI 相容 SSE）─────────────────
+
+/// 串流一次 chat completion：文字增量即時經 `on_text` 回呼（工具呼叫引數片段不回呼），
+/// 完整 [`LlmTurn`] 在流結束後組裝回傳。語意與 [`chat`] 對齊：
+/// - 暫態重試（網路／429／5xx）**僅在首 token 前**——HTTP 狀態確定前可整發重試；
+///   進入 2xx body 讀取後任何中斷＝Err（呼叫端 runtime 以既有單步重試接手）。
+/// - 400＋tools 字樣 → [`ToolsUnsupported`]；K5 帶圖 400 → 剝圖＋定位者指示重試一次。
+/// - 完整性守門：流必須以 `finish_reason` 或 `[DONE]` 收尾，否則 Err（防半截回覆靜默過關）。
+/// - usage：多數相容 provider 在串流模式缺省（需 `stream_options`）——收到才記，缺省不影響。
+pub async fn chat_streaming(
+    endpoint: &LlmEndpoint,
+    sampling: &SamplingParams,
+    messages: &[ChatMessage],
+    tools: &[ToolDef],
+    on_text: &(dyn Fn(&str) + Send + Sync),
+) -> Result<LlmTurn> {
+    let has_images = messages.iter().any(|m| !m.images.is_empty());
+    let sent_tools = !tools.is_empty();
+    let body = build_chat_request(endpoint, sampling, messages, tools, true);
+    let acc = match post_chat_streaming(endpoint, &body, sent_tools, on_text).await {
+        Ok(acc) => acc,
+        Err(e) if has_images && e.to_string().contains("非 2xx（400") => {
+            eprintln!(
+                "[llm] provider 拒收多模態 content（400）——降級為文字＋定位者指示重試"
+            );
+            let stripped = strip_images_add_locator(messages);
+            let body = build_chat_request(endpoint, sampling, &stripped, tools, true);
+            post_chat_streaming(endpoint, &body, sent_tools, on_text).await?
+        }
+        Err(e) => return Err(e),
+    };
+    if !acc.saw_done && acc.finish_reason.is_none() {
+        anyhow::bail!("LLM 串流提前結束（無 finish_reason／[DONE]）");
+    }
+    let tool_calls = acc
+        .tool_calls
+        .into_iter()
+        .map(|(idx, (id, name, args))| {
+            Ok(ToolCall {
+                id: id.unwrap_or_else(|| format!("call_{idx}")),
+                name: name.ok_or_else(|| anyhow!("tool_call 缺 function.name"))?,
+                arguments: if args.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str(&args).unwrap_or(serde_json::Value::String(args))
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let content = if acc.text.trim().is_empty() { None } else { Some(acc.text) };
+    Ok(LlmTurn {
+        content,
+        tool_calls,
+        finish_reason: acc.finish_reason,
+        usage: acc.usage,
+    })
+}
+
+/// 串流模式的增量累積（幀解析產物）。
+#[derive(Default)]
+struct StreamAccum {
+    text: String,
+    /// tool_call 按 wire `index` 累積：`(id, name, arguments 片段串接)`。
+    tool_calls: std::collections::BTreeMap<usize, (Option<String>, Option<String>, String)>,
+    finish_reason: Option<String>,
+    usage: Option<Usage>,
+    saw_done: bool,
+}
+
+/// 串流請求的 HTTP 層（[`post_chat`] 的串流鏡像）：暫態重試僅涵蓋「狀態確定前」；
+/// 2xx 之後交給 [`read_sse_stream`]，中斷即 Err、不再重試。
+async fn post_chat_streaming(
+    endpoint: &LlmEndpoint,
+    body: &ChatRequest<'_>,
+    sent_tools: bool,
+    on_text: &(dyn Fn(&str) + Send + Sync),
+) -> Result<StreamAccum> {
+    let url = format!(
+        "{}/chat/completions",
+        endpoint.base_url.trim_end_matches('/')
+    );
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+    let key = env_key_for(endpoint);
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..3u32 {
+        let backoff = retry_backoff(attempt);
+        let mut req = client.post(&url).json(body);
+        if let Some(k) = &key {
+            req = req.header("Authorization", format!("Bearer {k}"));
+        }
+        let resp = match req.send().await.context("LLM 請求失敗") {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = Some(e);
+                tokio::time::sleep(backoff).await;
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return read_sse_stream(resp, on_text).await;
+        }
+        let retryable = status.as_u16() == 429 || status.is_server_error();
+        if retryable && attempt < 2 {
+            eprintln!(
+                "[llm] {status} 暫態失敗，{backoff:?} 後重試（attempt {}）",
+                attempt + 1
+            );
+            tokio::time::sleep(backoff).await;
+            continue;
+        }
+        let text = resp.text().await.unwrap_or_default();
+        if tools_unsupported_400(status.as_u16(), sent_tools, &text) {
+            return Err(anyhow::Error::new(ToolsUnsupported).context(format!(
+                "LLM 回應 400（tools）：{text}"
+            )));
+        }
+        return Err(anyhow!("LLM 回應非 2xx（{status}）：{text}"));
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("LLM 重試耗盡")))
+}
+
+/// 逐行解析 OpenAI 相容 SSE：`data:` 行為完整 JSON（ 幀語意僅供傳輸，行內自足），
+/// `[DONE]` 收尾；註解／event:／非 JSON 的 data 行容忍跳過（少數端點的心跳註記）。
+async fn read_sse_stream(
+    resp: reqwest::Response,
+    on_text: &(dyn Fn(&str) + Send + Sync),
+) -> Result<StreamAccum> {
+    use futures::StreamExt;
+    let mut acc = StreamAccum::default();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("LLM 串流中斷")?;
+        buf.extend_from_slice(&chunk);
+        // 處理所有完整行（SSE 以 \n 分行；\r 由 trim_end 吸收——涵蓋 \r\n 端點）。
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+            let line = std::str::from_utf8(&line_bytes[..line_bytes.len() - 1])
+                .unwrap_or("")
+                .trim_end_matches('\r');
+            handle_sse_line(line, on_text, &mut acc)?;
+        }
+    }
+    Ok(acc)
+}
+
+/// 處理一行 SSE（`data:` 載荷或忽略）；解析失敗的行靜默跳過（heartbeat／註記）。
+fn handle_sse_line(
+    line: &str,
+    on_text: &(dyn Fn(&str) + Send + Sync),
+    acc: &mut StreamAccum,
+) -> Result<()> {
+    let Some(payload) = line.strip_prefix("data:") else {
+        return Ok(()); // 註解行／event:／id: 等——本協議只用 data 行。
+    };
+    let payload = payload.trim();
+    if payload == "[DONE]" {
+        acc.saw_done = true;
+        return Ok(());
+    }
+    if payload.is_empty() {
+        return Ok(());
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return Ok(()); // 非 JSON 載荷：容忍（ping 之類）。
+    };
+    // 少數 provider 在末幀附 usage——收到即記（W2 lite）。
+    if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
+        if let Ok(u) = serde_json::from_value::<Usage>(u.clone()) {
+            acc.usage = Some(u);
+        }
+    }
+    let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
+        return Ok(());
+    };
+    for choice in choices {
+        let Some(delta) = choice.get("delta") else { continue };
+        if let Some(t) = delta.get("content").and_then(|c| c.as_str()) {
+            if !t.is_empty() {
+                on_text(t);
+                acc.text.push_str(t);
+            }
+        }
+        if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+            for tc in tcs {
+                let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                let entry = acc.tool_calls.entry(idx).or_default();
+                if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                    entry.0 = Some(id.to_string());
+                }
+                if let Some(f) = tc.get("function") {
+                    if let Some(name) = f.get("name").and_then(|n| n.as_str()) {
+                        entry.1 = Some(name.to_string());
+                    }
+                    if let Some(args) = f.get("arguments").and_then(|a| a.as_str()) {
+                        entry.2.push_str(args);
+                    }
+                }
+            }
+        }
+        if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+            acc.finish_reason = Some(fr.to_string());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -900,5 +1134,156 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.tool_calls[0].arguments["text"], "好");
+    }
+
+    // ───────────────── F1 串流 ─────────────────
+
+    type SseEntry = (u16, String);
+
+    /// SSE stub：依腳本回 `(狀態碼, body)`——200 以 `text/event-stream` 回 chunked 文本；
+    /// 記錄請求次數與請求體（wire 斷言）。回 (base_url, 呼叫次數, 捕獲的請求體)。
+    async fn spawn_sse_stub(
+        script: Vec<SseEntry>,
+    ) -> (String, Arc<std::sync::atomic::AtomicU32>, Arc<Mutex<Vec<serde_json::Value>>>) {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let calls = Arc::new(AtomicU32::new(0));
+        let bodies: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let script = Arc::new(Mutex::new(VecDeque::from(script)));
+        let (c2, b2, s2) = (Arc::clone(&calls), Arc::clone(&bodies), Arc::clone(&script));
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            post(
+                move |State((calls, bodies, script)): State<(
+                    Arc<AtomicU32>,
+                    Arc<Mutex<Vec<serde_json::Value>>>,
+                    Arc<Mutex<VecDeque<SseEntry>>>,
+                )>,
+                      Json(body): Json<serde_json::Value>| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    bodies.lock().unwrap().push(body);
+                    let (code, text) = script.lock().unwrap().pop_front().unwrap_or((200, String::new()));
+                    async move {
+                        if code == 200 {
+                            (
+                                axum::http::StatusCode::OK,
+                                [("content-type", "text/event-stream")],
+                                text,
+                            )
+                        } else {
+                            (
+                                axum::http::StatusCode::from_u16(code).unwrap(),
+                                [("content-type", "application/json")],
+                                text,
+                            )
+                        }
+                    }
+                },
+            )
+            .with_state((c2, b2, s2)),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{addr}"), calls, bodies)
+    }
+
+    fn sse_frame(delta: serde_json::Value) -> SseEntry {
+        (200, format!("data: {delta}\n\n"))
+    }
+
+    /// F1：串流累積——文字增量逐片回呼、tool_call 跨幀片段組裝、finish_reason 帶回。
+    #[tokio::test]
+    async fn streaming_accumulates_text_and_tool_calls() {
+        let body: String = [
+            sse_frame(serde_json::json!({"choices": [{"delta": {"content": "你"}}]})).1,
+            sse_frame(serde_json::json!({"choices": [{"delta": {"content": "好"}}]})).1,
+            sse_frame(serde_json::json!({"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "function": {"name": "gbrain_search", "arguments": "{\"qu"}}
+            ]}}]})).1,
+            sse_frame(serde_json::json!({"choices": [
+                {"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "ery\":\"良率\"}"}}]}, "finish_reason": "tool_calls"}
+            ]})).1,
+            "data: [DONE]\n\n".into(),
+        ]
+        .concat();
+        let (base, _calls, bodies) = spawn_sse_stub(vec![(200, body)]).await;
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = Arc::clone(&seen);
+        let on_text = move |t: &str| seen2.lock().unwrap().push(t.to_string());
+        let res = chat_streaming(
+            &endpoint(&base),
+            &sampling(),
+            &[ChatMessage::user("hi")],
+            &[],
+            &on_text,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.content.as_deref(), Some("你好"));
+        assert_eq!(res.tool_calls.len(), 1);
+        assert_eq!(res.tool_calls[0].id, "call_1");
+        assert_eq!(res.tool_calls[0].name, "gbrain_search");
+        assert_eq!(res.tool_calls[0].arguments["query"], "良率");
+        assert_eq!(res.finish_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(*seen.lock().unwrap(), vec!["你".to_string(), "好".to_string()]);
+        let b = bodies.lock().unwrap();
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0]["stream"], true, "串流請求應帶 stream:true");
+    }
+
+    /// F1：400＋tools 字樣 → ToolsUnsupported（與非串流同分類，呼叫端降級 legacy）。
+    #[tokio::test]
+    async fn streaming_400_tools_classified_unsupported() {
+        let (base, calls, _) = spawn_sse_stub(vec![(
+            400,
+            "{\"error\": {\"message\": \"model does not support tools\"}}".into(),
+        )])
+        .await;
+        let err = chat_streaming(
+            &endpoint(&base),
+            &sampling(),
+            &[ChatMessage::user("a")],
+            &[ToolDef { name: "t".into(), description: "d".into(), parameters: serde_json::json!({}) }],
+            &|_| {},
+        )
+        .await
+        .unwrap_err();
+        assert!(err.downcast_ref::<ToolsUnsupported>().is_some(), "{err:#}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// F1：首 token 後斷流（無 finish_reason／[DONE]）→ Err 且**不再重試**（呼叫端單步重試語意）。
+    #[tokio::test]
+    async fn streaming_midstream_drop_errors_without_retry() {
+        let (base, calls, _) = spawn_sse_stub(vec![sse_frame(
+            serde_json::json!({"choices": [{"delta": {"content": "半"}}]}),
+        )])
+        .await;
+        let err = chat_streaming(&endpoint(&base), &sampling(), &[ChatMessage::user("hi")], &[], &|_| {})
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("提前結束"), "{err}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1, "串流中斷不得重試");
+    }
+
+    /// F1：首 token 前的暫態失敗（5xx）→ 沿用退避整發重試（與非串流同語意）。
+    #[tokio::test]
+    async fn streaming_retries_5xx_before_first_token() {
+        let body: String = [
+            sse_frame(serde_json::json!({"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]})).1,
+            "data: [DONE]\n\n".into(),
+        ]
+        .concat();
+        let (base, calls, _) = spawn_sse_stub(vec![
+            (500, "{\"error\":\"stub\"}".into()),
+            (500, "{\"error\":\"stub\"}".into()),
+            (200, body),
+        ])
+        .await;
+        let res = chat_streaming(&endpoint(&base), &sampling(), &[ChatMessage::user("hi")], &[], &|_| {})
+            .await
+            .unwrap();
+        assert_eq!(res.content.as_deref(), Some("ok"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3, "兩次重試＋一次成功");
     }
 }

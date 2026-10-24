@@ -111,6 +111,7 @@ fn ctx() -> ToolCtx {
         knowledge: None,
         turn_max_steps: 40,
         tool_result_max_chars: 8_000,
+        turn_deltas: None,
     }
 }
 
@@ -497,5 +498,168 @@ async fn conversational_native_unknown_tool_event_marked() {
     };
     assert_eq!(by_tool("bash")["status"], "unknown", "幻覺工具標 unknown");
     assert_eq!(by_tool("gbrain_search")["status"], "ok");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ───────────────── F1 串流：回合 delta 匯流排 ─────────────────
+
+/// F1 串流 stub：文字片段經 `chat_step_streaming` 的 on_text 腳本化回呼。
+struct StreamingStubReasoner {
+    turns: std::sync::Mutex<std::collections::VecDeque<(LlmTurn, Vec<String>)>>,
+}
+impl StreamingStubReasoner {
+    fn new(turns: Vec<(LlmTurn, Vec<String>)>) -> Self {
+        Self { turns: std::sync::Mutex::new(turns.into_iter().collect()) }
+    }
+}
+impl Reasoner for StreamingStubReasoner {
+    fn reason<'a>(&'a self, _s: &'a str, _u: &'a str) -> ReasonerFuture<'a> {
+        Box::pin(async { anyhow::bail!("streaming stub 不走 legacy") })
+    }
+    fn supports_native_tools(&self) -> bool {
+        true
+    }
+    fn chat_step<'a>(&'a self, _m: &'a [ChatMessage], _t: &'a [ToolDef]) -> ChatStepFuture<'a> {
+        let next = self
+            .turns
+            .lock()
+            .unwrap()
+            .pop_front()
+            .map(|(t, _)| t)
+            .unwrap_or_else(|| NativeStubReasoner::text("done"));
+        Box::pin(async move { Ok(next) })
+    }
+    fn chat_step_streaming<'a>(
+        &'a self,
+        _m: &'a [ChatMessage],
+        _t: &'a [ToolDef],
+        on_text: &'a (dyn Fn(&str) + Send + Sync),
+    ) -> ChatStepFuture<'a> {
+        let next = self.turns.lock().unwrap().pop_front();
+        Box::pin(async move {
+            let (turn, deltas) = next.unwrap_or_else(|| (NativeStubReasoner::text("done"), Vec::new()));
+            for d in &deltas {
+                on_text(d);
+            }
+            Ok(turn)
+        })
+    }
+}
+
+/// 訂閱匯流排直到 TurnEnd（回完整 delta 序列）。
+async fn drain_until_turn_end(
+    rx: &mut tokio::sync::broadcast::Receiver<crate::agent_state::TurnDelta>,
+) -> Vec<crate::agent_state::TurnDelta> {
+    let mut out = Vec::new();
+    loop {
+        match rx.recv().await {
+            Ok(ev) => {
+                let end = matches!(ev, crate::agent_state::TurnDelta::TurnEnd { .. });
+                out.push(ev);
+                if end {
+                    return out;
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return out,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+        }
+    }
+}
+
+/// F1：native 串流回合——StepStart/TextDelta/TextEnd/TurnEnd 全序列、順序正確、
+/// 最終 Message 內容不變（DB 語意零改動）；tool 步的草稿標記收回（TextEnd{false}）。
+#[tokio::test]
+async fn conversational_native_streams_deltas_to_bus() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "蝕刻良率怎麼了？");
+    let tool = StubTool::new("良率因 RF matching 接點氧化下降");
+    let reasoner = StreamingStubReasoner::new(vec![
+        (
+            NativeStubReasoner::call("gbrain_think", serde_json::json!({"query": "蝕刻良率"})),
+            vec!["我先查一下".to_string(), "良率資料".to_string()],
+        ),
+        (
+            NativeStubReasoner::text("主因是接點氧化，已換件。"),
+            vec!["主因是".to_string(), "接點氧化，已換件。".to_string()],
+        ),
+    ]);
+    // 匯流排：AppState::new 內建（簽名不變）；訂閱先於回合。
+    let (wtx, _wrx) = tokio::sync::mpsc::channel(8);
+    let (etx, _erx) = tokio::sync::mpsc::channel(8);
+    let state = crate::agent_state::AppState::new(wtx, etx, 4);
+    let mut rx = state.subscribe_turn_deltas();
+    let mut ctx = ctx();
+    ctx.turn_deltas = Some(state.turn_delta_sender());
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx, &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let deltas = drain_until_turn_end(&mut rx).await;
+    use crate::agent_state::TurnDelta as TD;
+    let kinds: Vec<String> = deltas
+        .iter()
+        .map(|d| match d {
+            TD::StepStart { .. } => "step_start".into(),
+            TD::TextDelta { text, .. } => format!("text:{text}"),
+            TD::TextEnd { final_reply, .. } => format!("text_end:{}", final_reply),
+            TD::TurnEnd { .. } => "turn_end".into(),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            "step_start",          // 步 1（tool 步）
+            "text:我先查一下",      // 中間步文字照發（草稿）
+            "text:良率資料",
+            "text_end:false",      // 轉 tool_calls → 收回
+            "step_start",          // 步 2（終局文字）
+            "text:主因是",
+            "text:接點氧化，已換件。",
+            "text_end:true",       // 終局 → 等最終訊息替換
+            "turn_end",
+        ]
+    );
+    // DB 語意不變：最終 Message 一次寫入、內容＝串流文字全量。
+    let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].text, "主因是接點氧化，已換件。");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// F1：非串流 Reasoner（預設 chat_step_streaming 委派 chat_step）→ 僅生命週期幀
+/// （StepStart×步數＋TurnEnd），無 TextDelta——DR-4 降級路徑。
+#[tokio::test]
+async fn conversational_non_streaming_reasoner_emits_lifecycle_only() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "查一下出貨狀態");
+    let tool = StubTool::new("出貨正常");
+    let reasoner = NativeStubReasoner::new(vec![NativeStubReasoner::text("出貨正常，無異常。")]);
+    let (wtx, _wrx) = tokio::sync::mpsc::channel(8);
+    let (etx, _erx) = tokio::sync::mpsc::channel(8);
+    let state = crate::agent_state::AppState::new(wtx, etx, 4);
+    let mut rx = state.subscribe_turn_deltas();
+    let mut ctx = ctx();
+    ctx.turn_deltas = Some(state.turn_delta_sender());
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx, &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let deltas = drain_until_turn_end(&mut rx).await;
+    use crate::agent_state::TurnDelta as TD;
+    assert!(
+        deltas.iter().all(|d| !matches!(d, TD::TextDelta { .. })),
+        "非串流不得發 TextDelta：{:?}",
+        deltas
+    );
+    assert_eq!(deltas.iter().filter(|d| matches!(d, TD::StepStart { .. })).count(), 1);
+    // 生命週期幀對非串流步同樣發佈（客戶端步驟進度信號與串流步同構）：
+    // StepStart → TextEnd{final_reply:true} → TurnEnd。
+    assert_eq!(deltas.len(), 3, "StepStart＋TextEnd＋TurnEnd：{:?}", deltas.len());
+    assert!(matches!(
+        deltas.get(1),
+        Some(TD::TextEnd { final_reply: true, .. })
+    ));
     std::fs::remove_dir_all(&dir).ok();
 }

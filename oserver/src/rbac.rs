@@ -53,6 +53,7 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("GET", Some("/api/inbox"))
         | ("GET", Some("/api/events"))
         | ("GET", Some("/api/employees/{id}/watch"))
+        | ("GET", Some("/api/employees/{id}/stream"))
         | ("GET", Some("/api/artifacts/{id}"))
         | ("POST", Some("/api/commitments")) => Req::Authenticated,
         // 自身會話面（登出／refresh／改自身密碼——所有已認證角色）
@@ -177,7 +178,13 @@ pub async fn rbac_middleware(
 
     // R3：SSE 短票——EventSource 無法帶 header。一次性票消費後由 store 構造完整
     // Identity；壞票／無票 → 落到一般 Bearer 檢查（非 EventSource 客戶端用 header 連）。
-    if path == "/api/stream" {
+    // F1：員工級回合 delta 流（`/api/employees/{id}/stream`）同為 EventSource 消費——
+    // 共用短票機制（以 MatchedPath 比對 route pattern，不逐 id 判斷）。
+    let matched = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|p| p.as_str().to_string());
+    if path == "/api/stream" || matched.as_deref() == Some("/api/employees/{id}/stream") {
         let ticket = req.uri().query().and_then(|q| {
             q.split('&').find_map(|kv| kv.strip_prefix("ticket="))
         });
@@ -222,10 +229,6 @@ pub async fn rbac_middleware(
             .into_response();
     }
 
-    let matched = req
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|p| p.as_str().to_string());
     let req_kind = requirement(req.method().as_str(), matched.as_deref());
     if !satisfies(&identity, req_kind) {
         audit_authz_denied(&state, &identity, &path);

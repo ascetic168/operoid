@@ -416,7 +416,8 @@ async fn api_service_status(
     Json(json!({"installed": installed, "running": true})).into_response()
 }
 
-fn check_enabled(st: &ServerState) -> Result<(), AppError> {
+/// Agent-OS 開關檢查（watch／employee-stream 等讀面共用；關閉 → `agent_os.disabled`）。
+pub(crate) fn check_enabled(st: &ServerState) -> Result<(), AppError> {
     if !st.cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }

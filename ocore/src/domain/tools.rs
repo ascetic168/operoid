@@ -76,6 +76,10 @@ pub struct ToolCtx {
     pub turn_max_steps: u32,
     /// M1：工具結果餵回 LLM 的字元上限（`AppConfig::tool_result_max_chars`，預設 8,000）。
     pub tool_result_max_chars: usize,
+    /// F1 串流：回合 delta 匯流排的發佈端（生產路徑僅 `scan_inbox` 以
+    /// `AppState::turn_delta_sender` 注入；`None`＝不發佈——測試／非排程器路徑）。
+    /// 發佈端 send 無訂閱者時為 no-op，零成本。
+    pub turn_deltas: Option<tokio::sync::broadcast::Sender<crate::agent_state::TurnDelta>>,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -91,6 +95,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("access", &self.access.principal_id)
             .field("knowledge", &self.knowledge.is_some())
             .field("turn_max_steps", &self.turn_max_steps)
+            .field("turn_deltas", &self.turn_deltas.is_some())
             .finish()
     }
 }
@@ -138,6 +143,20 @@ pub trait Reasoner: Send + Sync {
         Box::pin(async {
             anyhow::bail!("此 Reasoner 不支援原生工具協議（supports_native_tools=false）")
         })
+    }
+
+    /// F1 串流：[`Reasoner::chat_step`] 的串流變體——模型文字以增量片段經 `on_text`
+    /// 即時回呼（工具呼叫的引數片段不回呼）。**預設實作＝委派 [`Reasoner::chat_step`]、
+    /// 忽略回呼**（DR-4：非串流 provider 零破壞，delta 缺席本身就是客戶端必須容忍的路徑）。
+    /// 呼叫端（runtime）保證 `on_text` 在 future 完成前有效（借用生存期綁定）。
+    fn chat_step_streaming<'a>(
+        &'a self,
+        messages: &'a [crate::llm::ChatMessage],
+        tools: &'a [crate::llm::ToolDef],
+        on_text: &'a (dyn Fn(&str) + Send + Sync),
+    ) -> ChatStepFuture<'a> {
+        let _ = on_text;
+        self.chat_step(messages, tools)
     }
 
     /// 是否支援原生 function calling（受設定 `llm_protocol` 影響；session 內可降級）。

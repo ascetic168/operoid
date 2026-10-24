@@ -14,16 +14,19 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use axum::extract::State;
+use axum::extract::{Path as AxPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde_json::json;
 
 use crate::auth::Identity;
-use crate::routes::{cors_layer, err_response, open_store, require_identity, ServerState};
+use crate::routes::{
+    check_enabled, cors_layer, err_response, open_store, require_identity, ServerState,
+};
+use ocore::domain::Store;
 
 const TICKET_TTL: Duration = Duration::from_secs(60);
 /// 輪詢週期。
@@ -67,6 +70,7 @@ pub fn sse_routes() -> Router<Arc<ServerState>> {
     Router::new()
         .route("/api/stream/ticket", post(api_stream_ticket))
         .route("/api/stream", axum::routing::get(api_stream))
+        .route("/api/employees/{id}/stream", get(api_employee_stream))
         .layer(cors_layer())
 }
 
@@ -177,9 +181,103 @@ async fn api_stream(
         .into_response()
 }
 
+/// TurnDelta 的 employee_id 投影（匯流排過濾用——單通道廣播、接收端按員工分流）。
+fn delta_employee(ev: &ocore::agent_state::TurnDelta) -> &str {
+    use ocore::agent_state::TurnDelta as TD;
+    match ev {
+        TD::StepStart { employee_id, .. }
+        | TD::TextDelta { employee_id, .. }
+        | TD::TextEnd { employee_id, .. }
+        | TD::TurnEnd { employee_id, .. } => employee_id,
+    }
+}
+
+/// 員工級回合 delta 流（F1 串流）：訂閱行程內 broadcast 匯流排**直推**——與 `/api/stream`
+/// 的 DB 輪詢橋不同，delta 為 ephemeral（不落 DB），只能來自匯流排（`TurnDelta` 文檔）。
+/// 認證：短票（EventSource 無法帶 header；rbac 中介層特例消費）或一般 Bearer。
+/// 「限自身」：user 僅能訂閱名下員工（同 watch 慣例——`can_access_employee`，
+/// manager/admin 不限；不存在／非名下一律 forbidden，不洩漏存在性）。
+/// 幀：`event: delta`，data 為 TurnDelta JSON（kind 標籤）。Lagged（廣播溢出）→
+/// `{"kind":"resync"}`（客戶端丟草稿回退輪詢）；發佈端全關（AppState drop）→ 流結束。
+async fn api_employee_stream(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<Extension<Identity>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let Some(identity) = require_identity(&state, &headers, identity) else {
+        return err_response(&ocore::i18n::AppError::new("auth.unauthorized"));
+    };
+    if let Err(e) = check_enabled(&state) {
+        return err_response(&e);
+    }
+    // 限自身（訂閱期間歸屬視為不變——與 /api/stream 的 owned 集快照同取捨）。
+    let ident = identity.clone();
+    let st = state.clone();
+    let emp_id = id.clone();
+    let allowed = tokio::task::spawn_blocking(move || -> bool {
+        let Ok(store) = open_store(&st) else { return false };
+        match store.get_employee(&emp_id) {
+            Ok(Some(emp)) => {
+                crate::rbac::can_access_employee(&ident, emp.owner_principal.as_deref())
+            }
+            _ => false,
+        }
+    })
+    .await
+    .unwrap_or(false);
+    if !allowed {
+        return err_response(&ocore::i18n::AppError::new("auth.forbidden"));
+    }
+    // 訂閱先於回應建構（開流前的 delta 不漏）。
+    let Some(app_state) = state.agent_state.as_ref() else {
+        return err_response(&ocore::i18n::AppError::new("agent_os.disabled"));
+    };
+    let rx = app_state.subscribe_turn_deltas();
+
+    let stream = futures::stream::unfold((rx, id), move |(mut rx, id)| async move {
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    if delta_employee(&ev) != id {
+                        continue; // 其他員工的 delta——過濾。
+                    }
+                    let data = serde_json::to_string(&ev).unwrap_or_default();
+                    return Some((
+                        Ok::<_, std::convert::Infallible>(
+                            SseEvent::default().event("delta").data(data),
+                        ),
+                        (rx, id),
+                    ));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("[sse] 員工 delta 流 Lagged（丟失 {n} 幀）——通知客戶端 resync");
+                    let data = json!({"kind": "resync", "lost": n}).to_string();
+                    return Some((
+                        Ok(SseEvent::default().event("delta").data(data)),
+                        (rx, id),
+                    ));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    return None;
+                }
+            }
+        }
+    });
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive"))
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::{AuthError, AuthProvider};
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use std::sync::atomic::AtomicBool;
+    use tower::ServiceExt;
 
     #[test]
     fn ticket_single_use_and_expiry() {
@@ -189,5 +287,158 @@ mod tests {
         assert_eq!(consume_ticket(&t), None, "第二次消費必須失敗");
         // 壞票。
         assert_eq!(consume_ticket("nonexistent"), None);
+    }
+
+    /// F1 端點測試用 stub auth：token → 固定身份（usr＝principal-user）。
+    struct StubAuth;
+    impl AuthProvider for StubAuth {
+        fn check(&self, auth_header: Option<&str>) -> Result<Identity, AuthError> {
+            match auth_header.and_then(|h| h.strip_prefix("Bearer ").map(str::trim)) {
+                Some("usr") => Ok(Identity {
+                    name: "principal-user".into(),
+                    token_id: None,
+                    roles: vec!["user".into()],
+                    must_change_password: false,
+                }),
+                _ => Err(AuthError),
+            }
+        }
+    }
+
+    fn stream_test_state(db: &std::path::Path) -> Arc<ServerState> {
+        let (wtx, _wrx) = tokio::sync::mpsc::channel(8);
+        let (etx, _erx) = tokio::sync::mpsc::channel::<ocore::agent_state::InboundEvent>(8);
+        let mut cfg = ocore::app_config::AppConfig::default();
+        cfg.agent_os_enabled = true;
+        Arc::new(ServerState {
+            auth: Arc::new(StubAuth),
+            cfg,
+            db_path: db.to_path_buf(),
+            ready: Arc::new(AtomicBool::new(true)),
+            agent_state: Some(ocore::agent_state::AppState::new(wtx, etx, 4)),
+            ops: Arc::new(crate::operations::OpRegistry::new()),
+            settings_dir: db.parent().unwrap().to_path_buf(),
+            server_token: Some("master-token".into()),
+            server_port: 7340,
+            factory_gate: Arc::new(ocore::factory_sched::FactoryGate::new()),
+            media_sources: Arc::new(tokio::sync::RwLock::new(
+                crate::gbrain::MediaSourcesCache::default(),
+            )),
+        })
+    }
+
+    /// seed：workspace＋兩名員工（emp-mine＝principal-user 名下；emp-other＝他人名下）。
+    fn seed_employees(db: &std::path::Path) {
+        use ocore::domain::{
+            BrainRef, Employee, EmployeeState, SqliteStore, Store, Workspace, WorkspaceStatus,
+        };
+        let store = SqliteStore::open(db).unwrap();
+        store
+            .put_workspace(&Workspace {
+                id: "ws".into(),
+                name: "W".into(),
+                description: None,
+                status: WorkspaceStatus::Active,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        for (id, owner) in [("emp-mine", Some("principal-user")), ("emp-other", Some("principal-other"))] {
+            store
+                .put_employee(&Employee {
+                    id: id.into(),
+                    workspace_id: "ws".into(),
+                    name: id.into(),
+                    brain: BrainRef { brain_id: "b1".into() },
+                    role: None,
+                    template_id: None,
+                    state: EmployeeState::Sleeping,
+                    archived: false,
+                    tools: None,
+                    created_at: "t".into(),
+                    owner_principal: owner.map(str::to_string),
+                })
+                .unwrap();
+        }
+    }
+
+    /// F1：員工級 delta 流直推——名下 user 訂閱即達（非輪詢）；連線隨發佈端關閉而收尾。
+    #[tokio::test]
+    async fn employee_stream_pushes_deltas_to_owned_user() {
+        let dir = std::env::temp_dir().join(format!("operoid-sse-stream-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("t.db");
+        seed_employees(&db);
+        let state = stream_test_state(&db);
+        let app = sse_routes().with_state(state.clone());
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/employees/emp-mine/stream")
+            .header("authorization", "Bearer usr")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/event-stream",
+            "SSE content-type"
+        );
+
+        // 訂閱已建立（headers 回傳前 handler 已 subscribe）→ 發佈即達。
+        let sender = state
+            .agent_state
+            .as_ref()
+            .unwrap()
+            .turn_delta_sender();
+        sender
+            .send(ocore::agent_state::TurnDelta::TextDelta {
+                employee_id: "emp-mine".into(),
+                task_id: "task-1".into(),
+                step: 1,
+                text: "主因是接點氧化".into(),
+            })
+            .unwrap();
+        drop(sender);
+        // 丟掉全部 ServerState（含內含的發佈端）→ 匯流排 Closed → 流自然收尾。
+        drop(app);
+        drop(state);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+        let s = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(s.contains("event: delta"), "幀名：{s}");
+        assert!(s.contains("\"kind\":\"text_delta\""), "payload：{s}");
+        assert!(s.contains("主因是接點氧化"), "文字：{s}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// F1：user 訂閱**非名下**員工 → 403（不洩漏存在性）；未認證 → 401。
+    #[tokio::test]
+    async fn employee_stream_scopes_to_owned_employees() {
+        let dir = std::env::temp_dir().join(format!("operoid-sse-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("t.db");
+        seed_employees(&db);
+        let state = stream_test_state(&db);
+        let app = sse_routes().with_state(state.clone());
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/employees/emp-other/stream")
+            .header("authorization", "Bearer usr")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "他人員工不得訂閱");
+
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri("/api/employees/emp-mine/stream")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

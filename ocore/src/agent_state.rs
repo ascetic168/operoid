@@ -22,6 +22,22 @@ pub struct WakeSignal {
     pub reason: String,
 }
 
+/// 對話回合的即時 delta（F1 串流；SSE `event: delta` 的 payload）。
+///
+/// **ephemeral 契約**：只走行程內 broadcast 匯流排，不落 DB、不進 events 表——
+/// 正確性由最終 `Message{Out}`（輪詢可達）保證，delta 丟失（斷線／Lagged）僅觀感問題。
+/// 客戶端語意（DR-5 草稿收回）：`StepStart` 清空草稿；`TextDelta` 附加；
+/// `TextEnd{final_reply:false}` 收回草稿（該步轉 tool_calls）；`TextEnd{final_reply:true}`
+/// 保留草稿、等待 watch 輪詢的最終訊息冪等替換；`TurnEnd` 回合收尾（連線保持開啟）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnDelta {
+    StepStart { employee_id: String, task_id: String, step: u32 },
+    TextDelta { employee_id: String, task_id: String, step: u32, text: String },
+    TextEnd { employee_id: String, task_id: String, step: u32, final_reply: bool },
+    TurnEnd { employee_id: String, task_id: String },
+}
+
 /// 員工忙碌守衛：RAII——drop 時自動從 `busy` 集合移除該員工，釋放占用（含錯誤路徑）。
 pub struct BusyGuard {
     busy: Arc<Mutex<HashSet<String>>>,
@@ -54,6 +70,10 @@ pub struct AppState {
     /// W1 合作式停止：已請求停止的 employee_ids。`request_stop` 僅對執行中（busy）的員工
     /// 受理；runner 在步與步之間以 `should_stop` 檢查並**消耗**旗標後優雅中止。
     cancel: Arc<Mutex<HashSet<String>>>,
+    /// F1 串流：對話回合的即時 delta 匯流排（單通道全員工廣播、接收端按 employee_id 過濾）。
+    /// `new()` 內自建（簽名不變）；生產者＝`run_conversational_turn`（經 `ToolCtx.turn_deltas`），
+    /// 消費者＝oserver 員工級 SSE 端點。delta 為 ephemeral（見 [`TurnDelta`] 文檔）。
+    delta_tx: tokio::sync::broadcast::Sender<TurnDelta>,
 }
 
 /// ingress 去重集合上限（超過即清空、重新計算視窗）。v1 粗略邊界化。
@@ -65,6 +85,9 @@ impl AppState {
         event_tx: mpsc::Sender<InboundEvent>,
         permits_count: usize,
     ) -> Self {
+        // 匯流排容量：串流 delta 節奏約每數十 ms 一幀，256 幀的緩衝遠超消費端處理速度；
+        // 慢消費端（SSE 斷流未讀）溢出即 Lagged——客戶端 resync 回退輪詢，正確性不受影響。
+        let (delta_tx, _) = tokio::sync::broadcast::channel(256);
         Self {
             busy: Arc::new(Mutex::new(HashSet::new())),
             wake_tx,
@@ -72,6 +95,7 @@ impl AppState {
             llm_permits: Arc::new(tokio::sync::Semaphore::new(permits_count.max(1))),
             seen_external_refs: Arc::new(Mutex::new(HashSet::new())),
             cancel: Arc::new(Mutex::new(HashSet::new())),
+            delta_tx,
         }
     }
 
@@ -151,6 +175,16 @@ impl AppState {
     /// 全域 LLM 並發 permit（節流「全部喚醒」的尖峰並發 LLM 呼叫；permit 滿則自動排隊等待）。
     pub fn llm_permits(&self) -> Arc<tokio::sync::Semaphore> {
         Arc::clone(&self.llm_permits)
+    }
+
+    /// F1 串流：回合 delta 的發佈端（注入 `ToolCtx.turn_deltas`；無訂閱者時 send 即丟，零成本）。
+    pub fn turn_delta_sender(&self) -> tokio::sync::broadcast::Sender<TurnDelta> {
+        self.delta_tx.clone()
+    }
+
+    /// F1 串流：訂閱回合 delta（SSE 端點／測試用；Lagged 由訂閱端 resync）。
+    pub fn subscribe_turn_deltas(&self) -> tokio::sync::broadcast::Receiver<TurnDelta> {
+        self.delta_tx.subscribe()
     }
 }
 

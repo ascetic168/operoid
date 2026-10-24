@@ -74,6 +74,7 @@ pub async fn op_run<R: Runtime>(
             access,
             turn_max_steps: cfg.turn_max_steps,
             tool_result_max_chars: cfg.tool_result_max_chars,
+            turn_deltas: None,
         };
         let q = arg.clone().unwrap_or_default();
         let out = svc

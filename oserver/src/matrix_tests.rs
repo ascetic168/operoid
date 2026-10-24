@@ -87,6 +87,7 @@ const INVENTORY: &[(&str, &str)] = &[
     ("GET", "/api/employees"),
     ("GET", "/api/templates"),
     ("GET", "/api/employees/{id}/watch"),
+    ("GET", "/api/employees/{id}/stream"),
     ("GET", "/api/artifacts/{id}"),
     ("GET", "/api/inbox"),
     ("GET", "/api/events"),

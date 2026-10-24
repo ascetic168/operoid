@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent_state::{AppState, CancelWatch, WakeSignal};
+use crate::agent_state::{AppState, CancelWatch, TurnDelta, WakeSignal};
 
 use crate::app_config;
 
@@ -803,6 +803,14 @@ async fn run_conversational_turn(
     };
 
     let channel = channel_context_line(task);
+    // F1 串流：回合 delta 發佈端（`ctx.turn_deltas` 由 scan_inbox 注入；None＝不發佈——
+    // 測試／非排程器路徑）。ephemeral：send 無訂閱者時為 no-op，不落 DB（見 TurnDelta 文檔）。
+    let delta_tx = ctx.turn_deltas.clone();
+    let emit_delta = |ev: TurnDelta| {
+        if let Some(tx) = &delta_tx {
+            let _ = tx.send(ev);
+        }
+    };
     let mut steps: Vec<String> = Vec::new();
     let mut native = reasoner.supports_native_tools();
     let tools = if native { crate::tools::contract::turn_tool_defs(ctx) } else { Vec::new() };
@@ -835,7 +843,21 @@ async fn run_conversational_turn(
                 )));
                 last_todo_step = step_idx;
             }
-            let turn = match reasoner.chat_step(&history, &tools).await {
+            // F1 串流：本步開始（客戶端清空該 task 的草稿——步驟重試時自然重置）。
+            emit_delta(TurnDelta::StepStart {
+                employee_id: employee_id.to_string(),
+                task_id: task.id.clone(),
+                step: step_idx,
+            });
+            let on_text = |t: &str| {
+                emit_delta(TurnDelta::TextDelta {
+                    employee_id: employee_id.to_string(),
+                    task_id: task.id.clone(),
+                    step: step_idx,
+                    text: t.to_string(),
+                });
+            };
+            let turn = match reasoner.chat_step_streaming(&history, &tools, &on_text).await {
                 Ok(t) => t,
                 Err(e) => {
                     if e.downcast_ref::<llm::ToolsUnsupported>().is_some() {
@@ -847,7 +869,13 @@ async fn run_conversational_turn(
                     }
                     // 暫態失敗：單次重試（llm 層已有 HTTP 重試；此處防單步抖動中斷回合）。
                     eprintln!("[runtime] 對話 native 步失敗（重試一次）: {e}");
-                    match reasoner.chat_step(&history, &tools).await {
+                    // 重試＝本步重來：重發 StepStart 讓客戶端草稿歸零。
+                    emit_delta(TurnDelta::StepStart {
+                        employee_id: employee_id.to_string(),
+                        task_id: task.id.clone(),
+                        step: step_idx,
+                    });
+                    match reasoner.chat_step_streaming(&history, &tools, &on_text).await {
                         Ok(t) => t,
                         Err(e2) => {
                             eprintln!("[runtime] 對話 Reasoner 失敗（提前結束回合）: {e2}");
@@ -858,6 +886,12 @@ async fn run_conversational_turn(
                                 "turn_error",
                                 &format!("{e2}"),
                             );
+                            emit_delta(TurnDelta::TextEnd {
+                                employee_id: employee_id.to_string(),
+                                task_id: task.id.clone(),
+                                step: step_idx,
+                                final_reply: false,
+                            });
                             break;
                         }
                     }
@@ -874,8 +908,23 @@ async fn run_conversational_turn(
                         }
                     }
                 }
+                // 本步即終局文字：告知客戶端保留草稿、等 watch 輪詢的最終訊息冪等替換
+                //（write_final_reply 尾端確定性附加的檢索圖片／來源文件不進串流）。
+                emit_delta(TurnDelta::TextEnd {
+                    employee_id: employee_id.to_string(),
+                    task_id: task.id.clone(),
+                    step: step_idx,
+                    final_reply: true,
+                });
                 break; // 空文字 → silent 語意。
             }
+            // 本步轉入工具呼叫：收回草稿（中間步的思考文字不保留）。
+            emit_delta(TurnDelta::TextEnd {
+                employee_id: employee_id.to_string(),
+                task_id: task.id.clone(),
+                step: step_idx,
+                final_reply: false,
+            });
             history.push(llm::ChatMessage::assistant(
                 turn.content.clone().unwrap_or_default(),
                 turn.tool_calls.clone(),
@@ -1085,6 +1134,13 @@ async fn run_conversational_turn(
             }
         }
     }
+
+    // F1 串流：回合收尾（單一出口——涵蓋 finish／silent／turn_error／stopped 各 break 路徑；
+    // 提前 `?` 失敗的罕見路徑由客戶端輪詢兜底，delta 層 best-effort）。連線保持開啟供下一回合。
+    emit_delta(TurnDelta::TurnEnd {
+        employee_id: employee_id.to_string(),
+        task_id: task.id.clone(),
+    });
 
     // 回合結束收尾（語意同 v1）：全程未 send 且未回覆 → silent（「要不要回」是員工的
     // 內容判斷，Principle 10）；已在 finish 寫過最終回覆者記過 reply 事件。
@@ -3146,6 +3202,7 @@ pub fn build_tool_ctx(
             registry,
             turn_max_steps: cfg.turn_max_steps,
             tool_result_max_chars: cfg.tool_result_max_chars,
+            turn_deltas: None,
         },
     ))
 }
@@ -3288,6 +3345,40 @@ impl Reasoner for LlmReasoner {
         Box::pin(async move {
             let _permit = permits.acquire().await.expect("llm semaphore closed");
             let res = llm::chat(&self.endpoint, &self.cfg.llm_sampling(), messages, tools).await;
+            // auto 模式：provider 不支援原生工具 → session 內永久降級文字 JSON 協議。
+            if let Err(e) = &res {
+                if e.downcast_ref::<llm::ToolsUnsupported>().is_some()
+                    && self.cfg.llm_protocol.is_none()
+                {
+                    self.native_downgraded
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            let turn = res?;
+            self.log_usage(&turn.usage);
+            Ok(turn)
+        })
+    }
+
+    /// F1 串流版：permit／降級旗標／usage 記錄與 [`Self::chat_step`] 完全同構，
+    /// 改呼 [`llm::chat_streaming`]——文字增量即時經 `on_text` 回呼（由 runtime 轉發匯流排）。
+    fn chat_step_streaming<'a>(
+        &'a self,
+        messages: &'a [llm::ChatMessage],
+        tools: &'a [llm::ToolDef],
+        on_text: &'a (dyn Fn(&str) + Send + Sync),
+    ) -> ChatStepFuture<'a> {
+        let permits = Arc::clone(&self.permits);
+        Box::pin(async move {
+            let _permit = permits.acquire().await.expect("llm semaphore closed");
+            let res = llm::chat_streaming(
+                &self.endpoint,
+                &self.cfg.llm_sampling(),
+                messages,
+                tools,
+                on_text,
+            )
+            .await;
             // auto 模式：provider 不支援原生工具 → session 內永久降級文字 JSON 協議。
             if let Err(e) = &res {
                 if e.downcast_ref::<llm::ToolsUnsupported>().is_some()
@@ -3648,6 +3739,7 @@ Caption-only figure（無原圖 → 不收）
             registry: None,
             turn_max_steps: 40,
             tool_result_max_chars: 8_000,
+            turn_deltas: None,
         }
     }
 
@@ -5833,6 +5925,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             registry: None,
             turn_max_steps: 40,
             tool_result_max_chars: 8_000,
+            turn_deltas: None,
         };
         let res = run_cycle(
             &emp_id,
@@ -5955,6 +6048,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             registry: None,
             turn_max_steps: 40,
             tool_result_max_chars: 8_000,
+            turn_deltas: None,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -6414,6 +6508,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             registry: None,
             turn_max_steps: 40,
             tool_result_max_chars: 8_000,
+            turn_deltas: None,
         };
 
         let dir = test_dir();
@@ -6753,6 +6848,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             registry: None,
             turn_max_steps: 40,
             tool_result_max_chars: 8_000,
+            turn_deltas: None,
         };
 
         let dir = test_dir();

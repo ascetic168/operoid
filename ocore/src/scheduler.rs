@@ -155,7 +155,9 @@ async fn scan_inbox(
         let registry = registry.clone();
         Some(async move {
             let _guard = guard; // 釋放於此 future 完成（含錯誤路徑）
-            if let Ok((tool, ctx)) = build_tool_ctx(cfg, store, &id, registry, db_path) {
+            if let Ok((tool, mut ctx)) = build_tool_ctx(cfg, store, &id, registry, db_path) {
+                // F1 串流：注入回合 delta 發佈端（員工級 SSE 直推；無訂閱者時 send 為 no-op）。
+                ctx.turn_deltas = Some(state.turn_delta_sender());
                 // Reasoner 為可選：有則訊息走對話回合，無則退回 gbrain 單發（守 6c 行為）。
                 let reasoner = match build_reasoner(cfg, store, &id, permits, db_path) {
                     Ok(r) => Some(r),
