@@ -126,6 +126,14 @@
       "batchFlag": "llama-server 缺 -b/-ub 8192 旗標——長 chunk 會被拒收（預設 512），知識檢索品質將受影響。",
       "recheck": "重測",
       "dismiss": "關閉（本次執行不再顯示）"
+    },
+    "update": {
+      "available": "有新版 v{version} 可用",
+      "goInstall": "前往更新",
+      "downloading": "正在下載 v{version}… {progress}",
+      "ready": "已更新至 v{version}，重新啟動後生效",
+      "relaunch": "重新啟動",
+      "dismiss": "關閉（本次執行不再顯示）"
     }
   },
   "claude": {
@@ -571,7 +579,22 @@
     "obridgeAutostartLabel": "Operoid 啟動時自動帶起 Obridge 子進程（找不到執行檔請在下方填路徑）",
     "obridgeExeLabel": "obridge 執行檔路徑（留空＝自動偵測 Operoid 執行檔同目錄）",
     "obridgePathLabel": "obridge.toml 路徑（留空＝預設 app-data/obridge/obridge.toml）",
-    "obridgeExePlaceholder": "例：C:\\tools\\obridge.exe"
+    "obridgeExePlaceholder": "例：C:\\tools\\obridge.exe",
+    "updateSection": "版本與更新",
+    "currentVersion": "目前版本",
+    "checkUpdate": "檢查更新",
+    "updateNotifyLabel": "更新提示（啟動時自動檢查新版，有新版顯示橫幅）",
+    "autoUpdateLabel": "自動更新（偵測到新版即自動下載安裝）",
+    "autoUpdateHint": "⚠ 新版可能與目前版本不相容（本專案不保證向上相容）；預設關閉，開啟即表示接受此風險。",
+    "upToDate": "已是最新版本",
+    "updateAvailable": "可更新至 v{version}",
+    "downloadingProgress": "下載中… {progress}%",
+    "downloadingIndeterminate": "下載中…",
+    "readyToRelaunch": "已安裝 v{version}，重新啟動後生效",
+    "downloadInstall": "下載並安裝",
+    "updateNoInfo": "暫無更新資訊——新版發布管線尚未就緒，可稍後再試，或到 GitHub Releases 頁手動下載。",
+    "updateCheckFailed": "檢查更新失敗：{msg}",
+    "releaseNotes": "版本說明"
   },
   "brainsView": {
     "removePreviewTitle": "此來源有資料——選擇處理方式",

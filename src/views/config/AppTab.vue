@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { reactive, ref, watchEffect } from "vue";
-import { Save, CheckCircle2 } from "lucide-vue-next";
+import { computed, reactive, ref, watchEffect } from "vue";
+import { Save, CheckCircle2, RefreshCw, Download, RotateCcw, ExternalLink } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
-import { formatError, type AppConfig } from "@/lib/tauri";
+import { useUpdateStore } from "@/stores/update";
+import { formatError, openUrl, type AppConfig } from "@/lib/tauri";
 import { LANGUAGE_OPTIONS } from "@/i18n/languageConfig";
 
 const config = useConfigStore();
+const update = useUpdateStore();
 
 // 安全深拷貝（避開 structuredClone 對 Pinia reactive proxy 可能丟 DataCloneError）。
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -33,6 +35,8 @@ const form = reactive<AppConfig>({
   obridge_config_path: null,
   obridge_autostart: false,
   obridge_executable: null,
+  update_notify: true,
+  auto_update: false,
 });
 
 watchEffect(() => {
@@ -60,6 +64,10 @@ async function onLocaleChange(v: string) {
     appError.value = formatError(e);
   }
 }
+
+// ---- 版本與更新區塊 ----
+const updateBusy = computed(() => update.state === "checking" || update.state === "downloading");
+const RELEASES_URL = "https://github.com/ascetic168/operoid/releases";
 </script>
 
 <template>
@@ -170,6 +178,93 @@ async function onLocaleChange(v: string) {
       <span v-else-if="appSaved" class="flex items-center gap-1 text-xs text-green-500">
         <CheckCircle2 :size="13" /> {{ $t("configView.saved") }}
       </span>
+    </div>
+  </section>
+
+  <!-- 版本與更新 -->
+  <section class="rounded-xl border border-border bg-card/40 p-5">
+    <h2 class="mb-3 text-sm font-semibold">{{ $t("configView.updateSection") }}</h2>
+    <div class="flex flex-col gap-2 text-sm">
+      <div class="flex items-center gap-2">
+        <span class="text-muted-foreground">{{ $t("configView.currentVersion") }}</span>
+        <span class="font-mono text-foreground">v{{ config.info?.version ?? "?" }}</span>
+        <button
+          class="ml-2 flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent"
+          :disabled="updateBusy"
+          @click="update.check()"
+        >
+          <RefreshCw :size="12" :class="{ 'animate-spin': update.state === 'checking' }" />
+          {{ $t("configView.checkUpdate") }}
+        </button>
+        <button
+          v-if="update.state === 'available'"
+          class="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:opacity-90"
+          :disabled="updateBusy"
+          @click="update.downloadAndInstall()"
+        >
+          <Download :size="12" /> {{ $t("configView.downloadInstall") }}
+        </button>
+        <button
+          v-if="update.state === 'ready'"
+          class="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground hover:opacity-90"
+          @click="update.relaunchNow()"
+        >
+          <RotateCcw :size="12" /> {{ $t("configView.relaunch") }}
+        </button>
+        <a
+          class="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+          :href="RELEASES_URL"
+          @click.prevent="openUrl(RELEASES_URL)"
+        >
+          <ExternalLink :size="11" /> GitHub Releases
+        </a>
+      </div>
+      <!-- 檢查／下載狀態列 -->
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <span v-if="update.state === 'uptodate'" class="text-muted-foreground">{{ $t("configView.upToDate") }}</span>
+        <template v-else-if="update.state === 'available'">
+          <span class="font-medium text-primary">{{ $t("configView.updateAvailable", { version: update.version }) }}</span>
+        </template>
+        <span v-else-if="update.state === 'downloading'" class="text-muted-foreground">
+          {{ update.progress !== null
+            ? $t("configView.downloadingProgress", { progress: update.progress })
+            : $t("configView.downloadingIndeterminate") }}
+        </span>
+        <span v-else-if="update.state === 'ready'" class="text-green-500">
+          {{ $t("configView.readyToRelaunch", { version: update.version }) }}
+        </span>
+        <span v-else-if="update.state === 'error' && update.errorKind === 'noinfo'" class="text-muted-foreground">
+          {{ $t("configView.updateNoInfo") }}
+        </span>
+        <span v-else-if="update.state === 'error'" class="text-destructive">
+          {{ $t("configView.updateCheckFailed", { msg: update.errorMsg }) }}
+        </span>
+      </div>
+      <!-- 下載進度條 -->
+      <div v-if="update.state === 'downloading' && update.progress !== null" class="h-1 w-full overflow-hidden rounded bg-background">
+        <div class="h-full bg-primary transition-all" :style="{ width: `${update.progress}%` }" />
+      </div>
+      <!-- 版本說明（可摺疊） -->
+      <details v-if="update.notes" class="mt-1">
+        <summary class="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+          {{ $t("configView.releaseNotes") }}
+        </summary>
+        <pre class="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-background/60 p-2 text-xs text-muted-foreground">{{ update.notes }}</pre>
+      </details>
+      <!-- 選項（併入本 TAB 批次儲存） -->
+      <div class="mt-2 flex flex-col gap-1.5">
+        <label class="flex items-center gap-2">
+          <input v-model="form.update_notify" type="checkbox" />
+          <span>{{ $t("configView.updateNotifyLabel") }}</span>
+        </label>
+        <div class="flex flex-col gap-0.5">
+          <label class="flex items-center gap-2">
+            <input v-model="form.auto_update" type="checkbox" />
+            <span>{{ $t("configView.autoUpdateLabel") }}</span>
+          </label>
+          <span class="pl-6 text-xs text-warning">{{ $t("configView.autoUpdateHint") }}</span>
+        </div>
+      </div>
     </div>
   </section>
 </template>

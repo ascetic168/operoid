@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity, RefreshCw } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity, RefreshCw, Download, RotateCcw } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
 import { useInboxStore } from "@/stores/inbox";
+import { useUpdateStore } from "@/stores/update";
 import { checkPrerequisites, knowledgeHealth, openUrl, tL10n, type DepStatus, type KnowledgeHealth } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import ClaudeCodeDialog from "@/components/ClaudeCodeDialog.vue";
 
 const config = useConfigStore();
 const inbox = useInboxStore();
+const update = useUpdateStore();
 const missingDeps = ref<DepStatus[]>([]);
 const claudeOpen = ref(false);
 const bellOpen = ref(false);
@@ -42,8 +44,20 @@ async function recheckCaps(clearDismissed = false) {
   }
 }
 
+// ── 更新橫幅（app.update.*）：available＝有新版（可關閉，本次執行不再出現）；
+//    downloading／ready＝安裝進行中／待重啟（不提供關閉——需要使用者知道）。
+const updateDismissed = ref<Set<string>>(new Set());
+const updateBanner = computed(() => {
+  if (update.state === "available" && !updateDismissed.value.has(update.version ?? ""))
+    return { kind: "available" as const };
+  if (update.state === "downloading") return { kind: "downloading" as const };
+  if (update.state === "ready") return { kind: "ready" as const };
+  return null;
+});
+
 onMounted(async () => {
-  config.load();
+  // 更新檢查需讀 AppConfig（update_notify／auto_update），先等設定載入。
+  await config.load();
   // 動詞軌：啟動全域輪詢（跨員工待辦聚合）。
   inbox.start();
   // 啟動時檢查前置程式;缺漏則彈出說明視窗。
@@ -55,9 +69,16 @@ onMounted(async () => {
   }
   // 知識管線能力偵測（背景；MinerU 檔案存在性＋嵌入端點探測，秒級）。
   void recheckCaps();
+  // 更新檢查迴圈：update_notify／auto_update 任一開啟即啟動時檢查（靜默），之後
+  // 每 24h 重評估。auto_update 開 → 查得新版直接背景下載安裝（完成後橫幅提示重啟）。
+  update.startAutoLoop(() => ({
+    notify: config.app?.update_notify ?? true,
+    auto: config.app?.auto_update ?? false,
+  }));
 });
 onUnmounted(() => {
   inbox.stop();
+  update.stopAutoLoop();
 });
 
 const nav = [
@@ -163,6 +184,50 @@ const nav = [
           class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           :title="$t('app.caps.dismiss')"
           @click="capsDismissed.add(b.key); capsDismissed = new Set(capsDismissed)"
+        >
+          <X :size="13" />
+        </button>
+      </div>
+    </div>
+
+    <!-- 更新橫幅：有新版／下載中／已安裝待重啟 -->
+    <div
+      v-if="updateBanner"
+      class="shrink-0 border-b border-primary/30 bg-primary/10 px-3 py-1.5 text-xs"
+    >
+      <div class="flex items-center gap-2 py-0.5">
+        <Download v-if="updateBanner.kind !== 'ready'" class="size-3.5 shrink-0 text-primary" />
+        <RotateCcw v-else class="size-3.5 shrink-0 text-primary" />
+        <span v-if="updateBanner.kind === 'available'" class="min-w-0 flex-1 text-foreground/90">
+          {{ $t("app.update.available", { version: update.version ?? "" }) }}
+        </span>
+        <span v-else-if="updateBanner.kind === 'downloading'" class="min-w-0 flex-1 text-foreground/90">
+          {{ update.progress !== null
+            ? $t("configView.downloadingProgress", { progress: update.progress })
+            : $t("app.update.downloading", { version: update.version ?? "", progress: "" }) }}
+        </span>
+        <span v-else class="min-w-0 flex-1 text-foreground/90">
+          {{ $t("app.update.ready", { version: update.version ?? "" }) }}
+        </span>
+        <RouterLink
+          v-if="updateBanner.kind === 'available'"
+          to="/config"
+          class="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-primary hover:bg-accent hover:text-foreground"
+        >
+          {{ $t("app.update.goInstall") }}
+        </RouterLink>
+        <button
+          v-if="updateBanner.kind === 'ready'"
+          class="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-primary hover:bg-accent hover:text-foreground"
+          @click="update.relaunchNow()"
+        >
+          <RotateCcw :size="12" />{{ $t("app.update.relaunch") }}
+        </button>
+        <button
+          v-if="updateBanner.kind === 'available'"
+          class="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          :title="$t('app.update.dismiss')"
+          @click="updateDismissed.add(update.version ?? ''); updateDismissed = new Set(updateDismissed)"
         >
           <X :size="13" />
         </button>

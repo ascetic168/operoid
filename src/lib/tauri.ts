@@ -193,6 +193,10 @@ export interface AppConfig {
   obridge_config_path?: string | null;
   obridge_autostart?: boolean;
   obridge_executable?: string | null;
+  /** 啟動時自動檢查新版並顯示橫幅（安裝仍需按下確認）。預設 true。 */
+  update_notify?: boolean;
+  /** 自動下載安裝新版（版本可能不相容，預設 false）。 */
+  auto_update?: boolean;
 }
 
 export const getGbrainConfig = (): Promise<GBrainConfigView> =>

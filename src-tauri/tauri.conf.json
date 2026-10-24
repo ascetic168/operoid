@@ -38,6 +38,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/obridge",
       "binaries/oserver"
@@ -54,5 +55,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYyMDM4OTRBNDc1RDY3MTkKUldRWloxMUhTb2tEOGl0VW1pd0VPanlZblBCbTBtM3JDN0dqMmJPN2VpOVBFL1B4dENzbUplOHEK",
+      "endpoints": [
+        "https://github.com/ascetic168/operoid/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -126,6 +126,14 @@
       "batchFlag": "llama-server is missing the -b/-ub 8192 flags - long chunks will be rejected (default 512), degrading knowledge retrieval quality.",
       "recheck": "Recheck",
       "dismiss": "Dismiss (hidden for this session)"
+    },
+    "update": {
+      "available": "New version v{version} available",
+      "goInstall": "Update now",
+      "downloading": "Downloading v{version}… {progress}",
+      "ready": "Updated to v{version} — relaunch to apply",
+      "relaunch": "Relaunch",
+      "dismiss": "Dismiss (hidden for this session)"
     }
   },
   "claude": {
@@ -571,7 +579,22 @@
     "obridgeAutostartLabel": "Start Obridge as a child process with Operoid (fill the path below if the executable isn't found)",
     "obridgeExeLabel": "obridge executable path (empty = auto-detect next to the Operoid executable)",
     "obridgePathLabel": "obridge.toml path (empty = default app-data/obridge/obridge.toml)",
-    "obridgeExePlaceholder": "e.g. C:\\tools\\obridge.exe"
+    "obridgeExePlaceholder": "e.g. C:\\tools\\obridge.exe",
+    "updateSection": "Version & updates",
+    "currentVersion": "Current version",
+    "checkUpdate": "Check for updates",
+    "updateNotifyLabel": "Update notices (check on startup, show a banner when a new version is available)",
+    "autoUpdateLabel": "Automatic updates (download and install new versions as soon as they are detected)",
+    "autoUpdateHint": "⚠ New versions may be incompatible with the current one (no backward-compatibility guarantee); off by default — enabling means you accept this risk.",
+    "upToDate": "Up to date",
+    "updateAvailable": "Update to v{version} available",
+    "downloadingProgress": "Downloading… {progress}%",
+    "downloadingIndeterminate": "Downloading…",
+    "readyToRelaunch": "v{version} installed — relaunch to apply",
+    "downloadInstall": "Download & install",
+    "updateNoInfo": "No update information available yet — the release pipeline for the new version is not ready. Try again later, or download manually from the GitHub Releases page.",
+    "updateCheckFailed": "Update check failed: {msg}",
+    "releaseNotes": "Release notes"
   },
   "brainsView": {
     "removePreviewTitle": "This source has data — choose how to proceed",

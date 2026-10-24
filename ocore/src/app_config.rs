@@ -231,6 +231,16 @@ pub struct AppConfig {
     /// private 自設端點不受此閘門連坐（設定本身即同意）。
     #[serde(default)]
     pub allow_public_egress: bool,
+    /// 更新提示：啟動時（及每 24 小時）自動檢查 GitHub Releases 是否有新版，
+    /// 有則在主視窗顯示可關閉橫幅（安裝一律需使用者按下確認）。預設 true。
+    /// 本專案不保證版本間向上相容，故「自動安裝」另由 `auto_update` 獨立控制。
+    #[serde(default = "default_true")]
+    pub update_notify: bool,
+    /// 自動更新：偵測到新版即背景下載並安裝（完成後提示重新啟動），不需逐次確認。
+    /// 預設 false——版本可能含不相容變更，由使用者自行決定承擔。隱含檢查行為
+    /// （同 `update_notify`）；安裝與重啟仍不會在無提示下突然發生。
+    #[serde(default)]
+    pub auto_update: bool,
 }
 
 fn default_true() -> bool {
@@ -444,6 +454,8 @@ impl Default for AppConfig {
             mineru_remote_url: None,
             mineru_api_key: None,
             allow_public_egress: false,
+            update_notify: true,
+            auto_update: false,
         };
         cfg.normalize();
         cfg

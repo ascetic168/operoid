@@ -18,6 +18,12 @@ Var OserverWasRunning
     ; 等 SCM 完成停止、釋放 oserver.exe 的檔案鎖再進行檔案覆寫
     Sleep 1500
   ${EndIf}
+  ; 保險：非服務的常駐 oserver（GUI 帶起／detached）與孤兒 obridge 也會鎖檔；
+  ; 行程不存在時 taskkill 僅回非 0 錯誤碼，無副作用。（自動更新走靜默安裝，
+  ; 無法像手動安裝一樣依賴使用者先關 App，故在此一律清場。）
+  nsExec::ExecToLog 'taskkill /IM oserver.exe /F'
+  nsExec::ExecToLog 'taskkill /IM obridge.exe /F'
+  Sleep 500
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

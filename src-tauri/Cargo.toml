@@ -21,6 +21,8 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 ocontract = { path = "../ocontract" }
 ocore = { path = "../ocore" }
 serde = { version = "1", features = ["derive"] }
