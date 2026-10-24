@@ -83,6 +83,13 @@ impl LadderOutcome {
 
 /// 跑階梯（純檔案存在性／設定判斷，**不 spawn**——與 prereq 的快速路徑同紀律）。
 pub fn resolve(cfg: &ConvertConfig) -> LadderOutcome {
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    resolve_in_env(cfg, &path_env)
+}
+
+/// [`resolve`] 的純函式核心：PATH 由呼叫端注入——測試密閉（機器以 `uv tool install`
+/// 裝了 mineru-kit 也不影響「落空／遠端分層」情境的斷言）。
+pub fn resolve_in_env(cfg: &ConvertConfig, path_env: &str) -> LadderOutcome {
     let mut o = LadderOutcome::default();
 
     // 1. 設定覆寫：完整路徑或命令模板（支援環境變數展開——設定字串可攜）。
@@ -137,9 +144,8 @@ pub fn resolve(cfg: &ConvertConfig) -> LadderOutcome {
         }
     }
 
-    // 2. PATH 查找 mineru-kit。
-    let path_env = std::env::var("PATH").unwrap_or_default();
-    match find_on_path("mineru-kit", &path_env) {
+    // 2. PATH 查找 mineru-kit（涵蓋 uv tool install／pipx／pip --user）。
+    match find_on_path("mineru-kit", path_env) {
         Some(p) => {
             o.ok("2.path", format!("PATH 命中：{}", p.display()));
             o.program = Some(p.to_string_lossy().into_owned());
@@ -477,33 +483,52 @@ mod tests {
     }
 
     /// 階梯 1 落空（venv 搬移）→ 不擋階梯：記 miss 續走。此處 PATH 無 mineru-kit、
-    /// 無遠端設定 → 全落空（degraded）。
+    /// 無遠端設定 → 全落空（degraded）。PATH 由測試注入空值——密閉（機器 PATH 上
+    /// 有 `uv tool install` 的 mineru-kit 也不影響本情境）。
     #[test]
     fn missing_venv_falls_through_to_degrade() {
         let mut c = cfg();
         c.mineru_command = Some("Z:/nonexistent/venv/mineru-kit.exe".into());
-        let o = resolve(&c);
+        let o = resolve_in_env(&c, "");
         assert!(!o.resolved());
         assert!(o.attempts.iter().any(|a| a.step == "1.config" && !a.resolved));
+        assert!(o.attempts.iter().any(|a| a.step == "2.path" && !a.resolved));
+    }
+
+    /// PATH 階梯命中＝`uv tool install` 安裝形（執行檔在 PATH 上，無 venv）。
+    #[test]
+    fn path_lookup_resolves_uv_tool_install() {
+        let dir = std::env::temp_dir().join(format!("mineru-path-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = if cfg!(windows) { "mineru-kit.exe" } else { "mineru-kit" };
+        let p = dir.join(name);
+        std::fs::write(&p, b"").unwrap();
+        make_executable(&p);
+        let o = resolve_in_env(&cfg(), &dir.to_string_lossy());
+        assert!(o.resolved(), "attempts: {:?}", o.attempts);
+        assert_eq!(o.tier, Some(EgressTier::Local));
+        assert!(o.attempts.iter().any(|a| a.step == "2.path" && a.resolved));
+        std::fs::remove_file(&p).ok();
     }
 
     /// egress 分層：private 自架端點＝設定即同意；public 預設擋、opt-in 才放行。
+    /// PATH 注入空值——本地安裝（venv／uv tool）不得短路遠端分層的斷言。
     #[test]
     fn egress_trust_tiers() {
         let mut c = cfg();
         c.mineru_remote_url = Some("http://192.168.1.10:8000".into());
-        let o = resolve(&c);
+        let o = resolve_in_env(&c, "");
         assert_eq!(o.tier, Some(EgressTier::Private));
         assert_eq!(o.endpoint.as_deref(), Some("http://192.168.1.10:8000"));
 
         let mut c = cfg();
         c.mineru_api_key = Some("k-test".into());
-        let o = resolve(&c);
+        let o = resolve_in_env(&c, "");
         assert!(!o.resolved(), "public 預設必須擋");
         assert!(o.warnings.iter().any(|w| w.contains("allow_public_egress")));
 
         c.allow_public_egress = true;
-        let o = resolve(&c);
+        let o = resolve_in_env(&c, "");
         assert_eq!(o.tier, Some(EgressTier::Public));
     }
 

@@ -329,7 +329,18 @@ pub fn probe_mineru(cfg: &ConvertConfig) -> MineruHealth {
 }
 
 pub fn probe_mineru_with(cfg: &ConvertConfig, spawn_version: bool) -> MineruHealth {
-    let outcome = ladder::resolve(cfg);
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    probe_mineru_in_env(cfg, spawn_version, &path_env)
+}
+
+/// [`probe_mineru_with`] 的純函式核心：PATH 由呼叫端注入——測試密閉
+///（機器以 `uv tool install` 裝了 mineru-kit 也不影響「未安裝」情境的斷言）。
+pub fn probe_mineru_in_env(
+    cfg: &ConvertConfig,
+    spawn_version: bool,
+    path_env: &str,
+) -> MineruHealth {
+    let outcome = ladder::resolve_in_env(cfg, path_env);
     if !outcome.resolved() {
         return MineruHealth {
             resolved: false,
@@ -419,9 +430,10 @@ mod tests {
     }
 
     /// MinerU 探測（不 spawn）：未設定 → resolved=false＋安裝建議。
+    /// PATH 注入空值——密閉（機器 PATH 有 `uv tool install` 的 mineru-kit 不影響本情境）。
     #[test]
     fn mineru_probe_unresolved_gives_hint() {
-        let h = probe_mineru_with(&ConvertConfig::default(), false);
+        let h = probe_mineru_in_env(&ConvertConfig::default(), false, "");
         assert!(!h.resolved);
         assert!(h.hint.unwrap().contains("uv tool install mineru"));
     }
