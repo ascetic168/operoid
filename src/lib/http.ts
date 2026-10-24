@@ -87,3 +87,91 @@ export async function agentFetch<T>(
   if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
 }
+
+// ───────────────── F1 串流：員工級回合 delta 流（SSE） ─────────────────
+
+/** 對話回合的即時 delta（SSE `event: delta`；對齊 ocore `TurnDelta` serde 標籤）。
+ *  best-effort 契約：最終 Message{Out}（輪詢）才是事實源，delta 丟失僅觀感問題。 */
+export type TurnDelta =
+  | { kind: "step_start"; employee_id: string; task_id: string; step: number }
+  | { kind: "text_delta"; employee_id: string; task_id: string; step: number; text: string }
+  | {
+      kind: "text_end";
+      employee_id: string;
+      task_id: string;
+      step: number;
+      final_reply: boolean;
+    }
+  | { kind: "turn_end"; employee_id: string; task_id: string }
+  | { kind: "resync"; lost?: number };
+
+interface TicketResponse {
+  ticket: string;
+  ttl_secs: number;
+}
+
+/** 員工級回合 delta 流：簽票（agentFetch 帶 Bearer）→ EventSource 連本地 oserver；
+ *  斷線 3s 後以**新票**重連（服務存續期間）；401/403（token 失效）即停——交由
+ *  輪詢的既有錯誤處理呈現。回傳 close()。 */
+export function openTurnStream(
+  employeeId: string,
+  onDelta: (delta: TurnDelta) => void,
+  onDown?: (err: unknown) => void,
+): () => void {
+  let closed = false;
+  let es: EventSource | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const stop = () => {
+    if (es) {
+      es.close();
+      es = null;
+    }
+  };
+
+  const connect = async () => {
+    while (!closed) {
+      try {
+        const info = await serverInfo();
+        const { ticket } = await agentFetch<TicketResponse>("/api/stream/ticket", {
+          method: "POST",
+        });
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          const url =
+            `http://127.0.0.1:${info.port}/api/employees/` +
+            encodeURIComponent(employeeId) +
+            "/stream?ticket=" +
+            ticket;
+          es = new EventSource(url);
+          es.addEventListener("delta", (ev) => {
+            try {
+              onDelta(JSON.parse((ev as MessageEvent).data) as TurnDelta);
+            } catch {
+              /* 非 JSON 幀：略過 */
+            }
+          });
+          es.onerror = () => {
+            stop();
+            resolve();
+          };
+        });
+      } catch (e) {
+        onDown?.(e);
+        // token 失效（401/403 以 {code,params} 形 reject）：停止重連——輪詢面會呈現。
+        const code = (e as { code?: string } | null)?.code ?? "";
+        if (code.includes("auth")) return;
+      }
+      if (closed) break;
+      await new Promise((r) => {
+        timer = setTimeout(r, 3000);
+      });
+    }
+  };
+  void connect();
+  return () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    stop();
+  };
+}

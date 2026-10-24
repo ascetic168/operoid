@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ApiError, api } from '@front/api-client'
+import { ApiError, api, openTurnStream, type TurnDelta } from '@front/api-client'
 import { ErrorBox, MarkdownText, figureImagePaths } from '@front/ui'
 import { useI18n } from 'vue-i18n'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 const { t } = useI18n()
@@ -51,6 +51,7 @@ const actionError = ref('')
 const logEl = ref<HTMLElement | null>(null)
 
 let timer: ReturnType<typeof setInterval> | null = null
+let closeStream: (() => void) | null = null
 
 const empName = computed(() => w.value?.employee.name ?? empId)
 const empState = computed(() => w.value?.employee.state ?? '')
@@ -61,7 +62,10 @@ const proposals = computed(() => w.value?.proposals ?? [])
 
 // ── 對話串：訊息（最新在前 → 反轉成時序）＋插入的「工具過程列」 ──
 type ChatMessage = NonNullable<WatchPayload['messages'][number]>
-type ThreadItem = { kind: 'msg'; msg: ChatMessage } | { kind: 'trace' }
+type ThreadItem =
+  | { kind: 'msg'; msg: ChatMessage }
+  | { kind: 'trace' }
+  | { kind: 'draft'; text: string; settling: boolean }
 
 /** tool_call 事件 detail（契約 v1：v/step/tool/args/status/ms/note；ocore record_tool_call_event）。 */
 interface ToolCallStep {
@@ -111,6 +115,39 @@ const toolCalls = computed<ToolCallStep[]>(() => {
   return out.reverse() // events 最新在前 → 時序
 })
 
+// ── F1 串流：員工級 delta 流 → 草稿氣泡（best-effort；最終訊息以輪詢為準）──
+const draft = ref<{ taskId: string; text: string; settling: boolean } | null>(null)
+/** 草稿誕生時的最頂訊息 id——輪詢看到頂端換人（最終訊息到達）即收草稿。 */
+let draftAnchorId: string | null = null
+
+function applyTurnDelta(d: TurnDelta): void {
+  if ('employee_id' in d && d.employee_id !== empId) return
+  switch (d.kind) {
+    case 'step_start':
+      // 同 task 重開步（重試）→ 清空重來；新 task → 新草稿。
+      draftAnchorId = (w.value?.messages ?? [])[0]?.id ?? null
+      draft.value =
+        draft.value && draft.value.taskId === d.task_id
+          ? { ...draft.value, text: '', settling: false }
+          : { taskId: d.task_id, text: '', settling: false }
+      break
+    case 'text_delta':
+      if (!draft.value) draft.value = { taskId: d.task_id, text: '', settling: false }
+      if (draft.value.taskId === d.task_id && !draft.value.settling) draft.value.text += d.text
+      break
+    case 'text_end':
+      // false＝本步轉工具呼叫 → 收回草稿；true＝終局文字 → 保留等最終訊息替換。
+      if (draft.value?.taskId === d.task_id && !d.final_reply) draft.value = null
+      break
+    case 'turn_end':
+      if (draft.value?.taskId === d.task_id) draft.value = { ...draft.value, settling: true }
+      break
+    case 'resync':
+      draft.value = null
+      break
+  }
+}
+
 const traceOpen = ref(false)
 const showTrace = computed(() => toolCalls.value.length > 0 || awaitingReply.value)
 
@@ -126,6 +163,10 @@ const thread = computed<ThreadItem[]>(() => {
       }
     }
     items.splice(lastInIdx + 1, 0, { kind: 'trace' })
+  }
+  // F1 串流草稿：串列尾端（視覺順序：In → 過程列 → 草稿）。
+  if (draft.value && draft.value.text) {
+    items.push({ kind: 'draft', text: draft.value.text, settling: draft.value.settling })
   }
   return items
 })
@@ -189,6 +230,11 @@ async function poll(): Promise<void> {
     error.value = ''
     offline.value = false
     forbidden.value = false
+    // F1 收斂：最終訊息已到頂（頂端 id 換人）或員工已離開 working → 收草稿。
+    if (draft.value) {
+      const topId = (w.value.messages ?? [])[0]?.id ?? null
+      if (topId !== draftAnchorId || w.value.employee.state !== 'working') draft.value = null
+    }
     void syncFigureUrls()
     await nextTick()
     scrollToBottom()
@@ -304,14 +350,27 @@ async function openPdf(path: string): Promise<void> {
   }
 }
 
+// 草稿成長時黏底跟隨（不搶使用者上捲視角——scrollToBottom 內有黏底閘門）。
+watch(
+  () => draft.value?.text,
+  async () => {
+    await nextTick()
+    scrollToBottom()
+  },
+)
+
 onMounted(() => {
   void poll()
-  // 輪詢為主（訊息＋tool_call 過程）；SSE 事件由事件流頁呈現。
+  // 輪詢為主（訊息＋tool_call 過程＝事實源）；SSE delta 流為即時呈現（F1，best-effort）。
   timer = setInterval(poll, 2000)
+  closeStream = openTurnStream(empId, applyTurnDelta, () => {
+    draft.value = null
+  })
 })
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  closeStream?.()
 })
 </script>
 
@@ -331,7 +390,7 @@ onBeforeUnmount(() => {
       <div class="chat card">
         <div ref="logEl" class="log" data-test="log" @scroll.passive="onScroll">
           <p v-if="!thread.length" class="muted">{{ t('chat.empty') }}</p>
-          <template v-for="item in thread" :key="item.kind === 'msg' ? item.msg.id : 'trace'">
+          <template v-for="item in thread" :key="item.kind === 'msg' ? item.msg.id : item.kind">
             <!-- 工具過程列：插在最後一則 In 訊息之後（本回合「正在做什麼」） -->
             <div v-if="item.kind === 'trace'" class="trace">
               <button class="tracehead" type="button" @click="traceOpen = !traceOpen">
@@ -359,6 +418,14 @@ onBeforeUnmount(() => {
                   </p>
                   <pre v-if="openArgs.has(ci)" class="args">{{ c.args }}</pre>
                 </div>
+              </div>
+            </div>
+
+            <!-- F1 串流草稿：delta 即時累積（最終訊息由輪詢冪等替換；斷線回退輪詢） -->
+            <div v-else-if="item.kind === 'draft'" class="msg theirs">
+              <div class="bubble draft" aria-live="polite">
+                <MarkdownText :text="item.text" />
+                <span v-if="!item.settling" class="stream-cursor" aria-hidden="true"></span>
               </div>
             </div>
 
@@ -472,6 +539,15 @@ onBeforeUnmount(() => {
 .mine .bubble .muted { color: rgba(255, 255, 255, 0.75); }
 .txt { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .bubble .muted { margin: 0.2rem 0 0; font-size: 0.75rem; }
+
+/* F1 串流草稿氣泡（半透明＋閃爍游標；settling 時游標停） */
+.bubble.draft { opacity: 0.85; }
+.stream-cursor {
+  display: inline-block; width: 0.5rem; height: 1em; margin-left: 0.15rem;
+  vertical-align: text-bottom; background: currentColor; opacity: 0.6;
+  animation: blink 0.9s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
 
 /* 工具過程列（flex: none——column flex 下避免被壓縮裁切） */
 .trace {

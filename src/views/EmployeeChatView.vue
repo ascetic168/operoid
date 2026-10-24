@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { ArrowLeft, Eraser, Loader2, Send, Wrench } from "lucide-vue-next";
 import MarkdownText from "@/components/MarkdownText.vue";
+import { openTurnStream, type TurnDelta } from "@/lib/http";
 import {
   agentApproveCommitment,
   agentClearMessages,
@@ -26,10 +27,14 @@ const sending = ref(false);
 const error = ref<string | null>(null);
 const scrollEl = ref<HTMLElement | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
+let closeStream: (() => void) | null = null;
 
 type ChatMessage = WatchSnapshot["messages"][number];
-/** 對話串項目：訊息，或插入在最後一則 In 訊息之後的「工具過程列」。 */
-type ThreadItem = { kind: "msg"; msg: ChatMessage } | { kind: "trace" };
+/** 對話串項目：訊息、插入在最後一則 In 訊息之後的「工具過程列」，或串流草稿。 */
+type ThreadItem =
+  | { kind: "msg"; msg: ChatMessage }
+  | { kind: "trace" }
+  | { kind: "draft"; text: string; settling: boolean };
 
 /** tool_call 事件 detail（契約 v1：v/step/tool/args/status/ms/note；ocore record_tool_call_event）。 */
 interface ToolCallStep {
@@ -79,6 +84,39 @@ const toolCalls = computed<ToolCallStep[]>(() => {
   return out.reverse(); // events 最新在前 → 時序
 });
 
+// ── F1 串流：員工級 delta 流 → 草稿氣泡（best-effort；最終訊息以輪詢為準）──
+const draft = ref<{ taskId: string; text: string; settling: boolean } | null>(null);
+/** 草稿誕生時的最頂訊息 id——輪詢看到頂端換人（最終訊息到達）即收草稿。 */
+let draftAnchorId: string | null = null;
+
+function applyTurnDelta(d: TurnDelta) {
+  if ("employee_id" in d && d.employee_id !== props.id) return;
+  switch (d.kind) {
+    case "step_start":
+      // 同 task 重開步（重試）→ 清空重來；新 task → 新草稿。
+      draftAnchorId = data.value?.messages[0]?.id ?? null;
+      draft.value =
+        draft.value && draft.value.taskId === d.task_id
+          ? { ...draft.value, text: "", settling: false }
+          : { taskId: d.task_id, text: "", settling: false };
+      break;
+    case "text_delta":
+      if (!draft.value) draft.value = { taskId: d.task_id, text: "", settling: false };
+      if (draft.value.taskId === d.task_id && !draft.value.settling) draft.value.text += d.text;
+      break;
+    case "text_end":
+      // false＝本步轉工具呼叫 → 收回草稿；true＝終局文字 → 保留等最終訊息替換。
+      if (draft.value?.taskId === d.task_id && !d.final_reply) draft.value = null;
+      break;
+    case "turn_end":
+      if (draft.value?.taskId === d.task_id) draft.value = { ...draft.value, settling: true };
+      break;
+    case "resync":
+      draft.value = null;
+      break;
+  }
+}
+
 const traceOpen = ref(false);
 const showTrace = computed(() => toolCalls.value.length > 0 || awaitingReply.value);
 
@@ -94,6 +132,10 @@ const thread = computed<ThreadItem[]>(() => {
       }
     }
     items.splice(lastInIdx + 1, 0, { kind: "trace" });
+  }
+  // F1 串流草稿：串列尾端（視覺順序：In → 過程列 → 草稿）。
+  if (draft.value && draft.value.text) {
+    items.push({ kind: "draft", text: draft.value.text, settling: draft.value.settling });
   }
   return items;
 });
@@ -224,6 +266,11 @@ async function poll() {
   try {
     data.value = await agentWatch(props.id);
     pollFailures = 0;
+    // F1 收斂：最終訊息已到頂（頂端 id 換人）或員工已離開 working → 收草稿。
+    if (draft.value && data.value) {
+      const topId = data.value.messages[0]?.id ?? null;
+      if (topId !== draftAnchorId || data.value.employee.state !== "working") draft.value = null;
+    }
     await nextTick();
     scrollToBottom();
   } catch {
@@ -249,12 +296,26 @@ async function send() {
     sending.value = false;
   }
 }
+// 草稿成長時黏底跟隨（不搶使用者上捲視角——scrollToBottom 內有黏底閘門）。
+watch(
+  () => draft.value?.text,
+  async () => {
+    await nextTick();
+    scrollToBottom();
+  },
+);
+
 onMounted(() => {
   poll();
+  // 輪詢為主（訊息＋tool_call 過程＝事實源）；SSE delta 流為即時呈現（F1，best-effort）。
   timer = setInterval(poll, 1500);
+  closeStream = openTurnStream(props.id, applyTurnDelta, () => {
+    draft.value = null;
+  });
 });
 onUnmounted(() => {
   if (timer) clearInterval(timer);
+  closeStream?.();
 });
 
 function stateColor(s: string | undefined): string {
@@ -304,7 +365,7 @@ function stateColor(s: string | undefined): string {
       >
         {{ t("chat.empty") }}
       </div>
-      <template v-for="item in thread" :key="item.kind === 'msg' ? item.msg.id : 'trace'">
+      <template v-for="item in thread" :key="item.kind === 'msg' ? item.msg.id : item.kind">
         <!-- 工具過程列：插在最後一則 In 訊息之後（本回合「正在做什麼」） -->
         <div v-if="item.kind === 'trace'" class="mb-2 w-full shrink-0">
           <div class="overflow-hidden rounded-lg border border-border bg-card">
@@ -345,6 +406,24 @@ function stateColor(s: string | undefined): string {
                 >{{ c.args }}</pre>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- F1 串流草稿：delta 即時累積（最終訊息由輪詢冪等替換；斷線回退輪詢） -->
+        <div
+          v-else-if="item.kind === 'draft'"
+          class="mb-2 flex flex-col items-end shrink-0"
+          aria-live="polite"
+        >
+          <div
+            class="max-w-[75%] rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+            :class="item.settling ? 'opacity-60' : 'opacity-85'"
+          >
+            <MarkdownText :text="item.text" /><span
+              v-if="!item.settling"
+              class="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-current opacity-60 animate-pulse"
+              aria-hidden="true"
+            ></span>
           </div>
         </div>
 

@@ -205,9 +205,27 @@ export interface StreamEvent {
   created_at: string
 }
 
-/** SSE 事件流：短票換流；斷線自動以**新票**重連（session 存續期間）。回傳 close()。 */
-export function openEventStream(
-  onEvent: (payload: StreamEvent) => void,
+/** 對話回合的即時 delta（SSE `event: delta`；對齊 ocore `TurnDelta` serde 標籤）。
+ *  best-effort 契約：最終 Message{Out}（輪詢）才是事實源，delta 丟失僅觀感問題。 */
+export type TurnDelta =
+  | { kind: 'step_start'; employee_id: string; task_id: string; step: number }
+  | { kind: 'text_delta'; employee_id: string; task_id: string; step: number; text: string }
+  | {
+      kind: 'text_end'
+      employee_id: string
+      task_id: string
+      step: number
+      final_reply: boolean
+    }
+  | { kind: 'turn_end'; employee_id: string; task_id: string }
+  | { kind: 'resync'; lost?: number }
+
+/** 短票 SSE 泛用骨幹：簽票→EventSource→斷線 3s 後以**新票**重連（session 存續期間）；
+ *  401/403（session 失效）即停。回傳 close()。 */
+function openTicketedStream(
+  path: string,
+  eventName: string,
+  onData: (data: string) => void,
   onDown?: (err: unknown) => void,
 ): () => void {
   let closed = false
@@ -227,13 +245,9 @@ export function openEventStream(
         const { ticket } = await api.streamTicket()
         if (closed) return
         await new Promise<void>((resolve) => {
-          es = new EventSource(baseUrl + '/api/stream?ticket=' + ticket)
-          es.addEventListener('event', (ev) => {
-            try {
-              onEvent(JSON.parse((ev as MessageEvent).data) as StreamEvent)
-            } catch {
-              onDown?.(ev)
-            }
+          es = new EventSource(baseUrl + path + '?ticket=' + ticket)
+          es.addEventListener(eventName, (ev) => {
+            onData((ev as MessageEvent).data as string)
           })
           es.onerror = () => {
             stop()
@@ -256,4 +270,44 @@ export function openEventStream(
     if (timer) clearTimeout(timer)
     stop()
   }
+}
+
+/** SSE 事件流（EventsView/Home 刷新面）：短票換流；斷線自動以**新票**重連。回傳 close()。 */
+export function openEventStream(
+  onEvent: (payload: StreamEvent) => void,
+  onDown?: (err: unknown) => void,
+): () => void {
+  return openTicketedStream(
+    '/api/stream',
+    'event',
+    (data) => {
+      try {
+        onEvent(JSON.parse(data) as StreamEvent)
+      } catch {
+        onDown?.(data)
+      }
+    },
+    onDown,
+  )
+}
+
+/** 員工級回合 delta 流（F1 串流）：訂閱 `/api/employees/{id}/stream`（event: delta）。
+ *  解析失敗的幀靜默略過（心跳／未知 kind 前向相容）。回傳 close()。 */
+export function openTurnStream(
+  employeeId: string,
+  onDelta: (delta: TurnDelta) => void,
+  onDown?: (err: unknown) => void,
+): () => void {
+  return openTicketedStream(
+    '/api/employees/' + encodeURIComponent(employeeId) + '/stream',
+    'delta',
+    (data) => {
+      try {
+        onDelta(JSON.parse(data) as TurnDelta)
+      } catch {
+        /* 非 JSON 幀：略過 */
+      }
+    },
+    onDown,
+  )
 }
