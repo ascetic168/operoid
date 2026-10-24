@@ -35,7 +35,17 @@
     "streamOn": "Live",
     "streamDown": "Offline",
     "latest": "Latest event",
-    "scope": "Scope of this console"
+    "scope": "Scope of this console",
+    "updateTitle": "Version",
+    "updateDesc": "Check & notify only; upgrades are manual deployments (see DEPLOYMENT.md)",
+    "updateCheck": "Check for updates",
+    "updateChecking": "Checking…",
+    "updateLatest": "Latest version v{version}",
+    "updateAvailable": "New version v{version} available — versions may be incompatible; read the release notes before upgrading",
+    "updateOpen": "View release",
+    "updateDismiss": "Skip this version",
+    "updateCached": "cached result (within 24h)",
+    "updateFailed": "Check failed ({code}) — verify server egress or the [update] check_enabled setting"
   },
   "header": {
     "logout": "Sign out",

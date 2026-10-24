@@ -516,3 +516,53 @@ IT 政策，不是 Operoid 的管制對象——不裝 Operoid，同樣的管道
 不受知識範圍限制——對單人本機場景這是合理預設，代價是完整性風險（agent 誤改
 腦內容），以 gbrain 版本歷史（`revert_version`）與備份因應。企業場景不應依賴
 此通道，請改用受治理的員工能力。
+
+## 12. 升級（更新版本）
+
+**企業版不提供自動更新**——僅在 admin 介面「版本」卡片檢查新版並提示
+（查 GitHub Releases，結果快取 24 小時；離線／氣隔環境可於 operoid.toml
+設 `[update] check_enabled = false` 關閉對外連線）。**版本間可能不相容**
+（本專案不保證向上相容），升級前務必閱讀該版本的 CHANGELOG 發布說明，
+特別是標註 breaking／不相容的條目，並**先備份資料目錄**（DB 與設定）。
+
+升級程序（zip 手動部署的標準流程）：
+
+```powershell
+# Windows（系統管理員）
+sc stop Operoid                          # 或 .\oserver.exe uninstall 後重裝亦可
+# 備份資料目錄（--data-dir 指定的目錄）
+Copy-Item C:\operoid\data C:\backup\operoid-data-<date> -Recurse
+# 解壓新版企業包（operoid-enterprise-windows-x64.zip）覆蓋安裝目錄
+#   —— oserver.exe／obridge.exe／frontends\ 全部替換；operoid.toml 在資料
+#      目錄（不在部署包內），不受影響
+sc start Operoid
+.\oserver.exe status                     # 確認 running=true，並核對 /healthz 的 version
+```
+
+```bash
+# Linux（systemd）
+sudo systemctl stop operoid
+sudo cp -a /opt/operoid/data /backup/operoid-data-<date>   # 備份資料目錄
+# 解壓新版企業包（operoid-enterprise-linux-x64.tar.gz）覆蓋 /opt/operoid
+#   —— oserver／obridge／frontends/ 全部替換；operoid.toml 在資料目錄，不受影響
+sudo systemctl start operoid
+curl -s http://127.0.0.1:7340/healthz                      # 核對 version
+```
+
+要點：
+
+- **設定與資料不在部署包裡**：`operoid.toml`、`app-settings.json`、agent DB 皆在
+  資料／設定目錄（§2），覆蓋安裝目錄不會動到它們——升級只替換 binaries 與
+  `frontends/` 靜態檔。
+- **路徑未變即免重裝服務**：服務註冊指向固定執行檔路徑（§5），只要在同一目錄
+  覆蓋二進位，`sc stop`／`start`（或 systemctl）即可；若搬移安裝目錄，需先
+  `uninstall` 再 `install` 重新註冊。
+- **檢查新版**：admin 介面 →「版本」卡片 →「檢查更新」；有新版會顯示橫幅連到
+  發布頁（相同版本可按「此版不再提示」）。
+
+**個人版（桌面）**：安裝器直接覆蓋升級（NSIS hooks 會自動停啟 `Operoid` 服務）。
+App 內建更新：設定 → 應用程式 →「版本與更新」——「更新提示」預設開（啟動時自動
+檢查＋橫幅提示，安裝需按一下）；「自動更新」預設關（開啟後偵測到新版即自動下載
+安裝，完成後提示重新啟動）。App 外仍可至
+[Releases 頁](https://github.com/ascetic168/operoid/releases) 手動下載安裝檔。
+

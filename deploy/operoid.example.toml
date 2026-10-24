@@ -25,3 +25,8 @@ key = "./certs/server.key"
 [factory]                    # 可省；工廠文件轉換的多工
 # concurrency = 4            # 全域同時轉換的檔案數上限（預設 4）；
                              # 公平調度：飽和時每位遠端使用者至多 1 線程
+
+[update]                     # 可省；更新檢查（企業版僅檢查＋提示，不自動安裝——
+                             # 升級程序見 DEPLOYMENT.md「升級」章節）
+# check_enabled = true       # admin 顯示版本與「檢查更新」（查 GitHub Releases，快取
+                             # 24h）；離線／氣隔環境設 false 關閉對外連線

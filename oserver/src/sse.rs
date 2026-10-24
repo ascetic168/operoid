@@ -324,6 +324,7 @@ mod tests {
             media_sources: Arc::new(tokio::sync::RwLock::new(
                 crate::gbrain::MediaSourcesCache::default(),
             )),
+            update_check_enabled: true,
         })
     }
 

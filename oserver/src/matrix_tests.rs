@@ -54,6 +54,7 @@ fn test_state(dir: &std::path::Path) -> Arc<ServerState> {
         media_sources: Arc::new(tokio::sync::RwLock::new(
             crate::gbrain::MediaSourcesCache::default(),
         )),
+        update_check_enabled: true,
     })
 }
 
@@ -184,6 +185,9 @@ const INVENTORY: &[(&str, &str)] = &[
     ("GET", "/api/obridge/config"),
     ("PUT", "/api/obridge/config"),
     ("POST", "/api/obridge/restart"),
+    // update_check.rs（企業版 v1：未列 rbac 矩陣 → Admin fail-closed——僅檢查與提示，
+    // 不自動安裝；operoid.toml [update] check_enabled=false 時回 200+check_enabled=false）
+    ("GET", "/api/admin/update/check"),
 ];
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -533,6 +537,7 @@ fn real_state(dir: &std::path::Path) -> Arc<ServerState> {
         media_sources: Arc::new(tokio::sync::RwLock::new(
             crate::gbrain::MediaSourcesCache::default(),
         )),
+        update_check_enabled: true,
     })
 }
 

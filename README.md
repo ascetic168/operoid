@@ -145,8 +145,8 @@ Optional capabilities (knowledge-graph engine, local embeddings, complex-PDF par
 
 ## Get started
 
-- **Personal** — grab the installer from the [**Releases** page](https://github.com/ascetic168/Operoid/releases) and run it. No build needed.
-- **Enterprise** — download the enterprise archive from the same release and run `oserver configure`: a guided wizard that checks prerequisites, sets up TLS, creates the admin account, and optionally registers the boot-time service. Walkthrough in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+- **Personal** — grab the installer from the [**Releases** page](https://github.com/ascetic168/Operoid/releases) and run it. No build needed. In-app updates: Settings → App → "Version & updates" — update notices are on by default (a banner when a new release ships; installing always needs one click); fully automatic updates are off by default since releases may be backward-incompatible.
+- **Enterprise** — download the enterprise archive from the same release and run `oserver configure`: a guided wizard that checks prerequisites, sets up TLS, creates the admin account, and optionally registers the boot-time service. Walkthrough in **[DEPLOYMENT.md](DEPLOYMENT.md)**. Upgrades: check the admin console's Version card for new releases, then follow the manual upgrade procedure in **[DEPLOYMENT.md §12](DEPLOYMENT.md)**.
 - **From source** — Rust toolchain + [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/):
 
   ```bash

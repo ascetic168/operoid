@@ -53,6 +53,7 @@ pub struct OperoidToml {
     pub ingress: IngressSection,
     pub knowledge: KnowledgeSection,
     pub factory: FactorySection,
+    pub update: UpdateSection,
 }
 
 /// `[server]`——bind 位址／port／master token／前端靜態檔目錄。
@@ -141,6 +142,19 @@ pub struct IngressSection {
 #[serde(default)]
 pub struct FactorySection {
     pub concurrency: Option<usize>,
+}
+
+/// `[update]`——更新檢查（企業版 v1：僅檢查＋提示，不自動安裝；升級程序見 DEPLOYMENT.md）。
+///
+/// ```toml
+/// [update]
+/// check_enabled = true   # admin 顯示版本與「檢查更新」（查 GitHub Releases，快取 24h）；
+///                        # 離線／氣隔環境設 false 關閉對外連線
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSection {
+    pub check_enabled: Option<bool>,
 }
 
 /// 讀 settings 目錄下的 `operoid.toml`。檔案不存在 → None（個人模式）；

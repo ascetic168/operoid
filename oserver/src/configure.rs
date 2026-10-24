@@ -121,6 +121,7 @@ fn build_toml(
         ingress: Default::default(),
         knowledge: Default::default(),
         factory: Default::default(),
+        update: Default::default(),
     }
 }
 

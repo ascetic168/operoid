@@ -35,7 +35,17 @@
     "streamOn": "即時連線中",
     "streamDown": "未連線",
     "latest": "最新事件",
-    "scope": "本介面範圍"
+    "scope": "本介面範圍",
+    "updateTitle": "版本",
+    "updateDesc": "僅檢查與提示；升級採手動部署（見 DEPLOYMENT.md）",
+    "updateCheck": "檢查更新",
+    "updateChecking": "檢查中…",
+    "updateLatest": "最新版 v{version}",
+    "updateAvailable": "有新版 v{version} 可用——版本可能不相容，升級前請先閱讀發布說明",
+    "updateOpen": "查看發布",
+    "updateDismiss": "此版不再提示",
+    "updateCached": "24 小時內的快取結果",
+    "updateFailed": "檢查失敗（{code}）——請確認伺服器可連外或 [update] check_enabled 設定"
   },
   "header": {
     "logout": "登出",

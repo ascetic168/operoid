@@ -48,6 +48,9 @@ pub struct ServerState {
     /// 媒體端點的來源清單快取（`gbrain sources list`，TTL 300s——簽名輪詢不每次
     /// spawn gbrain；見 `gbrain::MediaSourcesCache`）。
     pub media_sources: Arc<tokio::sync::RwLock<crate::gbrain::MediaSourcesCache>>,
+    /// 更新檢查開關（企業版 v1：operoid.toml `[update] check_enabled`，預設 true；
+    /// 離線／氣隔環境設 false）。僅影響 /api/admin/update/check。
+    pub update_check_enabled: bool,
 }
 
 /// 統一錯誕回應：`AppError` → JSON＋status 映射。

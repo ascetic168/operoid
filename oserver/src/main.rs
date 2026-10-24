@@ -27,6 +27,7 @@ mod matrix_tests;
 mod routes;
 mod service;
 mod sse;
+mod update_check;
 mod writes;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -347,6 +348,11 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         media_sources: Arc::new(tokio::sync::RwLock::new(
             crate::gbrain::MediaSourcesCache::default(),
         )),
+        // 更新檢查（企業版 v1）：operoid.toml `[update] check_enabled`，預設 true。
+        update_check_enabled: toml_cfg
+            .as_ref()
+            .and_then(|t| t.update.check_enabled)
+            .unwrap_or(true),
     });
 
     // 驗 DB（spawn_blocking——rusqlite 同步 API）。
@@ -406,7 +412,8 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
         .merge(accounts::account_routes().with_state(Arc::clone(&state)))
         .merge(sse::sse_routes().with_state(Arc::clone(&state)))
         .merge(gbrain::gbrain_routes().with_state(Arc::clone(&state)))
-        .merge(obridge_admin::obridge_routes().with_state(Arc::clone(&state)));
+        .merge(obridge_admin::obridge_routes().with_state(Arc::clone(&state)))
+        .merge(update_check::update_routes().with_state(Arc::clone(&state)));
     let app = mount_frontends(app, frontends_dir.as_deref());
     // R2（DR-E4）：RBAC 中介層掛最外層——authn → must_change_password 閘 → 矩陣裁定（403）。
     // OPTIONS preflight 與公開路徑（healthz／登入／靜態頁）直接放行。

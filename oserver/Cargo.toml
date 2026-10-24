@@ -23,6 +23,9 @@ toml = "0.8"
 # 遠端化 R3：SSE 短票 CSPRNG＋stream 組合。
 getrandom = "0.2"
 futures = "0.3"
+# 更新檢查（企業版 v1）：GitHub Releases 檢查＋semver 比對。
+reqwest = { version = "0.12", features = ["json"] }
+semver = "1"
 
 # 服務註冊（P5）：SCM 整合＋UAC 自我提權——僅 Windows 需要。
 [target.'cfg(windows)'.dependencies]
