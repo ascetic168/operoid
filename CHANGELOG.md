@@ -13,6 +13,63 @@
 
 ---
 
+## [v0.5.4] - 2026-10-24
+
+### Token-level streaming output (F1 reversal) — one path, both editions
+
+Agent replies now stream token-by-token into the chat UIs. The 2026-10-07
+downgrade of F1 is formally reversed: all three of its premises flipped
+(events retention done; desktop chat already shares the oserver HTTP
+path; explicit user request). DR-1 = (b): an in-process delta bus with
+per-employee SSE push — the delta-in-events alternative was rejected
+because text_delta events would flood the watch 60-event window,
+EventsView and the SSE event stream.
+
+- Protocol (`TurnDelta`): `step_start` / `text_delta` / `text_end
+  {final_reply}` / `turn_end` on an in-process `tokio::sync::broadcast`
+  bus built inside `AppState::new` (signature unchanged). Ephemeral by
+  contract — nothing lands in the events table or the DB; the final
+  `Message{Out}` written once at turn end remains the sole source of
+  truth, so delta loss (disconnect/lag) is cosmetic only.
+- LLM layer (`ocore/llm.rs`): `chat_streaming()` parses OpenAI-compatible
+  SSE incrementally (text deltas via callback, tool_call fragments
+  assembled by index); transient retry only before the first token, a
+  mid-stream drop is an error owned by the existing step-retry;
+  ToolsUnsupported and K5 image-400 degradation preserved; a
+  completeness gate requires finish_reason or [DONE]. Non-streaming
+  `chat()` is unchanged.
+- Runtime: `Reasoner::chat_step_streaming` with a default impl
+  delegating to `chat_step` (non-streaming providers emit lifecycle
+  frames only — zero breakage); the conversational native path publishes
+  per-step lifecycle + text deltas; turn end emits from a single exit.
+- Transport: `GET /api/employees/{id}/stream` subscribes the bus and
+  pushes straight to SSE (not the DB poll bridge); one-time ticket auth
+  extended in the RBAC middleware; Authenticated requirement with the
+  watch-convention owner check in the handler (user sees only own
+  employees); route added to the permission-matrix inventory.
+- Frontends: all three chat views (desktop, user, manager) render a
+  draft bubble — text deltas accumulate through the existing Markdown
+  renderer with a blinking cursor; the draft retracts when a step turns
+  into tool calls, settles at turn end, and is replaced idempotently by
+  the final message from the unchanged poll loop. `openEventStream` was
+  refactored onto a generic ticketed-stream helper (existing consumers
+  unchanged).
+- Tests: ocore 358 / oserver 47 green — SSE stub accumulation, 400-tools
+  classification, mid-stream drop without retry, 5xx retry-before-first-
+  token, turn-level bus sequences, endpoint push + scoping (403 for
+  another user's employee); vue-tsc and pnpm builds green on all four
+  frontends.
+- MinerU detection tests made hermetic (PATH injected instead of read
+  from the environment) after the switch to `uv tool install` — three
+  tests had been failing on any correctly-provisioned machine; a
+  standing test now covers the uv-tool install shape.
+
+### Docs: streaming plan record
+
+- `docs/Operoid-計畫-串流輸出.md` (local): the reversal evaluation,
+  decision record (DR-1…DR-5) and the S1/S2 completion records with
+  remaining acceptance checklist (real-environment verification).
+
 ## [v0.5.3] - 2026-10-20
 
 ### Figures sidecar fully retired; media allowlist becomes repo containment
