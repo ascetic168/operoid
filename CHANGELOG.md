@@ -13,6 +13,39 @@
 
 ---
 
+## [v0.5.6] - 2026-10-26
+
+### Runtime: guaranteed finalize — escaped errors can no longer orphan an employee
+
+A hard error escaping a runner mid-run (store I/O failure, tool transport
+error) used to skip the sleep/finalize block, leaving the employee stuck in
+`Working`. The scheduler never wakes that state (`scan_inbox` only picks
+`Sleeping`), so the orphan could only be recovered by the next process
+start's `recover_stale_runs` — fatal for any employee with queued work. The
+same escape also silently broke the commitment retry chain: when a session
+returns `Err`, the orchestrator skips `apply_retry_after_outcome`, so no
+retry backoff is ever scheduled.
+
+- **run_autonomous**: the session body (everything after wake) now runs
+  behind a guaranteed-finalize wrapper — any escaped error is converted into
+  an `Errored` outcome and routed through the extracted shared
+  `finalize_autonomous` (employee sleeps, commitment stays `Active`, the
+  orchestrator schedules the retry backoff). Normal-path finalize logic is
+  unchanged.
+- **run_inbox**: a single task's hard error no longer terminates the run.
+  It is recorded as a `task_error` event, the drain stops (remaining inbox
+  waits for the next wake), and the normal sleep still runs. The failing
+  task stays `InProgress` so the picker retries it on the next wake; a
+  persistently poisoned task surfaces via repeated `task_error` events and
+  can be removed by a human with the existing cancel-task API (no
+  auto-`Failed` transition in v1).
+- **run_cycle** (legacy single-shot): belt-and-braces — escaped errors force
+  the employee back to `Sleeping` (`force_sleep`) before propagating.
+- New helpers: `finalize_autonomous`, `force_sleep`, `empty_memory`.
+- New tests: `inbox_task_hard_error_sleeps_not_stuck_working` and
+  `run_autonomous_escape_error_soft_fails_and_sleeps` (ocore: 360 passed,
+  oserver: 51 passed).
+
 ## [v0.5.5] - 2026-10-25
 
 ### In-app updates — signed auto-updater (Personal) and release checks (Enterprise)

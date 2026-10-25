@@ -54,7 +54,33 @@ pub struct CycleResult {
 ///
 /// 泛用於任意 `Tool`（`&dyn Tool`）與任意 `Store`（`&(dyn Store + Send + Sync)`）：
 /// 正式呼叫塞 [`GbrainThinkTool`]，測試塞 `StubTool`。Runtime 只編排，不決定「要想什麼」。
+/// 收尾保證（guaranteed finalize）：單發週期的保底層——wake 之後的任何逃逸錯誤（store 读写、tool 傳輸層
+/// 失敗）都先保底強制回睡再上拋，員工不卡 `Working`（否則 scan_inbox 永不再喚醒）。
 pub async fn run_cycle(
+    employee_id: &str,
+    query: String,
+    anchor: Option<String>,
+    commitment_id: Option<&str>,
+    project_id: Option<&str>,
+    tool: &dyn Tool,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+) -> anyhow::Result<CycleResult> {
+    match run_cycle_body(employee_id, query, anchor, commitment_id, project_id, tool, ctx, store)
+        .await
+    {
+        Ok(r) => Ok(r),
+        Err(e) => {
+            eprintln!("[runtime] run_cycle 逃逸錯誤（{employee_id}）：{e}");
+            if let Err(fe) = force_sleep(store, employee_id, "cycle_error", &format!("{e}")) {
+                eprintln!("[runtime] 保底睡眠失敗（{employee_id}）：{fe}");
+            }
+            Err(e)
+        }
+    }
+}
+
+async fn run_cycle_body(
     employee_id: &str,
     query: String,
     anchor: Option<String>,
@@ -152,15 +178,40 @@ pub async fn run_cycle(
 }
 
 // ───────────────── Phase 6 共用 helpers ─────────────────
-/// 還原員工工作記憶（無則空）。Principle 8——每次喚醒都重建，不假設駐留。
-fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory> {
-    Ok(store.get_memory(employee_id)?.unwrap_or_else(|| Memory {
+fn empty_memory(employee_id: &str) -> Memory {
+    Memory {
         employee_id: employee_id.to_string(),
         notes: Vec::new(),
         last_artifact_id: None,
         todos: Vec::new(),
         updated_at: now_rfc3339(),
-    }))
+    }
+}
+
+/// 還原員工工作記憶（無則空）。Principle 8——每次喚醒都重建，不假設駐留。
+fn restore_memory(store: &dyn Store, employee_id: &str) -> anyhow::Result<Memory> {
+    Ok(store.get_memory(employee_id)?.unwrap_or_else(|| empty_memory(employee_id)))
+}
+
+/// 收尾保證：保底睡眠——各 runner 收尾保證層的最後防線。重讀員工列，若仍 `Working` 則強制回
+/// `Sleeping`（重讀再寫，保留期間的並發欄位變更），並記事件供觀察。store 本身失效時
+/// 無能為力（回 Err）——交由下次啟動的 `recover_stale_runs` 收尾。
+fn force_sleep(
+    store: &(dyn Store + Send + Sync),
+    employee_id: &str,
+    event_kind: &str,
+    detail: &str,
+) -> anyhow::Result<()> {
+    let Some(mut emp) = store.get_employee(employee_id)? else {
+        return Ok(());
+    };
+    let workspace_id = emp.workspace_id.clone();
+    if emp.state == EmployeeState::Working {
+        emp.state = EmployeeState::Sleeping;
+        store.put_employee(&emp)?;
+    }
+    record_event(store, &workspace_id, employee_id, event_kind, detail);
+    Ok(())
 }
 
 /// 記錄一則生命週期 Event（Handbook Ch.14，Phase 6d 輕量）。best-effort：記錄失敗不中斷循環。
@@ -637,6 +688,29 @@ async fn run_inbox_inner(
     outbound: &OutboundConfig,
     cancel: Option<&CancelWatch>,
 ) -> anyhow::Result<()> {
+    // 收尾保證（guaranteed finalize）：body 內任何逃逸錯誤（如 wake 後 store 读写失敗）都先保底強制回睡
+    // 再上拋——不可讓員工卡 `Working`（scan_inbox 只喚醒 Sleeping，孤兒永不被再處理）。
+    match run_inbox_body(employee_id, tool, reasoner, ctx, store, outbound, cancel).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("[runtime] inbox 逃逸錯誤（{employee_id}）：{e}");
+            if let Err(fe) = force_sleep(store, employee_id, "inbox_error", &format!("{e}")) {
+                eprintln!("[runtime] 保底睡眠失敗（{employee_id}）：{fe}");
+            }
+            Err(e)
+        }
+    }
+}
+
+async fn run_inbox_body(
+    employee_id: &str,
+    tool: &dyn Tool,
+    reasoner: Option<&dyn Reasoner>,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+    outbound: &OutboundConfig,
+    cancel: Option<&CancelWatch>,
+) -> anyhow::Result<()> {
     // Wake：整段維持 Working。
     let mut emp = store
         .get_employee(employee_id)?
@@ -657,7 +731,11 @@ async fn run_inbox_inner(
                 break;
             }
         }
-        if !process_one_inbox_task(
+        // 收尾保證：單一 task 的硬錯誤（store 读写、tool 傳輸層失敗——區別於 M1 回錯誤 note 的
+        // 工具內軟失敗）不終結整個 run：記事件、中止消化（剩餘 inbox 留下次喚醒），睡眠
+        // 收尾照走。InProgress task 留在原狀（picker 會再取），下次喚醒自然重試；持續
+        // 毒化的 task 由 task_error 事件現形，人類可經 cancel_task 移除（v1 不自動 Failed）。
+        let processed = match process_one_inbox_task(
             employee_id,
             &workspace_id,
             &mut memory,
@@ -668,8 +746,22 @@ async fn run_inbox_inner(
             outbound,
             cancel,
         )
-        .await?
+        .await
         {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[runtime] inbox task 處理硬失敗（{employee_id}）：{e}");
+                record_event(
+                    store,
+                    &workspace_id,
+                    employee_id,
+                    "task_error",
+                    clip_for_event(&format!("{e}"), 300),
+                );
+                break;
+            }
+        };
+        if !processed {
             break;
         }
     }
@@ -2211,14 +2303,14 @@ async fn run_autonomous_inner(
     outbound: &OutboundConfig,
     cancel: Option<&CancelWatch>,
 ) -> anyhow::Result<AutonomousOutcome> {
-    // Wake：整段維持 Working。
+    // Wake：整段維持 Working。此段的失敗都發生在 Working 落地之前（讀不到員工）或寫入
+    // 失敗本身（狀態未變）——不會留下孤兒 Working；其後一切錯誤由收尾保證保底層兜住。
     let mut emp = store
         .get_employee(employee_id)?
         .ok_or_else(|| anyhow::anyhow!("employee not found: {employee_id}"))?;
     let workspace_id = emp.workspace_id.clone();
     emp.state = EmployeeState::Working;
     store.put_employee(&emp)?;
-    let mut memory = restore_memory(store, employee_id)?;
     record_event(
         store,
         &workspace_id,
@@ -2226,6 +2318,74 @@ async fn run_autonomous_inner(
         "wake",
         format!("commitment: {commitment_id}"),
     );
+
+    // 收尾保證（guaranteed finalize）：body 內任何未捕獲錯誤（store 读写、承諾缺失等）一律轉成 `Errored`
+    // outcome 走軟失敗收尾——員工必睡、承諾維持 Active 並由 session 編排器排退避重試。
+    // 不可讓錯誤逃過收尾：員工卡 Working 會永不被喚醒（scan_inbox 只喚 Sleeping），
+    // 且編排器收到 Err 會跳過 apply_retry_after_outcome，重試鏈斷裂。
+    match run_autonomous_body(
+        employee_id,
+        &workspace_id,
+        commitment_id,
+        budget,
+        knowledge,
+        reasoner,
+        ctx,
+        store,
+        outbound,
+        cancel,
+    )
+    .await
+    {
+        Ok(outcome) => Ok(outcome),
+        Err(e) => {
+            let detail = format!("internal: {e}");
+            eprintln!("[runtime] autonomous 逃逸錯誤（{employee_id}／{commitment_id}）：{detail}");
+            // body 每個動作後都會持久化 memory／commitment——從 store 重讀最新狀態收尾。
+            let mut memory = restore_memory(store, employee_id)
+                .unwrap_or_else(|_| empty_memory(employee_id));
+            let outcome = AutonomousOutcome::Errored { detail: detail.clone() };
+            match store.get_commitment(commitment_id) {
+                Ok(Some(mut com)) => {
+                    if let Err(fe) = finalize_autonomous(
+                        store,
+                        employee_id,
+                        &workspace_id,
+                        &mut memory,
+                        &mut com,
+                        &outcome,
+                        false,
+                    ) {
+                        eprintln!("[runtime] 軟失敗收尾亦失敗（{employee_id}）：{fe}");
+                        let _ = force_sleep(store, employee_id, "errored", &detail);
+                    }
+                }
+                _ => {
+                    // 承諾讀不到——只能保底睡眠；承諾重試待下次啟動掃描或人類接手。
+                    let _ = force_sleep(store, employee_id, "errored", &detail);
+                }
+            }
+            Ok(outcome)
+        }
+    }
+}
+
+/// 收尾保證：自主 session 主體（wake 之後的一切）——任何 `?` 逸散都被 `run_autonomous_inner`
+/// 的保底層轉成軟失敗收尾，故本函式的錯誤路徑不會留下孤兒 Working。
+#[allow(clippy::too_many_arguments)]
+async fn run_autonomous_body(
+    employee_id: &str,
+    workspace_id: &str,
+    commitment_id: &str,
+    budget: &CycleBudget,
+    knowledge: &dyn Tool,
+    reasoner: &dyn Reasoner,
+    ctx: &ToolCtx,
+    store: &(dyn Store + Send + Sync),
+    outbound: &OutboundConfig,
+    cancel: Option<&CancelWatch>,
+) -> anyhow::Result<AutonomousOutcome> {
+    let mut memory = restore_memory(store, employee_id)?;
     let mut commitment = store
         .get_commitment(commitment_id)?
         .ok_or_else(|| anyhow::anyhow!("commitment not found: {commitment_id}"))?;
@@ -2691,64 +2851,90 @@ async fn run_autonomous_inner(
         }
     }
 
+    finalize_autonomous(
+        store,
+        employee_id,
+        workspace_id,
+        &mut memory,
+        &mut commitment,
+        &outcome,
+        produced_any,
+    )?;
+    Ok(outcome)
+}
+
+/// 收尾保證：自主 session 收尾——依 outcome 持久化進度、記結果事件、員工入睡。從 body 尾段抽出，
+/// 供正常收尾與「未捕獲錯誤」的保底收尾（`run_autonomous_inner`）共用：任何 session 都
+/// 必須經過這裡，保證員工不卡 `Working`、承諾保有重試路徑。
+fn finalize_autonomous(
+    store: &(dyn Store + Send + Sync),
+    employee_id: &str,
+    workspace_id: &str,
+    memory: &mut Memory,
+    commitment: &mut Commitment,
+    outcome: &AutonomousOutcome,
+    produced_any: bool,
+) -> anyhow::Result<()> {
     // 軟失敗策略（Phase 7b 修訂）：Stalled／Errored 一律睡、承諾維持 Active、下次喚醒重試。
     // 不自動 Suspended——暫時性失敗（如 LLM rate limit）不該凍結承諾；用戶可手動 Satisfied/Suspended。
-    match &outcome {
+    match outcome {
         AutonomousOutcome::Satisfied { artifact_ids, .. } => {
             // B：承諾滿足——探索期 Draft 產出晉升 Committed（Handbook Ch.06：工作成真的一刻）。
             promote_artifacts_to_committed(store, artifact_ids)?;
             commitment.status = CommitmentStatus::Satisfied;
-            store.put_commitment(&commitment)?;
+            store.put_commitment(commitment)?;
         }
         AutonomousOutcome::Stalled { reason, .. } => {
             let progress = if produced_any { "（已有部分產出）" } else { "" };
             memory
                 .notes
                 .push(format!("承諾「{}」本輪未完成{progress}（{reason}），下次喚醒再續", commitment.title));
-            cap_notes(&mut memory);
+            cap_notes(memory);
             memory.updated_at = now_rfc3339();
-            put_memory_preserving_todos(store, employee_id, &mut memory)?;
-            store.put_commitment(&commitment)?; // 維持 Active
+            put_memory_preserving_todos(store, employee_id, memory)?;
+            store.put_commitment(commitment)?; // 維持 Active
         }
         AutonomousOutcome::Errored { detail } => {
             memory
                 .notes
                 .push(format!("承諾「{}」暫時失敗（{detail}），下次喚醒再試", commitment.title));
-            cap_notes(&mut memory);
+            cap_notes(memory);
             memory.updated_at = now_rfc3339();
-            put_memory_preserving_todos(store, employee_id, &mut memory)?;
-            store.put_commitment(&commitment)?; // 維持 Active（不進 Error 死巷）
+            put_memory_preserving_todos(store, employee_id, memory)?;
+            store.put_commitment(commitment)?; // 維持 Active（不進 Error 死巷）
         }
         AutonomousOutcome::Cancelled { .. } => {
             memory
                 .notes
                 .push(format!("承諾「{}」被人工停止（人類可隨時再觸發續跑）", commitment.title));
-            cap_notes(&mut memory);
+            cap_notes(memory);
             memory.updated_at = now_rfc3339();
-            put_memory_preserving_todos(store, employee_id, &mut memory)?;
-            store.put_commitment(&commitment)?; // 維持 Active
+            put_memory_preserving_todos(store, employee_id, memory)?;
+            store.put_commitment(commitment)?; // 維持 Active
         }
     }
     // 記錄結果事件（生命週期歷程）。
-    let (ekind, edetail) = match &outcome {
+    let (ekind, edetail) = match outcome {
         AutonomousOutcome::Satisfied { .. } => ("satisfied", commitment.title.clone()),
         AutonomousOutcome::Stalled { reason, .. } => ("stalled", reason.clone()),
         AutonomousOutcome::Errored { detail } => ("errored", detail.clone()),
         AutonomousOutcome::Cancelled { .. } => ("stopped", "人工停止".into()),
     };
-    record_event(store, &workspace_id, employee_id, ekind, edetail);
+    record_event(store, workspace_id, employee_id, ekind, edetail);
 
     // 不再進 Error（死巷、無重試路徑）——軟失敗也睡、下次喚醒重試。
     // W1 人工停止 → Paused：排程器不再自動喚醒；人類訊息／交辦會恢復 Sleeping。
     // 重讀最新員工列再寫終態——保留期間的並發欄位變更（如封存的 archived=true）。
-    let mut emp_end = store.get_employee(employee_id)?.unwrap_or(emp);
+    let mut emp_end = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| anyhow::anyhow!("employee not found: {employee_id}"))?;
     emp_end.state = if matches!(outcome, AutonomousOutcome::Cancelled { .. }) {
         EmployeeState::Paused
     } else {
         EmployeeState::Sleeping
     };
     store.put_employee(&emp_end)?;
-    Ok(outcome)
+    Ok(())
 }
 
 /// 取近期 artifact 的內容摘要（PLAN 與 EVAL 共用——兩者都需看見實質成果才能判斷）。
@@ -3649,6 +3835,33 @@ Caption-only figure（無原圖 → 不收）
     }
 
     /// 推理器 stub：依序回傳預錄 JSON 字串（耗盡則回 `{"done": true}`）。測 run_autonomous 用。
+    /// 收尾保證測試用：invoke 一律回 Err——模擬 tool 傳輸層硬失敗（區別於 M1「錯誤 note 回模型」
+    /// 的工具內軟失敗），用來驗證 runner 的收尾保證層。
+    struct ErrTool {
+        spec: ToolSpec,
+        message: String,
+    }
+    impl ErrTool {
+        fn new(message: impl Into<String>) -> Self {
+            Self {
+                spec: ToolSpec {
+                    id: "err".into(),
+                    description: "always fails".into(),
+                },
+                message: message.into(),
+            }
+        }
+    }
+    impl Tool for ErrTool {
+        fn spec(&self) -> &ToolSpec {
+            &self.spec
+        }
+        fn invoke<'a>(&'a self, _input: ToolInput, _ctx: &'a ToolCtx) -> ToolFuture<'a> {
+            let message = self.message.clone();
+            Box::pin(async move { Err(anyhow::anyhow!(message)) })
+        }
+    }
+
     struct StubReasoner {
         responses: std::sync::Mutex<std::collections::VecDeque<String>>,
     }
@@ -3846,6 +4059,52 @@ Caption-only figure（無原圖 → 不收）
         assert_eq!(tool.call_count(), 0);
         let emp = store.get_employee(&emp_id).unwrap().unwrap();
         assert_eq!(emp.state, EmployeeState::Sleeping);
+        assert!(store.list_artifacts("ws").unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 收尾保證：task 處理硬錯誤（tool 傳輸層失敗）不終結 run——記 task_error 事件、員工照睡。
+    /// 修復前：錯誤自 `run_inbox_inner` 逃逸，睡眠收尾被跳過，員工卡 `Working`，
+    /// 而 scan_inbox 只喚醒 `Sleeping`——孤兒永不被再處理（僅下次啟動 recover_stale_runs 救回）。
+    #[tokio::test]
+    async fn inbox_task_hard_error_sleeps_not_stuck_working() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        store
+            .put_task(&Task {
+                id: "t-err".into(),
+                workspace_id: "ws".into(),
+                owner_employee_id: emp_id.clone(),
+                objective: "查會議".into(), // 非 "Human message" 且無 reasoner → tool.invoke 分支
+                input: "任何輸入".into(),
+                status: TaskStatus::Assigned,
+                output_artifact_id: None,
+                commitment_id: None,
+                project_id: None,
+                external_reply_to: None,
+                external_source: None,
+                occurred_at: None,
+                created_at: "t".into(),
+            })
+            .unwrap();
+        let tool = ErrTool::new("gbrain 傳輸失敗");
+        run_inbox(&emp_id, &tool, None, &ctx(), &store, &outbound_disabled())
+            .await
+            .expect("task 硬錯誤應被收尾保證層吸收，run 正常返回");
+
+        // 員工 Sleeping（修復前：卡 Working，排程器永不再喚醒）。
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping);
+        // 事件軌跡可觀察（task_error）。
+        let events = store.list_events_by_employee(&emp_id, 100).unwrap();
+        assert!(
+            events.iter().any(|e| e.kind == "task_error"),
+            "應記 task_error 事件"
+        );
+        // task 留在 InProgress（picker 下次喚醒會再取重試）。
+        let task = store.get_task("t-err").unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::InProgress);
         assert!(store.list_artifacts("ws").unwrap().is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -5460,6 +5719,43 @@ todos: Vec::new(),                updated_at: "t".into(),
         assert_eq!(
             store.get_employee(&emp_id).unwrap().unwrap().state,
             EmployeeState::Sleeping
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 收尾保證：wake 後的逃逸錯誤（此處：承諾 id 不存在）→ 轉 `Errored` 軟失敗收尾：
+    /// run 回傳 `Ok(Errored)`（session 編排器據此排退避——若收到 Err 會跳過
+    /// `apply_retry_after_outcome`，重試鏈斷裂）、員工照睡不卡 `Working`。
+    #[tokio::test]
+    async fn run_autonomous_escape_error_soft_fails_and_sleeps() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        let knowledge = StubTool::new("x");
+        let reasoner = StubReasoner::new(vec![]);
+        let budget = CycleBudget {
+            max_cycles: 5,
+            max_duration: Duration::from_secs(10),
+        };
+        let outcome = run_autonomous(
+            &emp_id,
+            "c-missing",
+            &budget,
+            &knowledge,
+            &reasoner,
+            &ctx(),
+            &store,
+            &outbound_disabled(),
+        )
+        .await
+        .expect("逃逸錯誤應轉 Errored outcome，不應回傳 Err");
+        assert!(matches!(outcome, AutonomousOutcome::Errored { .. }));
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.state, EmployeeState::Sleeping);
+        let events = store.list_events_by_employee(&emp_id, 100).unwrap();
+        assert!(
+            events.iter().any(|e| e.kind == "errored"),
+            "應記 errored 事件"
         );
         std::fs::remove_dir_all(&dir).ok();
     }
