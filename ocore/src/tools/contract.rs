@@ -20,6 +20,10 @@ pub const FN_READ_FILE: &str = "read_file";
 pub const FN_WRITE_FILE: &str = "write_file";
 pub const FN_EDIT_FILE: &str = "edit_file";
 pub const FN_RUN_COMMAND: &str = "run_command";
+pub const FN_SPAWN_SUBAGENT: &str = "spawn_subagent";
+
+// ── allowlist id（保留給未來的治理開關；v1 spawn_subagent 為預設啟用核心工具）──
+pub const TOOL_SPAWN_SUBAGENT: &str = "spawn-subagent";
 
 /// 單一工具的契約（schema＋預算）。M2 先列原生五工具＋桌面四工具；連接器未來由此註冊。
 pub struct ToolContract {
@@ -106,6 +110,20 @@ pub fn turn_tool_contracts(ctx: &crate::domain::tools::ToolCtx) -> Vec<ToolContr
                 }
             }),
             &["todos"],
+        ),
+    });
+    // ── 子代理（D-S2 預設啟用；D-S4：員工認知延伸——唯讀研究組、單層、產出由員工承載）──
+    defs.push(ToolContract {
+        name: FN_SPAWN_SUBAGENT,
+        description: "派出一個臨時子代理獨立完成一項調查／彙整任務，完成後只回報最終結論——\
+                     適合需要大量檢索或消化長文件的子工作，避免撐爆本回合的上下文；可一次派多個並行。\
+                     子代理只會檢索與讀檔，不能外發／寫檔／提案；它看不到你們的對話，task 必須自足完整。",
+        parameters: obj_schema(
+            serde_json::json!({
+                "task": {"type": "string", "description": "子代理的任務（自足完整——含背景、要查什麼、回報什麼）"},
+                "hint": {"type": "string", "description": "額外指示（可省）：查詢角度建議、關注點、期望的輸出格式"}
+            }),
+            &["task"],
         ),
     });
     // ── 桌面工具（M2）：allowlist 閘門——未授權即不存在 ──

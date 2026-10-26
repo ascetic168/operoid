@@ -73,6 +73,7 @@ pub async fn op_run<R: Runtime>(
             knowledge: None,
             access,
             turn_max_steps: cfg.turn_max_steps,
+            subagent_max_steps: cfg.subagent_max_steps,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
         };

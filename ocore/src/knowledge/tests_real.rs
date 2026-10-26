@@ -100,6 +100,7 @@ async fn real_m1_milestone_two_contexts() {
         access,
         knowledge: Some(std::sync::Arc::clone(&svc)),
         turn_max_steps: 40,
+        subagent_max_steps: 20,
         tool_result_max_chars: 8_000,
         turn_deltas: None,
     };
@@ -319,6 +320,7 @@ async fn real_g5_fanout_scaling() {
         access: access.clone(),
         knowledge: Some(std::sync::Arc::clone(&svc)),
         turn_max_steps: 40,
+        subagent_max_steps: 20,
         tool_result_max_chars: 8_000,
         turn_deltas: None,
     };
@@ -411,6 +413,7 @@ async fn real_retrieve_sources_diag() {
         knowledge: None,
         access: access.clone(),
         turn_max_steps: cfg.turn_max_steps,
+        subagent_max_steps: cfg.subagent_max_steps,
         tool_result_max_chars: cfg.tool_result_max_chars,
         turn_deltas: None,
     };

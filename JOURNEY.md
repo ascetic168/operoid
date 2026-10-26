@@ -392,6 +392,8 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 
 **Harness 補強完成（2026-09-07，W0–W3，v0.3.3 待發布）**：以 Harness 一般性定義（聚合迴圈／工具層／上下文管理／恢復力／安全）檢視專案後，補齊三層欠缺——可攔截性（合作式停止＋員工封存）、恢復力（LLM 5xx 退避重試＋usage 記錄＋承諾自動重排解 T2）、行動能力（write-note 工具——員工產出寫入 repo 外專屬目錄，人工晉升入圖譜＝Ch.07 衍生知識最小落地；建構期 allowlist 閘門）。兩個行為變更：`DELETE /api/employees/{id}` 預設改為封存、出錯承諾會自動重試（上限 3 次後轉人工）。計畫 `docs/Operoid-計畫-Harness補強.md`。
 
+**子代理落地（2026-10-26，spawn_subagent v1）**：員工可在對話回合內派出**一次性唯讀研究上下文**（子代理）——解上下文長度限制與併發效率，非員工間委派。唯讀工具集（search／think 不落 artifact／read-file 繼承）、單層防遞迴、授權嚴格繼承、步數保險絲（20）、同一步多個 spawn 以 join_all 並行（D-S3）、全過程 `sub:` tool_call 事件＋`subagent` 結案事件可審計；產出以回報文字回母回合，問責不離開員工。handbook 修憲：Ch.18 規則 3 子代理 carve-out（中英）、Ch.04 §8 Clone 部分實現。收尾保證修復同日落地：runner 逃逸錯誤不再讓員工卡 Working、承諾重試鏈不再斷裂。計畫 `docs/Operoid-計畫-子代理.md`。
+
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。
 
 **CSP 事件與分離部署記錄（2026-08-22）**：NSIS 安裝版啟動後待辦全空、按鍵凍結——根因是 `tauri.conf.json` CSP 無 `connect-src`，打包版擋掉前端對 oserver 的 `http://127.0.0.1` fetch（dev 模式不套用 CSP，故 dev 正常）。修法：CSP 補 `connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*`，重建安裝檔。教訓已轉為待處理清單 **E14**（GUI 與 oserver 跨機器分離部署的四個必改點，含最易漏的 CSP），並登錄為決策 D6（延後）。

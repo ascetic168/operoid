@@ -33,4 +33,5 @@ pub mod prereq;
 pub mod proc;
 pub mod registry;
 pub mod slug;
+pub mod subagent;
 pub mod tools;

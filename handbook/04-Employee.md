@@ -187,7 +187,7 @@ This is how one well-designed employee scales across an entire organization with
 The Employee may grow to support:
 
 - **Multi-agent collaboration** — Employees handing Tasks to one another, sharing context, and forming teams inside a Project.
-- **Cloning** — producing a temporary copy of an Employee for parallel work, then merging results.
+- **Cloning** — ~~producing a temporary copy of an Employee for parallel work, then merging results~~ **partially realized (2026-10) as the subagent** (`spawn_subagent`): a transient, read-only research context under the Employee's own authority — see Ch.18 §6. True cloning (a copy bearing the Employee's identity) remains future.
 - **Skill learning** — an Employee improving its own SOPs and capabilities from experience, fed back into its Brain.
 - **Delegation and supervision** — structured authority between Employees (a lead Employee directing others), without violating the rule that no Employee owns another.
 - **Marketplace profiles** — Employee Templates published and imported across Workspaces.

@@ -76,6 +76,10 @@ pub struct ToolCtx {
     pub turn_max_steps: u32,
     /// M1：工具結果餵回 LLM 的字元上限（`AppConfig::tool_result_max_chars`，預設 8,000）。
     pub tool_result_max_chars: usize,
+    /// 子代理（spawn_subagent）：單個子代理回合的步數保險絲（`AppConfig::subagent_max_steps`，
+    /// 預設 20）。子代理是母回合派出的一次性唯讀研究上下文——保險絲同樣是失控防護，
+    /// 不是工作預算。
+    pub subagent_max_steps: u32,
     /// F1 串流：回合 delta 匯流排的發佈端（生產路徑僅 `scan_inbox` 以
     /// `AppState::turn_delta_sender` 注入；`None`＝不發佈——測試／非排程器路徑）。
     /// 發佈端 send 無訂閱者時為 no-op，零成本。
@@ -95,6 +99,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("access", &self.access.principal_id)
             .field("knowledge", &self.knowledge.is_some())
             .field("turn_max_steps", &self.turn_max_steps)
+            .field("subagent_max_steps", &self.subagent_max_steps)
             .field("turn_deltas", &self.turn_deltas.is_some())
             .finish()
     }

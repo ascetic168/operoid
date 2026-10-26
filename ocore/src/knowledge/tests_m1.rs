@@ -130,6 +130,7 @@ pub(crate) fn tool_ctx() -> ToolCtx {
         knowledge: None,
         registry: None,
         turn_max_steps: 40,
+        subagent_max_steps: 20,
         tool_result_max_chars: 8_000,
         turn_deltas: None,
     }

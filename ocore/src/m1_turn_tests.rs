@@ -110,6 +110,7 @@ fn ctx() -> ToolCtx {
         access: crate::knowledge::identity::test_default(),
         knowledge: None,
         turn_max_steps: 40,
+        subagent_max_steps: 20,
         tool_result_max_chars: 8_000,
         turn_deltas: None,
     }
@@ -661,5 +662,260 @@ async fn conversational_non_streaming_reasoner_emits_lifecycle_only() {
         deltas.get(1),
         Some(TD::TextEnd { final_reply: true, .. })
     ));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ───────────────── 子代理（spawn_subagent，D-S1..S4）─────────────────
+
+/// legacy 文字 JSON 協議 stub（自包含；依序回預錄 JSON，耗盡則回 done）。
+struct LegacyJsonStubReasoner {
+    responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+}
+impl Reasoner for LegacyJsonStubReasoner {
+    fn reason<'a>(&'a self, _s: &'a str, _u: &'a str) -> crate::domain::tools::ReasonerFuture<'a> {
+        let resp = {
+            let mut g = self.responses.lock().unwrap();
+            g.pop_front().unwrap_or_else(|| "{\"done\": true}".into())
+        };
+        Box::pin(async move {
+            let v: serde_json::Value = serde_json::from_str(&resp)
+                .unwrap_or_else(|_| serde_json::json!({"done": true}));
+            Ok(v)
+        })
+    }
+}
+
+/// 錄製每次 chat_step 收到的歷史（fan-out 的 tool_call_id 配對驗證用）。
+struct CapturingStubReasoner {
+    turns: std::sync::Mutex<std::collections::VecDeque<LlmTurn>>,
+    seen: std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+}
+impl CapturingStubReasoner {
+    fn new(turns: Vec<LlmTurn>) -> Self {
+        Self {
+            turns: std::sync::Mutex::new(turns.into_iter().collect()),
+            seen: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+impl Reasoner for CapturingStubReasoner {
+    fn reason<'a>(&'a self, _s: &'a str, _u: &'a str) -> crate::domain::tools::ReasonerFuture<'a> {
+        Box::pin(async { anyhow::bail!("capturing stub 不走 legacy") })
+    }
+    fn supports_native_tools(&self) -> bool {
+        true
+    }
+    fn chat_step<'a>(&'a self, m: &'a [ChatMessage], _t: &'a [ToolDef]) -> ChatStepFuture<'a> {
+        let next = {
+            let mut seen = self.seen.lock().unwrap();
+            seen.push(m.to_vec());
+            let mut g = self.turns.lock().unwrap();
+            g.pop_front().unwrap_or_else(|| NativeStubReasoner::text("done"))
+        };
+        Box::pin(async move { Ok(next) })
+    }
+}
+
+fn spawn_turn(calls: Vec<(&str, serde_json::Value)>) -> LlmTurn {
+    LlmTurn {
+        content: None,
+        tool_calls: calls
+            .into_iter()
+            .map(|(id, args)| ToolCall {
+                id: id.to_string(),
+                name: "spawn_subagent".into(),
+                arguments: args,
+            })
+            .collect(),
+        finish_reason: Some("tool_calls".into()),
+        usage: None,
+    }
+}
+
+/// 單一 spawn：母模型 spawn → 子代理 think→文字回報 → 母模型收尾。
+/// 子代理不落任何 artifact／Message；過程有 `subagent` 與 `sub:` 工具事件。
+#[tokio::test]
+async fn subagent_single_spawn_reports_and_writes_nothing() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "調查良率");
+    let tool = StubTool::new("圖譜證據：接點氧化");
+    let reasoner = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call(
+            "spawn_subagent",
+            serde_json::json!({"task": "查蝕刻良率下降原因", "hint": "聚焦 RF matching"}),
+        ),
+        NativeStubReasoner::call("gbrain_think", serde_json::json!({"query": "良率下降"})),
+        NativeStubReasoner::text("結論：接點氧化。"),
+        NativeStubReasoner::text("彙整完成：主因接點氧化。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+
+    // 母回合最終回覆照常寫出。
+    let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert!(msgs[0].text.contains("彙整完成"));
+    // 子代理不落 artifact（think 不入庫）也不寫 Message——產出只以回報文字回到母上下文。
+    assert!(
+        store.list_artifacts("ws").unwrap().is_empty(),
+        "子代理不得寫 artifact"
+    );
+    // 事件軌跡：subagent 結案事件＋內部工具事件（sub: 前綴）。
+    let events = store.list_events_by_employee(&emp_id, 100).unwrap();
+    assert!(events.iter().any(|e| e.kind == "subagent"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.kind == "tool_call" && e.detail.contains("sub:gbrain_think")),
+        "子代理內部工具應記 sub: 前綴事件"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// fan-out（D-S3）：同一步兩個 spawn → 回報按原 call id 配對回灌母上下文。
+#[tokio::test]
+async fn subagent_fan_out_pairs_results_by_call_id() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "雙線調查");
+    let tool = StubTool::new("x");
+    let reasoner = CapturingStubReasoner::new(vec![
+        spawn_turn(vec![
+            ("call-a", serde_json::json!({"task": "任務A"})),
+            ("call-b", serde_json::json!({"task": "任務B"})),
+        ]),
+        NativeStubReasoner::text("回報A"),
+        NativeStubReasoner::text("回報B"),
+        NativeStubReasoner::text("兩線完成。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+
+    // 母模型下一步的歷史：兩則 tool 訊息，id 與回報一一配對。
+    // seen 的順序＝母步1 → 子A步 → 子B步 → 母步2；母的收尾歷史是最後一筆。
+    let seen = reasoner.seen.lock().unwrap();
+    let second = seen.last().expect("母模型至少兩步");
+    let tools: Vec<&ChatMessage> = second
+        .iter()
+        .filter(|m| m.role == crate::llm::ChatRole::Tool)
+        .collect();
+    assert_eq!(tools.len(), 2, "兩個 spawn 各回一則 tool 訊息");
+    let a = tools
+        .iter()
+        .find(|m| m.tool_call_id.as_deref() == Some("call-a"))
+        .expect("call-a 回應");
+    let b = tools
+        .iter()
+        .find(|m| m.tool_call_id.as_deref() == Some("call-b"))
+        .expect("call-b 回應");
+    assert!(a.content.contains("回報A"), "call-a 應配對任務A 的回報");
+    assert!(b.content.contains("回報B"), "call-b 應配對任務B 的回報");
+    drop(seen);
+    assert_eq!(store.list_events_by_employee(&emp_id, 100).unwrap().iter().filter(|e| e.kind == "subagent").count(), 2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 缺 task 參數：錯誤 note 回母模型（M1——回合續跑），不啟動子代理。
+#[tokio::test]
+async fn subagent_missing_task_is_error_note_not_crash() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "輸入");
+    let tool = StubTool::new("x");
+    let reasoner = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call("spawn_subagent", serde_json::json!({})),
+        NativeStubReasoner::text("子代理派發失敗，我自己查。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert!(msgs[0].text.contains("我自己查"));
+    // 無 subagent 結案事件；spawn 記 error tool_call 事件。
+    let events = store.list_events_by_employee(&emp_id, 100).unwrap();
+    assert!(!events.iter().any(|e| e.kind == "subagent"));
+    assert!(
+        events.iter().any(|e| e.kind == "tool_call"
+            && e.detail.contains("spawn_subagent")
+            && e.detail.contains("error")),
+        "缺 task 應記 error 事件"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 保險絲：subagent_max_steps 用盡子代理仍未回文字 → 「未收斂」回報（不浪費已做工作）。
+#[tokio::test]
+async fn subagent_step_fuse_returns_unconverged_note() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "輸入");
+    let tool = StubTool::new("證據");
+    let mut sub_ctx = ctx();
+    sub_ctx.subagent_max_steps = 2;
+    let reasoner = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call(
+            "spawn_subagent",
+            serde_json::json!({"task": "查個不停"}),
+        ),
+        NativeStubReasoner::call("gbrain_search", serde_json::json!({"query": "q1"})),
+        NativeStubReasoner::call("gbrain_search", serde_json::json!({"query": "q2"})),
+        NativeStubReasoner::text("收到未收斂回報。"),
+    ]);
+    run_inbox(&emp_id, &tool, Some(&reasoner), &sub_ctx, &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let events = store.list_events_by_employee(&emp_id, 100).unwrap();
+    let sub_event = events
+        .iter()
+        .find(|e| e.kind == "subagent")
+        .expect("應有 subagent 結案事件");
+    assert!(
+        sub_event.detail.contains("未收斂"),
+        "保險絲耗盡應回報未收斂：{}",
+        sub_event.detail
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// legacy 文字 JSON 協定：spawn 動作回「僅原生協定」note，回合照常收尾。
+#[tokio::test]
+async fn subagent_legacy_protocol_gets_unavailable_note() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "輸入");
+    let tool = StubTool::new("x");
+    let reasoner = LegacyJsonStubReasoner {
+        responses: std::sync::Mutex::new(
+            vec![
+                r#"{"action": "spawn", "task": "x"}"#.to_string(),
+                r#"{"action": "finish", "text": "legacy 完成"}"#.to_string(),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    };
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert!(msgs[0].text.contains("legacy 完成"));
+    assert!(
+        !store
+            .list_events_by_employee(&emp_id, 100)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "subagent"),
+        "legacy 不應啟動子代理"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

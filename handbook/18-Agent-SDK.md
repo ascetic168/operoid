@@ -77,7 +77,7 @@ The Agent SDK follows three rules:
 
 1. **The interface is minimal.** Run, Pause, Resume, Cancel, OpenProject, CommitArtifact, PublishEvent, Execute. If an operation is not on this list, the Employee should not be able to do it directly. Human↔employee conversational interaction (Message, Ch.16) is not on this list — an Employee's Out Message is produced by the **Runtime on its behalf** (within a conversational turn), not by a direct Employee SDK operation, so the interface stays closed.
 2. **The interface is stable.** These names should outlive every implementation. Adding an operation requires architectural review.
-3. **The interface respects the boundaries.** No operation lets an Employee reconfigure the Workspace, rewrite shared Knowledge, schedule itself, or control another Employee. Those powers do not belong to an Employee.
+3. **The interface respects the boundaries.** No operation lets an Employee reconfigure the Workspace, rewrite shared Knowledge, schedule itself, or control another Employee. Those powers do not belong to an Employee. A **subagent** is not another Employee and is no exception: it is a transient, read-only research context an Employee spawns *within a turn* — no identity, no memory, not addressable, dead when the turn ends. Its authority is strictly inherited from the spawning Employee, and every act it performs **is the Employee's act**; accountability never leaves the Employee (2026-10 amendment).
 
 ---
 
@@ -91,3 +91,5 @@ The Agent SDK may grow to support:
 - **Negotiation** — structured handshakes between collaborating Employees.
 
 Whatever is added, the rule holds: **the SDK exposes lifecycle and workspace operations; it never exposes the ability to escape the Employee's boundary.**
+
+**Subagents (shipped 2026-10, `spawn_subagent`)** — distinct from Delegation above. A subagent is an *epistemic extension* of one Employee: a one-shot tool loop with a read-only toolset (search / think / read-file), strictly inherited clearance and allowlist, single-level by construction (its toolset contains no spawn), and no writes to Messages, Artifacts, or Memory. It exists because of context-window limits and parallelism — not because the Workspace grew a new kind of worker. Its report is a tool result in the parent's turn; the parent decides, acts, and answers for it.

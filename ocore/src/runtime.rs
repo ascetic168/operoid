@@ -243,7 +243,7 @@ pub fn record_event(
 }
 
 /// 事件 detail 欄位截斷（字元級，避免切斷多位元組字）；超長以「…」標記。
-fn clip_for_event(s: &str, max_chars: usize) -> String {
+pub(crate) fn clip_for_event(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s.to_string()
     } else {
@@ -259,7 +259,7 @@ fn clip_for_event(s: &str, max_chars: usize) -> String {
 /// 去重掃描；`put_event` 為 upsert-by-id，id 不撞即 append。
 /// status：`ok`＝已執行（工具失敗依既有 fail-safe 語意轉為錯誤 note，由 note 呈現）、
 /// `unknown`＝未知工具。
-fn record_tool_call_event(
+pub(crate) fn record_tool_call_event(
     store: &dyn Store,
     workspace_id: &str,
     employee_id: &str,
@@ -788,7 +788,7 @@ pub fn fresh_id(prefix: &str) -> String {
 }
 
 /// 現在時刻資訊行：LLM 沒有時鐘——喚醒 prompt 注入，讓「今天/這週」的判斷有依據。
-fn now_line() -> String {
+pub(crate) fn now_line() -> String {
     use chrono::Datelike;
     let now = chrono::Local::now();
     let wd = ["一", "二", "三", "四", "五", "六", "日"][now.weekday().num_days_from_monday() as usize];
@@ -1026,6 +1026,10 @@ async fn run_conversational_turn(
             // 每個呼叫記一筆 `tool_call` 事件（過程可見性：GUI 聊天頁／事件流／SSE 消費）。
             let mut finish_now = false;
             for tc in &turn.tool_calls {
+                // D-S3：spawn_subagent 不在此順序執行——統一由步尾 fan-out 並行跑（見下）。
+                if tc.name == crate::tools::contract::FN_SPAWN_SUBAGENT {
+                    continue;
+                }
                 if tc.name == "update_todos" || tc.name == "todos" {
                     last_todo_step = step_idx;
                 }
@@ -1121,13 +1125,109 @@ async fn run_conversational_turn(
                     }
                 }
                 if finish_now {
-                    for rest in turn.tool_calls.iter().skip_while(|c| c.id != tc.id).skip(1) {
+                    // 非 spawn 的剩餘呼叫補佔位；spawn（無論位置）統一由步尾處理。
+                    for rest in turn
+                        .tool_calls
+                        .iter()
+                        .skip_while(|c| c.id != tc.id)
+                        .skip(1)
+                        .filter(|c| c.name != crate::tools::contract::FN_SPAWN_SUBAGENT)
+                    {
                         history.push(llm::ChatMessage::tool(
                             &rest.id,
                             "（回合已結束，此呼叫未執行）",
                         ));
                     }
                     break;
+                }
+            }
+            // D-S3/D-S4：本步的 spawn_subagent 呼叫——finish 已觸發→一律佔位（未執行，保
+            // 協議完整：每個 tool_call_id 都要有回應）；否則 fan-out 並行執行。子代理是
+            // 一次性唯讀研究上下文（crate::subagent）：授權嚴格繼承母員工、不寫任何狀態，
+            // 回報按原 call id 回灌；錯誤為錯誤 note（M1——母模型可改道）。先取出不可變
+            // 引用再 await——join 期間不佔住 &mut session。
+            let spawn_calls: Vec<&llm::ToolCall> = turn
+                .tool_calls
+                .iter()
+                .filter(|c| c.name == crate::tools::contract::FN_SPAWN_SUBAGENT)
+                .collect();
+            if finish_now {
+                for tc in spawn_calls {
+                    history.push(llm::ChatMessage::tool(
+                        &tc.id,
+                        "（回合已結束，此呼叫未執行）",
+                    ));
+                }
+            } else if !spawn_calls.is_empty() {
+                let knowledge = s.knowledge;
+                let sub_ctx = s.ctx;
+                let parent_name = emp.name.clone();
+                let futs = spawn_calls.iter().map(|tc| {
+                    let ws = workspace_id.clone();
+                    let pname = parent_name.clone();
+                    let task = tc
+                        .arguments
+                        .get("task")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let hint = tc
+                        .arguments
+                        .get("hint")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    let args_json = tc.arguments.clone();
+                    let call_id = tc.id.clone();
+                    let started = std::time::Instant::now();
+                    async move {
+                        let outcome = if task.is_empty() {
+                            Err(anyhow::anyhow!("缺 task 參數（子代理任務必填）"))
+                        } else {
+                            crate::subagent::run_subagent_turn(
+                                employee_id,
+                                &ws,
+                                &pname,
+                                &task,
+                                hint.as_deref(),
+                                knowledge,
+                                reasoner,
+                                sub_ctx,
+                                store,
+                                cancel,
+                            )
+                            .await
+                        };
+                        (call_id, args_json, started, outcome)
+                    }
+                });
+                for (call_id, args_json, started, outcome) in
+                    futures::future::join_all(futs).await
+                {
+                    let elapsed = started.elapsed();
+                    let (status, note) = match outcome {
+                        Ok(o) => (
+                            "ok",
+                            format!("[subagent] 子代理回報（{} 步）：{}", o.steps, s.take(&o.reply)),
+                        ),
+                        Err(e) => (
+                            "error",
+                            format!("[subagent] 子代理失敗：{e}（可改用 search／think 自行繼續）"),
+                        ),
+                    };
+                    record_tool_call_event(
+                        store,
+                        &workspace_id,
+                        employee_id,
+                        step_idx,
+                        crate::tools::contract::FN_SPAWN_SUBAGENT,
+                        &args_json,
+                        status,
+                        elapsed,
+                        &note,
+                    );
+                    steps.push(note.clone());
+                    history.push(llm::ChatMessage::tool(&call_id, note));
                 }
             }
             compact_native_history(&mut history);
@@ -1828,6 +1928,11 @@ impl<'a> TurnSession<'a> {
 {}", format_todo_state(&memory.todos)),
                 })
             }
+            // 子代理：legacy 文字 JSON 協定不支援（native 步已攔截 spawn_subagent——此
+            // arm 僅服務 legacy 動作與 native 幻覺別名）。
+            "spawn" | "spawn_subagent" => Some(TurnAction::Continue {
+                note: "[spawn_subagent] 子代理僅在原生工具協定下可用。".into(),
+            }),
             "finish" => Some(self.finish_from_args(args).await),
             _ => None,
         }
@@ -1979,7 +2084,7 @@ fn build_native_turn_history(
 
 /// native 歷史的確定性壓縮：工具結果超過 12 則時，較舊者截到 1,200 字元（保留最後 3 則全文）。
 /// 純截斷、可預測、零額外 LLM 呼叫；完整內容仍可在 artifact／檔案中查得。
-fn compact_native_history(history: &mut [llm::ChatMessage]) {
+pub(crate) fn compact_native_history(history: &mut [llm::ChatMessage]) {
     const KEEP_FULL: usize = 3;
     const SHORT: usize = 1_200;
     let tool_idx: Vec<usize> = history
@@ -3387,6 +3492,7 @@ pub fn build_tool_ctx(
             knowledge,
             registry,
             turn_max_steps: cfg.turn_max_steps,
+            subagent_max_steps: cfg.subagent_max_steps,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
         },
@@ -3951,6 +4057,7 @@ Caption-only figure（無原圖 → 不收）
             ),
             registry: None,
             turn_max_steps: 40,
+            subagent_max_steps: 20,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
         }
@@ -6220,6 +6327,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             knowledge: None,
             registry: None,
             turn_max_steps: 40,
+            subagent_max_steps: 20,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
         };
@@ -6343,6 +6451,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             knowledge: None,
             registry: None,
             turn_max_steps: 40,
+            subagent_max_steps: 20,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
         };
@@ -6803,6 +6912,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             knowledge: None,
             registry: None,
             turn_max_steps: 40,
+            subagent_max_steps: 20,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
         };
@@ -7143,6 +7253,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             knowledge: None,
             registry: None,
             turn_max_steps: 40,
+            subagent_max_steps: 20,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
         };

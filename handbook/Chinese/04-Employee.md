@@ -187,7 +187,7 @@ Employee Instance（實例）
 Employee 未來可能支援：
 
 - **多代理協作** —— Employee 之間互相交付 Task、共享上下文，並在一個 Project 內組成團隊。
-- **分身（Clone）** —— 為了平行工作產生 Employee 的暫時副本，再合併結果。
+- **分身（Clone）** —— ~~為了平行工作產生 Employee 的暫時副本，再合併結果~~ **已部分實現（2026-10）為子代理**（`spawn_subagent`）：在 Employee 自身授權下的暫時性唯讀研究上下文——見 Ch.18 §6。真正的分身（帶著 Employee 身分的副本）仍是未來項目。
 - **技能學習** —— Employee 從經驗中改善自己的 SOP 與能力，並回饋到它的 Brain。
 - **委派與監督** —— Employee 之間的結構化職權（一個主管 Employee 指揮其他），但不違反「沒有 Employee 擁有另一個」的規則。
 - **市集市場** —— Employee Template 可跨 Workspace 發布與匯入。

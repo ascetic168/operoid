@@ -933,6 +933,7 @@ async fn api_op_run(
                 knowledge: None,
                 access,
                 turn_max_steps: cfg.0.turn_max_steps,
+                subagent_max_steps: cfg.0.subagent_max_steps,
                 tool_result_max_chars: cfg.0.tool_result_max_chars,
                 turn_deltas: None,
             };
@@ -1114,6 +1115,7 @@ async fn api_knowledge_ask(
         knowledge: None,
         access,
         turn_max_steps: cfg.0.turn_max_steps,
+        subagent_max_steps: cfg.0.subagent_max_steps,
         tool_result_max_chars: cfg.0.tool_result_max_chars,
         turn_deltas: None,
     };

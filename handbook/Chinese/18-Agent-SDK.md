@@ -77,7 +77,7 @@ Agent SDK 遵循三條規則：
 
 1. **介面是最小的。** Run、Pause、Resume、Cancel、OpenProject、CommitArtifact、PublishEvent、Execute。如果某個作業不在這份清單上，Employee 就不該能直接做它。人類↔員工的對話互動（Message，Ch.16）不在這份清單上——員工對人類的 Out Message 是由 **Runtime 代為產出**（在對話回合中），而非員工直接呼叫的 SDK 作業，故介面仍保持封閉。
 2. **介面是穩定的。** 這些名字應該比任何實作都活得久。新增作業需要架構審查。
-3. **介面遵守邊界。** 沒有任何作業讓 Employee 能重新設定 Workspace、改寫共享知識、自我排程、或控制另一個 Employee。那些權力不屬於 Employee。
+3. **介面遵守邊界。** 沒有任何作業讓 Employee 能重新設定 Workspace、改寫共享知識、自我排程、或控制另一個 Employee。那些權力不屬於 Employee。**子代理**不是另一個 Employee，不構成例外：它是 Employee 在*回合內*派出的暫時性唯讀研究上下文——無身分、無記憶、不可定址、回合結束即消亡。其授權嚴格繼承派出的 Employee，它的一切行為**就是該 Employee 的行為**；問責從未離開 Employee（2026-10 修正案）。
 
 ---
 
@@ -91,3 +91,5 @@ Agent SDK 未來可能支援：
 - **協商** —— 協作的 Employee 之間的結構化交握。
 
 無論新增什麼，規則依然成立：**SDK 暴露的是生命週期與工作空間作業；它絕不暴露逃離 Employee 邊界的能力。**
+
+**子代理（2026-10 已落地，`spawn_subagent`）**——與上列「委派」不同。子代理是單一 Employee 的*認知延伸*：一次性的工具迴圈，唯讀工具集（search／think／read-file）、嚴格繼承母員工的 clearance 與 allowlist、結構上單層（工具集中不含 spawn）、不寫任何 Message／Artifact／Memory。它因上下文長度限制與併發效率而存在——不是因為工作區多了一種工作者。它的回報只是母回合裡的一則工具結果；決策、行動與責任都在母員工。

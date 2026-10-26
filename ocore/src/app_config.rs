@@ -121,6 +121,10 @@ pub struct AppConfig {
     /// M1：自主 session 的時間預算（分鐘；原 5）。
     #[serde(default = "default_autonomy_minutes")]
     pub autonomy_max_minutes: u32,
+    /// 子代理（spawn_subagent）：單個子代理回合的步數保險絲。子代理是母回合派出的
+    /// 一次性唯讀研究上下文——保險絲是失控防護，不是工作預算。
+    #[serde(default = "default_subagent_max_steps")]
+    pub subagent_max_steps: u32,
     /// M1：對話回合的工具協議。`None`（預設）＝auto——先試原生 function calling，
     /// provider 不支援（400＋tools 字樣）即 session 內降級文字 JSON 協議；
     /// `Some("json")`＝強制文字 JSON 協議；`Some("native")`＝強制原生（不支援即錯）。
@@ -280,6 +284,9 @@ fn default_autonomy_cycles() -> u32 {
 fn default_autonomy_minutes() -> u32 {
     15
 }
+fn default_subagent_max_steps() -> u32 {
+    20
+}
 
 /// 由 home 路徑推導穩定 id（內部用，不必吻合 gbrain slug 規則）。
 fn brain_id_from_home(home: &str) -> String {
@@ -425,6 +432,7 @@ impl Default for AppConfig {
             tool_result_max_chars: default_tool_result_chars(),
             autonomy_max_cycles: default_autonomy_cycles(),
             autonomy_max_minutes: default_autonomy_minutes(),
+            subagent_max_steps: default_subagent_max_steps(),
             llm_protocol: None,
             locale: None,
             recent_claude_cwds: Vec::new(),

@@ -46,6 +46,37 @@ retry backoff is ever scheduled.
   `run_autonomous_escape_error_soft_fails_and_sleeps` (ocore: 360 passed,
   oserver: 51 passed).
 
+### Employees can now spawn subagents (`spawn_subagent`)
+
+An Employee can delegate a bounded piece of research to a **subagent** — a
+transient, read-only context spawned *within a turn*. It exists to offload
+context-heavy work (wide retrieval, long documents) and to run such work in
+parallel; it is **not** another Employee and not inter-employee delegation.
+Handbook Ch.18 (rule 3) and Ch.04 §8 are amended accordingly (EN + ZH).
+
+- Read-only toolset (D-S1): `gbrain_search`, `gbrain_think` (no artifact —
+  the synthesis only travels back as report text), `read_file` inherited
+  only when the parent Employee has the `read-file` allowlist entry, and
+  `finish`. No outbound, no writes, no proposals. The parent decides, acts,
+  and answers for everything the subagent does.
+- Enabled by default for every Employee (D-S2) — governance comes from
+  structure instead of a checkbox: read-only toolset, single level by
+  construction (the subagent's own toolset contains no spawn), a step fuse
+  (`subagent_max_steps`, default 20), the global LLM concurrency semaphore,
+  and an audit event per spawn.
+- Concurrent fan-out (D-S3): multiple `spawn_subagent` calls in one native
+  tool-call step run via `join_all`; reports return keyed by the original
+  call id. Legacy (flat-JSON) protocol responds that subagents require the
+  native protocol.
+- Ephemeral by design (D-S4): no identity, no memory, not addressable, no
+  writes to Messages/Artifacts/Memory; process visible as `sub:`-prefixed
+  `tool_call` events plus a `subagent` summary event under the parent
+  Employee. Task briefs must be self-contained — the subagent sees none of
+  the conversation.
+- New module `ocore/src/subagent.rs`; plan file
+  `docs/Operoid-計畫-子代理.md` (decisions D-S1–S4). 7 new tests (ocore:
+  367 passed, oserver: 51 passed).
+
 ## [v0.5.5] - 2026-10-25
 
 ### In-app updates — signed auto-updater (Personal) and release checks (Enterprise)
