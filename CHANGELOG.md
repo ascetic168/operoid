@@ -39,6 +39,25 @@ the chat UIs (frontend lands in the following commits).
 - No request-parameter changes: parse-if-present — providers without
   thinking simply never emit the frames.
 
+### Desktop chat: live single-line process ticker (ZCode-style)
+
+The collapsed trace header in the desktop employee chat is now a live
+ticker: while a turn runs it flows through the latest activity — the
+in-flight tool call (name + args preview), then the model's streamed
+thinking tail (muted, single-line ellipsis), falling back to the
+spinner/"Working" label when neither is present. Completed steps count
+up live from `ToolCallEnd` frames alongside the polled `tool_call`
+events (source of truth).
+
+- The trace no longer force-expands on send: collapsed single line by
+  default, expand on user click; a non-`ok` `tool_call_end` frame
+  auto-expands the trace (errors surface themselves).
+- Intermediate model narration (text emitted before a tool call, which
+  used to be retracted with the draft) is kept as dimmed italic
+  narration entries interleaved by step in the expanded trace body.
+- Ticker/narration state is ephemeral — deltas are not persisted, so a
+  reload falls back to the polled trace.
+
 ## [v0.5.7] - 2026-10-27
 
 ### Desktop chat bubbles follow messenger convention

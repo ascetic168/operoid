@@ -89,36 +89,100 @@ const draft = ref<{ taskId: string; text: string; settling: boolean } | null>(nu
 /** 草稿誕生時的最頂訊息 id——輪詢看到頂端換人（最終訊息到達）即收草稿。 */
 let draftAnchorId: string | null = null;
 
+// ── v0.5.8 過程可見性：單行流動 ticker＋過程敘事（皆 ephemeral——幀不落 DB，重載即逝）──
+/** 思考流尾端（只留最後 ~160 字，收合行單行流動顯示）。 */
+const thinkingTail = ref("");
+/** 進行中的工具呼叫（ToolCallStart→End 之間；ticker 最高優先）。 */
+const activeTool = ref<{ name: string; args: string } | null>(null);
+/** 本地完成計數（ToolCallEnd 即時＋；補輪詢 toolCalls 到齊前的視覺延遲）。 */
+const localEnded = ref(0);
+/** 過程敘事：中間步的模型文字（text_end{false} 時由草稿改存此處，展開區按 step 交插）。 */
+interface Narration {
+  step: number;
+  text: string;
+}
+const narrations = ref<Narration[]>([]);
+
+function resetTicker() {
+  thinkingTail.value = "";
+  activeTool.value = null;
+}
+
 function applyTurnDelta(d: TurnDelta) {
   if ("employee_id" in d && d.employee_id !== props.id) return;
   switch (d.kind) {
     case "step_start":
-      // 同 task 重開步（重試）→ 清空重來；新 task → 新草稿。
+      // 同 task 重開步（重試）→ 清空重來；新 task → 新草稿。新步＝前一步的流動狀態作廢。
       draftAnchorId = data.value?.messages[0]?.id ?? null;
       draft.value =
         draft.value && draft.value.taskId === d.task_id
           ? { ...draft.value, text: "", settling: false }
           : { taskId: d.task_id, text: "", settling: false };
+      resetTicker();
       break;
     case "text_delta":
       if (!draft.value) draft.value = { taskId: d.task_id, text: "", settling: false };
       if (draft.value.taskId === d.task_id && !draft.value.settling) draft.value.text += d.text;
       break;
+    case "thinking_delta":
+      // 單行流動：只留尾端，CSS 單行省略。
+      thinkingTail.value = (thinkingTail.value + d.text).slice(-160);
+      break;
+    case "tool_call_start":
+      activeTool.value = { name: d.name, args: d.args };
+      break;
+    case "tool_call_end":
+      activeTool.value = null;
+      localEnded.value++;
+      // 例外主動曝光：非 ok（unknown/error）自動展開過程列。
+      if (d.status !== "ok") traceOpen.value = true;
+      break;
     case "text_end":
-      // false＝本步轉工具呼叫 → 收回草稿；true＝終局文字 → 保留等最終訊息替換。
-      if (draft.value?.taskId === d.task_id && !d.final_reply) draft.value = null;
+      // false＝本步轉工具呼叫 → 草稿文字改存過程敘事（不再直接丟棄）；true＝終局文字 → 保留等最終訊息替換。
+      if (draft.value?.taskId === d.task_id && !d.final_reply) {
+        if (draft.value.text.trim()) narrations.value.push({ step: d.step, text: draft.value.text });
+        draft.value = null;
+      }
       break;
     case "turn_end":
       if (draft.value?.taskId === d.task_id) draft.value = { ...draft.value, settling: true };
+      resetTicker();
       break;
     case "resync":
       draft.value = null;
+      resetTicker();
       break;
   }
 }
 
 const traceOpen = ref(false);
 const showTrace = computed(() => toolCalls.value.length > 0 || awaitingReply.value);
+
+/** 過程步數（輪詢事件為事實源；ToolCallEnd 本地即時＋補輪詢延遲）。 */
+const traceCount = computed(() => Math.max(toolCalls.value.length, localEnded.value));
+/** 收合行 ticker：進行中工具呼叫的 args 單行預覽（名稱另以 code 樣式呈現）。 */
+const tickerArgs = computed(() =>
+  activeTool.value?.args ? activeTool.value.args.replace(/\s+/g, " ").slice(0, 60) : "",
+);
+/** 展開區條目：過程敘事按 step 交插於工具步驟之間（時序）。 */
+type TraceEntry = { kind: "narration"; text: string } | { kind: "tool"; c: ToolCallStep; i: number };
+const traceEntries = computed<TraceEntry[]>(() => {
+  const out: TraceEntry[] = [];
+  let n = 0;
+  for (let i = 0; i < toolCalls.value.length; i++) {
+    const c = toolCalls.value[i];
+    while (n < narrations.value.length && narrations.value[n].step <= c.step) {
+      out.push({ kind: "narration", text: narrations.value[n].text });
+      n++;
+    }
+    out.push({ kind: "tool", c, i });
+  }
+  while (n < narrations.value.length) {
+    out.push({ kind: "narration", text: narrations.value[n].text });
+    n++;
+  }
+  return out;
+});
 
 const thread = computed<ThreadItem[]>(() => {
   const msgs = data.value ? [...data.value.messages].reverse() : [];
@@ -284,7 +348,12 @@ async function send() {
   if (!text) return;
   sending.value = true;
   error.value = null;
-  traceOpen.value = true; // 送出後自動展開過程列，讓「正在做什麼」可見
+  // v0.5.8：過程列預設收合（單行流動 ticker 已呈現「正在做什麼」），使用者點開才展開；
+  // 錯誤幀（tool_call_end status≠ok）自動展開。新回合重置本回合的過程狀態。
+  traceOpen.value = false;
+  localEnded.value = 0;
+  narrations.value = [];
+  resetTicker();
   try {
     await agentSendMessage(props.id, text, null);
     input.value = "";
@@ -373,38 +442,54 @@ function stateColor(s: string | undefined): string {
               class="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
               @click="traceOpen = !traceOpen"
             >
-              <Loader2 v-if="awaitingReply" :size="12" class="animate-spin text-emerald-500" />
-              <Wrench v-else :size="12" />
-              <span v-if="awaitingReply" class="font-medium">{{ t("chat.processing") }}</span>
-              <span v-if="toolCalls.length">{{ t("chat.traceCount", toolCalls.length) }}</span>
-              <span class="ml-auto text-[10px]">{{ traceOpen ? "▾" : "▸" }}</span>
+              <Loader2 v-if="awaitingReply" :size="12" class="shrink-0 animate-spin text-emerald-500" />
+              <Wrench v-else :size="12" class="shrink-0" />
+              <!-- v0.5.8 單行流動 ticker：進行中工具 → 思考流尾端 →（皆無時）處理中 -->
+              <span v-if="activeTool" class="flex min-w-0 items-baseline gap-1.5">
+                <code class="font-medium text-foreground">{{ activeTool.name }}</code>
+                <span v-if="tickerArgs" class="truncate text-muted-foreground">{{ tickerArgs }}</span>
+              </span>
+              <span
+                v-else-if="thinkingTail"
+                class="min-w-0 flex-1 truncate text-muted-foreground"
+              >{{ t("chat.thinking") }}：{{ thinkingTail }}</span>
+              <span v-else-if="awaitingReply" class="font-medium">{{ t("chat.processing") }}</span>
+              <span v-if="traceCount" class="shrink-0">{{ t("chat.traceCount", traceCount) }}</span>
+              <span class="ml-auto shrink-0 text-[10px]">{{ traceOpen ? "▾" : "▸" }}</span>
             </button>
             <div v-if="traceOpen" class="border-t border-border px-3 py-1.5">
-              <div v-for="(c, ci) in toolCalls" :key="ci" class="py-1 text-xs">
-                <div class="flex items-center gap-2">
-                  <span
-                    class="h-1.5 w-1.5 shrink-0 rounded-full"
-                    :class="c.status === 'ok' ? 'bg-emerald-500' : 'bg-amber-500'"
-                    :title="c.status"
-                  />
-                  <code class="font-medium">{{ c.tool }}</code>
-                  <span class="text-muted-foreground">· {{ c.ms }}ms</span>
-                  <span class="ml-auto text-[10px] text-muted-foreground">#{{ c.step }}</span>
-                </div>
+              <template v-for="(e, ei) in traceEntries" :key="ei">
+                <!-- v0.5.8 過程敘事：中間步模型旁白（淡化斜體，按 step 交插於工具步驟之間） -->
                 <p
-                  v-if="c.note"
-                  class="mt-0.5 cursor-pointer pl-3.5 text-muted-foreground"
-                  :class="openArgs.has(ci) ? '' : 'line-clamp-2'"
-                  :title="c.args"
-                  @click="toggleArgs(ci)"
-                >
-                  {{ c.note }}
-                </p>
-                <pre
-                  v-if="openArgs.has(ci)"
-                  class="mt-1 overflow-x-auto rounded border border-border bg-accent px-2 py-1 text-[10px] text-muted-foreground"
-                >{{ c.args }}</pre>
-              </div>
+                  v-if="e.kind === 'narration'"
+                  class="whitespace-pre-wrap break-words py-1 text-xs italic text-muted-foreground"
+                >{{ e.text }}</p>
+                <div v-else class="py-1 text-xs">
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="h-1.5 w-1.5 shrink-0 rounded-full"
+                      :class="e.c.status === 'ok' ? 'bg-emerald-500' : 'bg-amber-500'"
+                      :title="e.c.status"
+                    />
+                    <code class="font-medium">{{ e.c.tool }}</code>
+                    <span class="text-muted-foreground">· {{ e.c.ms }}ms</span>
+                    <span class="ml-auto text-[10px] text-muted-foreground">#{{ e.c.step }}</span>
+                  </div>
+                  <p
+                    v-if="e.c.note"
+                    class="mt-0.5 cursor-pointer pl-3.5 text-muted-foreground"
+                    :class="openArgs.has(e.i) ? '' : 'line-clamp-2'"
+                    :title="e.c.args"
+                    @click="toggleArgs(e.i)"
+                  >
+                    {{ e.c.note }}
+                  </p>
+                  <pre
+                    v-if="openArgs.has(e.i)"
+                    class="mt-1 overflow-x-auto rounded border border-border bg-accent px-2 py-1 text-[10px] text-muted-foreground"
+                  >{{ e.c.args }}</pre>
+                </div>
+              </template>
             </div>
           </div>
         </div>

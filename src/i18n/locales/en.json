@@ -358,6 +358,7 @@
     "cleared": "Conversation cleared",
     "pollError": "Live updates temporarily unavailable; you can still interact.",
     "processing": "Working…",
+    "thinking": "Thinking",
     "traceCount": "{n} tool call(s)",
     "artifactLoadFailed": "Failed to load artifact content — try again later"
   },

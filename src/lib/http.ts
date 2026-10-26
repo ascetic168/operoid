@@ -91,7 +91,9 @@ export async function agentFetch<T>(
 // ───────────────── F1 串流：員工級回合 delta 流（SSE） ─────────────────
 
 /** 對話回合的即時 delta（SSE `event: delta`；對齊 ocore `TurnDelta` serde 標籤）。
- *  best-effort 契約：最終 Message{Out}（輪詢）才是事實源，delta 丟失僅觀感問題。 */
+ *  best-effort 契約：最終 Message{Out}（輪詢）才是事實源，delta 丟失僅觀感問題。
+ *  v0.5.8 過程幀：thinking_delta（模型思考流增量）、tool_call_start/end（工具呼叫
+ *  進行中→完成對，args 截 400 字）——客戶端做單行流動 ticker 與錯誤自動展開。 */
 export type TurnDelta =
   | { kind: "step_start"; employee_id: string; task_id: string; step: number }
   | { kind: "text_delta"; employee_id: string; task_id: string; step: number; text: string }
@@ -101,6 +103,24 @@ export type TurnDelta =
       task_id: string;
       step: number;
       final_reply: boolean;
+    }
+  | { kind: "thinking_delta"; employee_id: string; task_id: string; step: number; text: string }
+  | {
+      kind: "tool_call_start";
+      employee_id: string;
+      task_id: string;
+      step: number;
+      name: string;
+      args: string;
+    }
+  | {
+      kind: "tool_call_end";
+      employee_id: string;
+      task_id: string;
+      step: number;
+      name: string;
+      status: string;
+      ms: number;
     }
   | { kind: "turn_end"; employee_id: string; task_id: string }
   | { kind: "resync"; lost?: number };
