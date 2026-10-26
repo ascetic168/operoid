@@ -58,6 +58,14 @@ events (source of truth).
 - Ticker/narration state is ephemeral — deltas are not persisted, so a
   reload falls back to the polled trace.
 
+### Web chats: live single-line process ticker (user/manager)
+
+Same ZCode-style live ticker, collapsed-by-default trace, error
+auto-expand and narration retention as the desktop chat, applied to the
+user and manager web apps (shared api-client `TurnDelta` union extended
+with the three process frames; new `chat.thinking` i18n key in
+en/zh-TW/zh-CN).
+
 ## [v0.5.7] - 2026-10-27
 
 ### Desktop chat bubbles follow messenger convention

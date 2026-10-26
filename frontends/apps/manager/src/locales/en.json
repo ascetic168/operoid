@@ -86,6 +86,7 @@
     "commitSubmit": "Create",
     "proposed": "with proposal",
     "processing": "Working…",
+    "thinking": "Thinking",
     "traceCount": "{n} tool call(s)",
     "artifactLoadFailed": "Failed to load artifact content — try again later"
   },
