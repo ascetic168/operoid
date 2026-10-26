@@ -394,6 +394,8 @@ Skill learning、cloning/parallelism、marketplace、federation、distributed ru
 
 **子代理落地（2026-10-26，spawn_subagent v1）**：員工可在對話回合內派出**一次性唯讀研究上下文**（子代理）——解上下文長度限制與併發效率，非員工間委派。唯讀工具集（search／think 不落 artifact／read-file 繼承）、單層防遞迴、授權嚴格繼承、步數保險絲（20）、同一步多個 spawn 以 join_all 並行（D-S3）、全過程 `sub:` tool_call 事件＋`subagent` 結案事件可審計；產出以回報文字回母回合，問責不離開員工。handbook 修憲：Ch.18 規則 3 子代理 carve-out（中英）、Ch.04 §8 Clone 部分實現。收尾保證修復同日落地：runner 逃逸錯誤不再讓員工卡 Working、承諾重試鏈不再斷裂。計畫 `docs/Operoid-計畫-子代理.md`。
 
+**員工間信箱＋委任主體模型（2026-10-26，D-M 系列）**：員工可互相溝通——`list_colleagues` 名冊＋`message_employee` 信箱（一對一、異步、投遞即回、雙向留痕）。核心是**職權歸因**：訊息帶寄件者身分（Owner＝委任主體的職權指示／Human＝諮詢／Employee＝同儕請求永遠非指令／External＝注射防護），指示權繫於特定主體而非「人類」類別；硬約束不動（registry＋核可 RBAC），prompt 層渲染四式語意。同步落地升權缺口：`PATCH /api/employees/{id}/tools`＋治理事件 `tools_changed`（GUI fast-follow）。handbook Ch.16 修憲（對話紀錄含員工之間＋歸因）。緩議與否決項目全數登記為「選擇性待辦」（含已否決的同步等待及其理由）。計畫 `docs/Operoid-計畫-員工信箱.md`。
+
 **D3 GUI 首版（2026-08-01）**：Agent-OS 首次有可見 UI——員工模板（1:1 綁腦、CRUD）、員工實體（視窗卡片＋右鍵管理、個別命名如 Steve@TW）。待你 `npm run tauri dev` 視覺驗證。
 
 **CSP 事件與分離部署記錄（2026-08-22）**：NSIS 安裝版啟動後待辦全空、按鍵凍結——根因是 `tauri.conf.json` CSP 無 `connect-src`，打包版擋掉前端對 oserver 的 `http://127.0.0.1` fetch（dev 模式不套用 CSP，故 dev 正常）。修法：CSP 補 `connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*`，重建安裝檔。教訓已轉為待處理清單 **E14**（GUI 與 oserver 跨機器分離部署的四個必改點，含最易漏的 CSP），並登錄為決策 D6（延後）。

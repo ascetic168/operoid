@@ -77,6 +77,34 @@ Handbook Ch.18 (rule 3) and Ch.04 §8 are amended accordingly (EN + ZH).
   `docs/Operoid-計畫-子代理.md` (decisions D-S1–S4). 7 new tests (ocore:
   367 passed, oserver: 51 passed).
 
+### Employees can message each other — with authority attribution
+
+Employees gain a workspace roster (`list_colleagues`) and an inter-
+employee mailbox (`message_employee`: one-to-one, async, the sender
+never waits). Every message now records **who sent it and in what
+capacity**, and that attribution determines its authority semantics:
+
+- the employee's **owner principal** issues instructions (the only
+  channel that assigns new work); **other humans** consult or request;
+  **employee peers** make requests — never commands, the recipient
+  re-plans and decides on its own; **external** channel senders get the
+  prompt-injection guard. Instruction authority is tied to a specific
+  principal (`owner_principal`), not to "being human". Hard enforcement
+  stays with the Action Registry and approval RBAC; the attribution is
+  deterministic data rendered into prompts (Ch.16 amended, EN+ZH).
+- Delivery is symmetric and fully traceable: sender's Out copy,
+  recipient's In copy + assigned task, `internal_sent` event, and
+  immediate wake via the injected `WakeSink` (30s tick as fallback).
+  Self-, archived, and cross-workspace recipients are rejected.
+- The whole channel has an off switch: `internal_mail_enabled`
+  (default on) removes both tools from the tool surface.
+- Escalation gap closed: employee tool allowlists are updatable after
+  deployment — `PATCH /api/employees/{id}/tools` (RBAC: owner-scoped,
+  Req::User) + `agent_update_employee_tools` desktop command, every
+  change recorded as a `tools_changed` governance event. GUI dialog is
+  fast-follow; deferred items (incl. the rejected synchronous-wait
+  design, with reasons) are registered as a formal "選擇性待辦" backlog.
+
 ## [v0.5.5] - 2026-10-25
 
 ### In-app updates — signed auto-updater (Personal) and release checks (Enterprise)

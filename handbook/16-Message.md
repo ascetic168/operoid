@@ -9,11 +9,13 @@ Status: Draft
 
 ## 1. Purpose
 
-A Message is **a record of one conversational turn between a human and an Employee** — a piece of text with a direction (human→employee, or employee→human).
+A Message is **a record of one conversational turn** — between a human and an Employee, or between two Employees (2026-10 amendment) — a piece of text with a direction (human→employee, employee→human, or employee→employee).
 
-Operoid is deliberately not a chat application: work must not be buried in conversation (Principle 3). But human–Employee collaboration (Goal 4) needs an interaction layer — a human gives direction, an Employee replies or asks back. A Message carries **the interaction itself**, while the durable results that the interaction triggers or produces still land separately as Tasks (work items), Artifacts (outputs), and Commitments (responsibilities).
+Operoid is deliberately not a chat application: work must not be buried in conversation (Principle 3). But human–Employee collaboration (Goal 4) needs an interaction layer — a human gives direction, an Employee replies or asks back. A Message carries **the interaction itself**, while the durable results that the interaction triggers or produce still land separately as Tasks (work items), Artifacts (outputs), and Commitments (responsibilities).
 
 A Message solves two things: (a) an Employee needs to be able to **speak** to a human — reply, ask, propose; (b) these exchanges need to be retained as reviewable interaction records, not just vanish once they become an Inbox Task.
+
+**Sender attribution (2026-10 amendment).** Every Message records *who* sent it and *in what capacity*: the employee's **owner principal** (instruction authority — the only channel that assigns new work), other humans (consultation or request), a fellow Employee (peer request — never a command; the recipient re-plans and decides on its own), or an external party via a bridge (subject to the injection guard). Attribution is deterministic data; the *hard* enforcement of authority stays with the Action Registry and approval RBAC. Inter-employee messages are permanent interaction records (not prunable), and every delivery is traceable: sender's Out copy, recipient's In copy, the Assigned task, and a `internal_sent` event.
 
 ---
 
