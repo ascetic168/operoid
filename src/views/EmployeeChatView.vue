@@ -412,11 +412,11 @@ function stateColor(s: string | undefined): string {
         <!-- F1 串流草稿：delta 即時累積（最終訊息由輪詢冪等替換；斷線回退輪詢） -->
         <div
           v-else-if="item.kind === 'draft'"
-          class="mb-2 flex flex-col items-end shrink-0"
+          class="mb-2 flex flex-col items-start shrink-0"
           aria-live="polite"
         >
           <div
-            class="max-w-[75%] rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+            class="max-w-[75%] rounded-lg bg-accent px-3 py-1.5 text-sm text-foreground"
             :class="item.settling ? 'opacity-60' : 'opacity-85'"
           >
             <MarkdownText :text="item.text" /><span
@@ -431,19 +431,19 @@ function stateColor(s: string | undefined): string {
         <div
           v-else
           class="mb-2 flex flex-col shrink-0"
-          :class="item.msg.direction === 'out' ? 'items-end' : 'items-start'"
+          :class="item.msg.direction === 'out' ? 'items-start' : 'items-end'"
         >
           <!-- 員工回覆：Markdown（共用元件內部 marked→DOMPurify 消毒） -->
           <div
             v-if="item.msg.direction === 'out'"
-            class="max-w-[75%] rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground"
+            class="max-w-[75%] rounded-lg bg-accent px-3 py-1.5 text-sm text-foreground"
           >
             <MarkdownText :text="item.msg.text" />
           </div>
           <!-- 使用者訊息：純文字 -->
           <div
             v-else
-            class="max-w-[75%] whitespace-pre-wrap rounded-lg bg-accent px-3 py-1.5 text-sm text-foreground"
+            class="max-w-[75%] whitespace-pre-wrap rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground"
           >
             {{ item.msg.text }}
           </div>
@@ -451,7 +451,7 @@ function stateColor(s: string | undefined): string {
           <time
             v-if="formatTime(item.msg.created_at)"
             class="mt-0.5 px-1 text-[10px] text-muted-foreground"
-            :class="item.msg.direction === 'out' ? 'text-right' : 'text-left'"
+            :class="item.msg.direction === 'out' ? 'text-left' : 'text-right'"
           >
             {{ formatTime(item.msg.created_at) }}
           </time>

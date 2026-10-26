@@ -13,6 +13,22 @@
 
 ---
 
+## [v0.5.7] - 2026-10-27
+
+### Desktop chat bubbles follow messenger convention
+
+The desktop employee chat rendered user messages left-aligned with a
+neutral bubble and employee replies right-aligned with the brand
+bubble — inverted relative to the web frontends (which already put the
+user's own messages on the right in the accent color) and to common
+messenger convention.
+
+- Employee replies and the streaming draft bubble now sit on the left
+  with the neutral surface; user messages sit on the right with the
+  brand-colored bubble; timestamps align to their bubble.
+- Web frontends (user/manager) already followed the convention and are
+  unchanged.
+
 ## [v0.5.6] - 2026-10-26
 
 ### Runtime: guaranteed finalize — escaped errors can no longer orphan an employee
