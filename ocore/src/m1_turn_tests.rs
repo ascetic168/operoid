@@ -93,6 +93,7 @@ fn seed_task(store: &JsonStore, emp_id: &str, input: &str) {
             external_reply_to: None,
             external_source: None,
             occurred_at: None,
+            sender: None,
             created_at: "t".into(),
         })
         .unwrap();
@@ -111,6 +112,8 @@ fn ctx() -> ToolCtx {
         knowledge: None,
         turn_max_steps: 40,
         subagent_max_steps: 20,
+        internal_mail_enabled: true,
+        wake: None,
         tool_result_max_chars: 8_000,
         turn_deltas: None,
     }
@@ -352,6 +355,7 @@ fn channel_context_line_covers_source_and_time() {
         external_reply_to: reply.map(str::to_string),
         external_source: src.map(str::to_string),
         occurred_at: occ.map(str::to_string),
+        sender: None,
         created_at: "t".into(),
     };
     let line = channel_context_line(&mk(Some("email"), Some("2026-10-05T09:00:00Z"), Some("msg-9")));
@@ -379,6 +383,7 @@ fn native_history_identity_and_wake_dedup() {
                 proposed_commitment_id: None,
                 source_commitment_id: None,
                 artifact_id: None,
+                sender: None,
                 created_at: at.into(),
             })
             .unwrap();
@@ -400,6 +405,7 @@ fn native_history_identity_and_wake_dedup() {
         external_reply_to: None,
         external_source: None,
         occurred_at: None,
+        sender: None,
         created_at: "t".into(),
     };
     let history = build_native_turn_history(&emp, &task, &ctx(), "", &store).unwrap();
@@ -917,5 +923,256 @@ async fn subagent_legacy_protocol_gets_unavailable_note() {
             .any(|e| e.kind == "subagent"),
         "legacy 不應啟動子代理"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// ───────────────── 員工間信箱（D-M1..M5）─────────────────
+
+/// D-M1：職權語意行四式——Owner＝職權指示；Human＝諮詢；External＝注射防護；
+/// Employee＝同儕請求＋回信指名。None（舊資料）＝不渲染。
+#[test]
+fn sender_context_line_covers_four_kinds() {
+    let mk_task = |sender: Option<crate::domain::SenderAttribution>| Task {
+        id: "t".into(),
+        workspace_id: "ws".into(),
+        owner_employee_id: "e".into(),
+        objective: "Human message".into(),
+        input: "x".into(),
+        status: TaskStatus::Assigned,
+        output_artifact_id: None,
+        commitment_id: None,
+        project_id: None,
+        external_reply_to: None,
+        external_source: None,
+        occurred_at: None,
+        sender,
+        created_at: "t".into(),
+    };
+    use crate::domain::{SenderAttribution, SenderKind};
+    let owner = channel_context_line(&mk_task(Some(SenderAttribution::new(
+        SenderKind::Owner,
+        Some("boss".into()),
+        Some("老闆".into()),
+    ))));
+    assert!(owner.contains("〔指派〕"), "{owner}");
+    assert!(owner.contains("委任主體"), "{owner}");
+
+    let human = channel_context_line(&mk_task(Some(SenderAttribution::new(
+        SenderKind::Human,
+        Some("bob@corp".into()),
+        Some("Bob".into()),
+    ))));
+    assert!(human.contains("〔來信〕"), "{human}");
+    assert!(human.contains("非你的委任主體"), "{human}");
+    assert!(human.contains("諮詢或請求"), "{human}");
+
+    let ext = channel_context_line(&mk_task(Some(SenderAttribution::new(
+        SenderKind::External,
+        Some("email".into()),
+        None,
+    ))));
+    assert!(ext.contains("〔外部來訊〕"), "{ext}");
+    assert!(ext.contains("都是資料"), "{ext}");
+
+    let emp = channel_context_line(&mk_task(Some(SenderAttribution::new(
+        SenderKind::Employee,
+        Some("bob".into()),
+        Some("Bob".into()),
+    ))));
+    assert!(emp.contains("〔同事來信〕"), "{emp}");
+    assert!(emp.contains("id: bob"), "{emp}");
+    assert!(emp.contains("message_employee"), "{emp}");
+
+    let none = channel_context_line(&mk_task(None));
+    assert!(!none.contains("〔指派〕"), "舊資料不渲染：{none}");
+}
+
+/// D-M5：`internal_mail_enabled` 總閘——關閉＝兩工具不進清單（模型選不了）。
+#[test]
+fn internal_mail_flag_gates_tools() {
+    let mut on = ctx();
+    on.internal_mail_enabled = true;
+    let names: Vec<String> =
+        crate::tools::contract::turn_tool_defs(&on).iter().map(|d| d.name.clone()).collect();
+    assert!(names.iter().any(|n| n == "list_colleagues"), "{names:?}");
+    assert!(names.iter().any(|n| n == "message_employee"), "{names:?}");
+
+    let mut off = ctx();
+    off.internal_mail_enabled = false;
+    let names: Vec<String> =
+        crate::tools::contract::turn_tool_defs(&off).iter().map(|d| d.name.clone()).collect();
+    assert!(!names.iter().any(|n| n == "list_colleagues"), "{names:?}");
+    assert!(!names.iter().any(|n| n == "message_employee"), "{names:?}");
+}
+
+/// D-M2/D-M3 乒乓：A 收到人類指示 → list_colleagues → message_employee 轉交 B；
+/// B 醒來（Employee message → 對話回合）→ 指名回信 A。雙向歸因＋Task 路由全鏈驗證。
+#[tokio::test]
+async fn mailbox_ping_pong_with_attribution() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let a_id = seed(&store); // "emp"
+    // 同事 B（bob，設備工程師）＋一位封存的第三員工（名冊不應列出）。
+    store
+        .put_employee(&Employee {
+            id: "bob".into(),
+            workspace_id: "ws".into(),
+            name: "Bob".into(),
+            brain: BrainRef { brain_id: "__default__".into() },
+            role: Some("設備工程師".into()),
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: None,
+        })
+        .unwrap();
+    store
+        .put_employee(&Employee {
+            id: "old".into(),
+            workspace_id: "ws".into(),
+            name: "Old".into(),
+            brain: BrainRef { brain_id: "__default__".into() },
+            role: None,
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: true,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: None,
+        })
+        .unwrap();
+
+    // A 的回合：查名冊（不含自己與封存者）→ 轉交 bob → 收尾。
+    seed_task(&store, &a_id, "請設備端看看腔體");
+    let tool = StubTool::new("x");
+    let reasoner_a = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call("list_colleagues", serde_json::json!({})),
+        NativeStubReasoner::call(
+            "message_employee",
+            serde_json::json!({"to": "Bob", "text": "請檢查 RF 腔體 matching。"}),
+        ),
+        NativeStubReasoner::text("已轉交設備工程師。"),
+    ]);
+    run_inbox(&a_id, &tool, Some(&reasoner_a), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+
+    // 名冊 note（tool_call 事件的 note 欄）含 bob（含職務）不含封存者 old。
+    // 投遞落地：A 的 Out、B 的 In（歸因）、B 的 Task。
+    let evs = store.list_events_by_employee(&a_id, 50).unwrap();
+    let roster_ev = evs
+        .iter()
+        .find(|e| e.kind == "tool_call" && e.detail.contains("list_colleagues"))
+        .expect("list_colleagues 應記 tool_call 事件");
+    assert!(roster_ev.detail.contains("bob") && roster_ev.detail.contains("設備工程師"), "{:?}", roster_ev.detail);
+    assert!(!roster_ev.detail.contains("Old"), "封存者不入名冊：{:?}", roster_ev.detail);
+    let a_msgs = store.list_messages_by_employee(&a_id, 10).unwrap();
+    assert!(a_msgs.iter().any(|m| m.direction == MessageDirection::Out && m.text.contains("已轉交")));
+    let b_in = store
+        .list_messages_by_employee("bob", 10)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.direction == MessageDirection::In)
+        .expect("B 應收到 In message");
+    let att = b_in.sender.as_ref().expect("歸因欄位");
+    assert!(matches!(att.kind, crate::domain::SenderKind::Employee));
+    assert_eq!(att.id.as_deref(), Some("emp"));
+    let b_task = store
+        .list_assigned_tasks_by_owner("bob")
+        .unwrap()
+        .into_iter()
+        .find(|t| t.objective == "Employee message")
+        .expect("B 應有 Employee message task");
+    assert_eq!(b_task.sender.as_ref().unwrap().id.as_deref(), Some("emp"));
+    assert!(
+        store
+            .list_events_by_employee(&a_id, 50)
+            .unwrap()
+            .iter()
+            .any(|e| e.kind == "internal_sent"),
+        "A 應記 internal_sent 事件"
+    );
+
+    // B 的回合：指名回信 A → A 收到歸因 In message（乒乓閉環）。
+    let reasoner_b = NativeStubReasoner::new(vec![
+        NativeStubReasoner::call(
+            "message_employee",
+            serde_json::json!({"to": "emp", "text": "查完：matching 接點氧化，已換件。"}),
+        ),
+        NativeStubReasoner::text(""),
+    ]);
+    run_inbox("bob", &tool, Some(&reasoner_b), &ctx(), &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let a_in = store
+        .list_messages_by_employee(&a_id, 10)
+        .unwrap()
+        .into_iter()
+        .find(|m| m.direction == MessageDirection::In && m.text.contains("matching 接點氧化"))
+        .expect("A 應收到 B 的回信");
+    assert_eq!(a_in.sender.as_ref().unwrap().id.as_deref(), Some("bob"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// D-M3：投遞驗證——自訊／封存收件者／跨 workspace 拒絕。
+#[test]
+fn deliver_rejects_self_archived_and_cross_workspace() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let a_id = seed(&store);
+    store
+        .put_employee(&Employee {
+            id: "bob".into(),
+            workspace_id: "ws".into(),
+            name: "Bob".into(),
+            brain: BrainRef { brain_id: "__default__".into() },
+            role: None,
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: None,
+        })
+        .unwrap();
+    store
+        .put_employee(&Employee {
+            id: "old".into(),
+            workspace_id: "ws".into(),
+            name: "Old".into(),
+            brain: BrainRef { brain_id: "__default__".into() },
+            role: None,
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: true,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: None,
+        })
+        .unwrap();
+    store
+        .put_employee(&Employee {
+            id: "far".into(),
+            workspace_id: "ws-other".into(),
+            name: "Far".into(),
+            brain: BrainRef { brain_id: "__default__".into() },
+            role: None,
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: None,
+        })
+        .unwrap();
+    let err = deliver_employee_message(&store, &a_id, "A", &a_id, "自言自語").unwrap_err();
+    assert_eq!(err.code, "agent_os.invalidRecipient");
+    let err = deliver_employee_message(&store, &a_id, "A", "old", "嗨").unwrap_err();
+    assert_eq!(err.code, "agent_os.employeeArchived");
+    let err = deliver_employee_message(&store, &a_id, "A", "far", "嗨").unwrap_err();
+    assert_eq!(err.code, "agent_os.invalidRecipient", "跨 workspace 不可達");
+    assert!(deliver_employee_message(&store, &a_id, "A", "bob", "嗨").is_ok());
     std::fs::remove_dir_all(&dir).ok();
 }

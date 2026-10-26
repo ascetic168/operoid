@@ -74,6 +74,8 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("POST", Some("/api/employees/{id}/stop"))
         | ("POST", Some("/api/employees/{id}/unarchive"))
         | ("PATCH", Some("/api/employees/{id}"))
+        // D-M7：員工工具 allowlist 更新（升權／降權；「限自身」由 handler 裁定）
+        | ("PATCH", Some("/api/employees/{id}/tools"))
         | ("POST", Some("/api/employees/{id}/messages"))
         | ("DELETE", Some("/api/employees/{id}/messages")) => Req::User,
 

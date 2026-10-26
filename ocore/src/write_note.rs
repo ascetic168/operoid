@@ -187,6 +187,8 @@ mod tests {
             allowed_tools: Default::default(),
             turn_max_steps: 40,
             subagent_max_steps: 20,
+            internal_mail_enabled: true,
+            wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
         }

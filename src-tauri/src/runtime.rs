@@ -254,6 +254,18 @@ pub async fn agent_rename_employee<R: tauri::Runtime>(
     rename_employee_core(&store, &employee_id, &name)
 }
 
+/// D-M7：更新員工工具 allowlist（升權／降權）——治理事件 `tools_changed` 留痕。
+/// GUI 對話框為 fast-follow；本指令先行提供（企業 console 走 oserver PATCH 同語意）。
+#[tauri::command]
+pub async fn agent_update_employee_tools<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    employee_id: String,
+    tools: Option<Vec<String>>,
+) -> Result<ocore::domain::Employee, AppError> {
+    let store = agent_store(&app)?;
+    update_employee_tools_core(&store, &employee_id, tools)
+}
+
 
 /// 跑一輪 Employee 循環：載入 employee→解析腦→建 ToolCtx→run_cycle（gbrain think）。
 /// `commitment_id` 可選：綁定則此循環的 task／artifact 連到該長期責任。
@@ -490,6 +502,8 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             registry: None,
             turn_max_steps: cfg.turn_max_steps,
             subagent_max_steps: cfg.subagent_max_steps,
+            internal_mail_enabled: cfg.internal_mail_enabled,
+            wake: None,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
         });
@@ -552,6 +566,12 @@ pub async fn agent_handoff_task<R: tauri::Runtime>(
         external_reply_to: None,
         external_source: None,
         occurred_at: None,
+        // 人類 GUI 交辦＝委任主體指示（D-M6：桌面版呼叫者即 owner）。
+        sender: Some(ocore::domain::SenderAttribution::new(
+            ocore::domain::SenderKind::Owner,
+            None,
+            None,
+        )),
         created_at: now_rfc3339(),
     })?;
     Ok(TaskIdResult { task_id })
@@ -597,7 +617,8 @@ pub async fn agent_run_task<R: tauri::Runtime>(
     Ok(result)
 }
 
-/// 投遞一則人類訊息給員工（Message{In}＋Inbox Task＋wake）。
+/// 投遞一則人類訊息給員工（Message{In}＋Inbox Task＋wake）。桌面版呼叫者即本地
+/// 使用者＝委任主體（D-M6：個人版單人語意）。
 #[tauri::command]
 pub async fn agent_send_message<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -607,7 +628,12 @@ pub async fn agent_send_message<R: tauri::Runtime>(
     commitment_id: Option<String>,
 ) -> Result<SendMessageResult, AppError> {
     let store = agent_store(&app)?;
-    send_message_core(&state, &store, &employee_id, &text, commitment_id.as_deref())
+    let from = ocore::domain::SenderAttribution::new(
+        ocore::domain::SenderKind::Owner,
+        None,
+        None,
+    );
+    send_message_core(&state, &store, &employee_id, &text, commitment_id.as_deref(), from)
 }
 
 

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use axum::extract::{Path as AxPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, post};
+use axum::routing::{delete, patch, post};
 use axum::{Json, Router};
 use crate::routes::cors_layer;
 use serde::Deserialize;
@@ -26,6 +26,7 @@ use ocore::runtime::{
     reject_commitment_core, registry_drill_core, registry_save_core, review_commitment_core,
     deploy_instance, ensure_workspace_core, rename_employee_core, rename_template_core,
     send_message_core, stop_employee_core, unarchive_employee_core,
+    update_employee_tools_core,
 };
 
 use crate::routes::{err_response, open_store, require_auth, require_identity, ServerState};
@@ -63,6 +64,7 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/templates", post(api_create_template))
         .route("/api/templates/{id}", delete(api_delete_template).patch(api_rename_template))
         .route("/api/employees/{id}", delete(api_delete_employee).patch(api_rename_employee))
+        .route("/api/employees/{id}/tools", patch(api_update_employee_tools))
         .route("/api/employees/deploy", post(api_deploy))
         .route("/api/employees/{id}/stop", post(api_stop_employee))
         .route("/api/employees/{id}/unarchive", post(api_unarchive_employee))
@@ -330,6 +332,34 @@ async fn api_unarchive_employee(
     finish(res)
 }
 
+/// D-M7：更新員工工具 allowlist（升權／降權）——治理事件 `tools_changed` 留痕。
+#[derive(Deserialize)]
+struct UpdateToolsBody {
+    /// `None`＝回預設集；`Some([])`＝清空（僅核心工具）。
+    tools: Option<Vec<String>>,
+}
+
+async fn api_update_employee_tools(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Json<UpdateToolsBody>,
+) -> Response {
+    let identity = require_identity(&state, &headers, identity);
+    let tools = body.0.tools;
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        if let Some(ident) = &identity {
+            ensure_employee_access(ident, &store, &id)?;
+        }
+        update_employee_tools_core(&store, &id, tools)
+    })
+    .await;
+    finish(res)
+}
+
 async fn api_rename_employee(
     State(state): State<Arc<ServerState>>,
     identity: Option<axum::Extension<Identity>>,
@@ -417,10 +447,37 @@ async fn api_send_message(
     let res = tokio::task::spawn_blocking(move || {
         let as_ = app_state(&st)?;
         let store = open_store(&st)?;
+        // D-M1：寄件者歸因——identity.name（principal id）＝該員工 owner → 職權指示；
+        // 其他人類 → 諮詢或請求（硬約束仍由 registry＋核可 RBAC 承擔）。
+        let from = match &identity {
+            Some(ident) => {
+                let is_owner = store
+                    .get_employee(&id)
+                    .ok()
+                    .flatten()
+                    .and_then(|e| e.owner_principal)
+                    .map(|owner| owner == ident.name)
+                    .unwrap_or(false);
+                ocore::domain::SenderAttribution::new(
+                    if is_owner {
+                        ocore::domain::SenderKind::Owner
+                    } else {
+                        ocore::domain::SenderKind::Human
+                    },
+                    Some(ident.name.clone()),
+                    Some(ident.name.clone()),
+                )
+            }
+            None => ocore::domain::SenderAttribution::new(
+                ocore::domain::SenderKind::Human,
+                None,
+                None,
+            ),
+        };
         if let Some(ident) = &identity {
             ensure_employee_access(ident, &store, &id)?;
         }
-        send_message_core(as_, &store, &id, &b.text, b.commitment_id.as_deref())
+        send_message_core(as_, &store, &id, &b.text, b.commitment_id.as_deref(), from)
     })
     .await;
     finish(res)

@@ -1086,6 +1086,7 @@ mod tests {
             external_reply_to: None,
             external_source: None,
             occurred_at: None,
+            sender: None,
             created_at: "t".into(),
         };
         s.put_task(&task).unwrap();

@@ -146,6 +146,10 @@ pub struct AppConfig {
     /// 預設關閉；既有 app-settings.json 因 `#[serde(default)]` 可無痛載入。
     #[serde(default)]
     pub agent_os_enabled: bool,
+    /// D-M5：員工間信箱開關（`list_colleagues`／`message_employee` 兩工具的總閘）。
+    /// 預設開；關閉＝工具不存在（模型選不了）——「整體關閉通道」的治理掛點。
+    #[serde(default = "default_true")]
+    pub internal_mail_enabled: bool,
     /// LLM 並發上限（全域 Semaphore permit 數；節流「全部喚醒」的尖峰並發 LLM 呼叫）。
     #[serde(default = "default_llm_concurrency")]
     pub llm_concurrency: usize,
@@ -439,6 +443,7 @@ impl Default for AppConfig {
             claude_terminal: None,
             claude_terminal_template: None,
             agent_os_enabled: false,
+            internal_mail_enabled: true,
             llm_concurrency: default_llm_concurrency(),
             factory_concurrency: default_factory_concurrency(),
             event_review_enabled: true,

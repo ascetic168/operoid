@@ -934,6 +934,8 @@ async fn api_op_run(
                 access,
                 turn_max_steps: cfg.0.turn_max_steps,
                 subagent_max_steps: cfg.0.subagent_max_steps,
+                internal_mail_enabled: cfg.0.internal_mail_enabled,
+                wake: None,
                 tool_result_max_chars: cfg.0.tool_result_max_chars,
                 turn_deltas: None,
             };
@@ -1116,6 +1118,8 @@ async fn api_knowledge_ask(
         access,
         turn_max_steps: cfg.0.turn_max_steps,
         subagent_max_steps: cfg.0.subagent_max_steps,
+        internal_mail_enabled: cfg.0.internal_mail_enabled,
+        wake: None,
         tool_result_max_chars: cfg.0.tool_result_max_chars,
         turn_deltas: None,
     };

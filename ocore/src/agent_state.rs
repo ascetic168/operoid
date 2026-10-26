@@ -182,6 +182,12 @@ impl AppState {
         self.delta_tx.clone()
     }
 
+    /// D-M3：喚醒槽（注入 `ToolCtx.wake`）——員工工具（`message_employee`）投遞後即時
+    /// 喚醒收件者，免於把整個 AppState 穿進執行鏈。
+    pub fn wake_sink(&self) -> WakeSink {
+        WakeSink { tx: self.wake_tx.clone() }
+    }
+
     /// F1 串流：訂閱回合 delta（SSE 端點／測試用；Lagged 由訂閱端 resync）。
     pub fn subscribe_turn_deltas(&self) -> tokio::sync::broadcast::Receiver<TurnDelta> {
         self.delta_tx.subscribe()
@@ -193,9 +199,7 @@ impl AppState {
 #[derive(Clone)]
 pub struct CancelWatch {
     state: Option<AppState>,
-}
-
-impl Default for CancelWatch {
+}impl Default for CancelWatch {
     fn default() -> Self {
         Self::never()
     }
@@ -222,6 +226,24 @@ impl CancelWatch {
         self.state
             .as_ref()
             .map_or(false, |s| s.is_stop_requested(employee_id))
+    }
+}
+
+/// D-M3：可克隆的喚醒槽——員工工具（`message_employee`）投遞後即時喚醒收件者。
+/// 與 `CancelWatch` 同一注入模式：排程器路徑自 [`AppState::wake_sink`] 取出、塞進
+/// `ToolCtx.wake`；`None`（測試／非排程器路徑）→ 由 30 秒 tick 掃描兜底。
+#[derive(Clone)]
+pub struct WakeSink {
+    tx: mpsc::Sender<WakeSignal>,
+}
+
+impl WakeSink {
+    /// best-effort 投遞（channel 滿則丟棄——語意同 `AppState::wake`，tick 兜底）。
+    pub fn wake(&self, employee_id: &str, reason: &str) {
+        let _ = self.tx.try_send(WakeSignal {
+            employee_id: employee_id.to_string(),
+            reason: reason.to_string(),
+        });
     }
 }
 

@@ -74,6 +74,8 @@ pub async fn op_run<R: Runtime>(
             access,
             turn_max_steps: cfg.turn_max_steps,
             subagent_max_steps: cfg.subagent_max_steps,
+            internal_mail_enabled: cfg.internal_mail_enabled,
+            wake: None,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
         };

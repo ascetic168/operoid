@@ -80,6 +80,12 @@ pub struct ToolCtx {
     /// 預設 20）。子代理是母回合派出的一次性唯讀研究上下文——保險絲同樣是失控防護，
     /// 不是工作預算。
     pub subagent_max_steps: u32,
+    /// D-M5：員工間信箱開關（`AppConfig::internal_mail_enabled`，預設開）——false 時
+    /// `list_colleagues`／`message_employee` 不進工具清單。
+    pub internal_mail_enabled: bool,
+    /// D-M3：喚醒槽（生產路徑僅排程器以 `AppState::wake_sink()` 注入，同 `turn_deltas`
+    /// 模式）——`message_employee` 投遞後即時喚醒收件者；`None`＝30 秒 tick 兜底。
+    pub wake: Option<crate::agent_state::WakeSink>,
     /// F1 串流：回合 delta 匯流排的發佈端（生產路徑僅 `scan_inbox` 以
     /// `AppState::turn_delta_sender` 注入；`None`＝不發佈——測試／非排程器路徑）。
     /// 發佈端 send 無訂閱者時為 no-op，零成本。
@@ -100,6 +106,8 @@ impl std::fmt::Debug for ToolCtx {
             .field("knowledge", &self.knowledge.is_some())
             .field("turn_max_steps", &self.turn_max_steps)
             .field("subagent_max_steps", &self.subagent_max_steps)
+            .field("internal_mail_enabled", &self.internal_mail_enabled)
+            .field("wake", &self.wake.is_some())
             .field("turn_deltas", &self.turn_deltas.is_some())
             .finish()
     }

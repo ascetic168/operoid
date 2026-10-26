@@ -247,6 +247,38 @@ pub enum CommitmentStatus {
 
 // ───────────────── Task（Handbook Ch.10）─────────────────
 
+/// 寄件者類別（D-M1，2026-10-26）——收信職權語意的確定性錨點：
+/// `Owner`＝收信員工的委任主體（唯一可派新工作的來源——職權指示）；
+/// `Human`＝其他人類（諮詢或請求）；`Employee`＝AI 員工同儕（請求，永遠不是指令）；
+/// `External`＝經 bridge 進來的外部人士（注射防護加強層的對象）。
+/// 權威評估的硬約束仍由 Action Registry＋核可 RBAC 承擔——此分類只驅動 prompt 渲染與審計。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SenderKind {
+    Owner,
+    Human,
+    External,
+    Employee,
+}
+
+/// 寄件者歸因（D-M1）：誰、以什麼身分寫的。掛在 `Message`（審計＋歷史渲染）與
+/// `Task`（本則任務的脈絡行）上；`None`＝舊資料／無歸因（渲染為空，行為不變）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SenderAttribution {
+    pub kind: SenderKind,
+    /// principal id（人類）或 employee id（AI 員工）；外部事件＝通道標籤。
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl SenderAttribution {
+    pub fn new(kind: SenderKind, id: Option<String>, name: Option<String>) -> Self {
+        Self { kind, id, name }
+    }
+}
+
 /// Task——一個可執行目標，Employee 的最小工作單位。短命：進 Inbox、做完即結束。
 ///
 /// Phase 1：循環把传入的 query 當作一個 Task（Created→Completed）以示範生命週期；
@@ -284,6 +316,10 @@ pub struct Task {
     /// 通道情境——「這封信是昨天寄的」這類員工判斷需要它。舊資料／人類訊息 → None。
     #[serde(default)]
     pub occurred_at: Option<String>,
+    /// D-M1：寄件者歸因（委任主體指示／人類諮詢／員工同儕請求／外部來訊）。
+    /// `None`＝舊資料（渲染為空，行為不變）。
+    #[serde(default)]
+    pub sender: Option<SenderAttribution>,
     pub created_at: Timestamp,
 }
 
@@ -378,6 +414,10 @@ pub struct Message {
     /// 員工回覆附帶的實質產出 Artifact（可選；Out 才有）。
     #[serde(default)]
     pub artifact_id: Option<String>,
+    /// D-M1：寄件者歸因——In＝誰寫來的；Out＝員工本人（投遞輔助欄位，對稱留痕）。
+    /// `None`＝舊資料（渲染為空，行為不變）。
+    #[serde(default)]
+    pub sender: Option<SenderAttribution>,
     pub created_at: Timestamp,
 }
 

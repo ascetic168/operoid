@@ -12,7 +12,7 @@
 
 use crate::agent_state::{AppState, InboundEvent, WakeSignal};
 use crate::app_config::AppConfig;
-use crate::domain::{now_rfc3339, Message, MessageDirection, SqliteStore, Store, Task, TaskStatus};
+use crate::domain::{now_rfc3339, Message, MessageDirection, SenderAttribution, SenderKind, SqliteStore, Store, Task, TaskStatus};
 use crate::runtime::fresh_id;
 
 /// 路由並投遞一則外部事件：依 `employee_id`（優先）或 `brain_id`（全部共用此腦的員工）
@@ -69,6 +69,8 @@ pub async fn dispatch_event(
 
 
     let prompt = ev.review_prompt();
+    // D-M1：外部事件＝External 寄件者（經 bridge 的外部人士——注射防護語意）。
+    let sender = SenderAttribution::new(SenderKind::External, Some(ev.source.clone()), None);
     for emp in &targets {
         let now = now_rfc3339();
         // Message{In}：讓事件 review 出現在該員工的對話歷史（＝天然的 proposal 呈現處）。
@@ -81,6 +83,7 @@ pub async fn dispatch_event(
             source_commitment_id: None,
             proposed_commitment_id: None,
             artifact_id: None,
+            sender: Some(sender.clone()),
             created_at: now.clone(),
         })?;
         // Task{objective:"Human message"}：走既有對話回合路徑（reasoner + propose）。
@@ -97,6 +100,7 @@ pub async fn dispatch_event(
             external_reply_to: ev.reply_to.clone(),
             external_source: Some(ev.source.clone()),
             occurred_at: ev.occurred_at.clone(),
+            sender: Some(sender.clone()),
             created_at: now.clone(),
         })?;
         state.wake(WakeSignal {

@@ -190,6 +190,7 @@ pub fn run() {
             runtime::agent_delete_employee,
             runtime::agent_rename_template,
             runtime::agent_rename_employee,
+            runtime::agent_update_employee_tools,
             runtime::agent_run,
             runtime::agent_create_commitment,
             runtime::agent_satisfy_commitment,

@@ -52,6 +52,7 @@ fn c9_cross_domain_and_chain_reconstruction() {
         external_reply_to: None,
         external_source: None,
         occurred_at: None,
+        sender: None,
         created_at: "2026-10-02T00:00:00Z".into(),
     })
     .unwrap();

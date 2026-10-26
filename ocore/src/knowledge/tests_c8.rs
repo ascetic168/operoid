@@ -63,6 +63,7 @@ fn store_with_task(project_id: Option<&str>) -> SqliteStore {
         external_reply_to: None,
         external_source: None,
         occurred_at: None,
+        sender: None,
         created_at: "2026-10-02T00:00:00Z".into(),
     })
     .unwrap();
