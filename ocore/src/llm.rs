@@ -579,11 +579,12 @@ pub async fn chat_streaming(
     messages: &[ChatMessage],
     tools: &[ToolDef],
     on_text: &(dyn Fn(&str) + Send + Sync),
+    on_thinking: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<LlmTurn> {
     let has_images = messages.iter().any(|m| !m.images.is_empty());
     let sent_tools = !tools.is_empty();
     let body = build_chat_request(endpoint, sampling, messages, tools, true);
-    let acc = match post_chat_streaming(endpoint, &body, sent_tools, on_text).await {
+    let acc = match post_chat_streaming(endpoint, &body, sent_tools, on_text, on_thinking).await {
         Ok(acc) => acc,
         Err(e) if has_images && e.to_string().contains("非 2xx（400") => {
             eprintln!(
@@ -591,7 +592,7 @@ pub async fn chat_streaming(
             );
             let stripped = strip_images_add_locator(messages);
             let body = build_chat_request(endpoint, sampling, &stripped, tools, true);
-            post_chat_streaming(endpoint, &body, sent_tools, on_text).await?
+            post_chat_streaming(endpoint, &body, sent_tools, on_text, on_thinking).await?
         }
         Err(e) => return Err(e),
     };
@@ -640,6 +641,7 @@ async fn post_chat_streaming(
     body: &ChatRequest<'_>,
     sent_tools: bool,
     on_text: &(dyn Fn(&str) + Send + Sync),
+    on_thinking: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<StreamAccum> {
     let url = format!(
         "{}/chat/completions",
@@ -666,7 +668,7 @@ async fn post_chat_streaming(
         };
         let status = resp.status();
         if status.is_success() {
-            return read_sse_stream(resp, on_text).await;
+            return read_sse_stream(resp, on_text, on_thinking).await;
         }
         let retryable = status.as_u16() == 429 || status.is_server_error();
         if retryable && attempt < 2 {
@@ -693,6 +695,7 @@ async fn post_chat_streaming(
 async fn read_sse_stream(
     resp: reqwest::Response,
     on_text: &(dyn Fn(&str) + Send + Sync),
+    on_thinking: &(dyn Fn(&str) + Send + Sync),
 ) -> Result<StreamAccum> {
     use futures::StreamExt;
     let mut acc = StreamAccum::default();
@@ -707,16 +710,19 @@ async fn read_sse_stream(
             let line = std::str::from_utf8(&line_bytes[..line_bytes.len() - 1])
                 .unwrap_or("")
                 .trim_end_matches('\r');
-            handle_sse_line(line, on_text, &mut acc)?;
+            handle_sse_line(line, on_text, on_thinking, &mut acc)?;
         }
     }
     Ok(acc)
 }
 
 /// 處理一行 SSE（`data:` 載荷或忽略）；解析失敗的行靜默跳過（heartbeat／註記）。
+/// 思考流：`delta.reasoning_content`（GLM／DeepSeek／llama-server 慣例）或
+/// `delta.reasoning`（少數端點）——命中即回呼，**不累積**（思考 ephemeral，不入 LlmTurn）。
 fn handle_sse_line(
     line: &str,
     on_text: &(dyn Fn(&str) + Send + Sync),
+    on_thinking: &(dyn Fn(&str) + Send + Sync),
     acc: &mut StreamAccum,
 ) -> Result<()> {
     let Some(payload) = line.strip_prefix("data:") else {
@@ -748,6 +754,15 @@ fn handle_sse_line(
             if !t.is_empty() {
                 on_text(t);
                 acc.text.push_str(t);
+            }
+        }
+        if let Some(t) = delta
+            .get("reasoning_content")
+            .or_else(|| delta.get("reasoning"))
+            .and_then(|c| c.as_str())
+        {
+            if !t.is_empty() {
+                on_thinking(t);
             }
         }
         if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
@@ -1216,6 +1231,7 @@ mod tests {
             &[ChatMessage::user("hi")],
             &[],
             &on_text,
+            &|_| {},
         )
         .await
         .unwrap();
@@ -1229,6 +1245,38 @@ mod tests {
         let b = bodies.lock().unwrap();
         assert_eq!(b.len(), 1);
         assert_eq!(b[0]["stream"], true, "串流請求應帶 stream:true");
+    }
+
+    /// 思考流：`delta.reasoning_content`（GLM／DeepSeek／llama-server 慣例）與
+    /// `delta.reasoning`（少數端點）都命中 on_thinking 即時回呼；內容**不**入 LlmTurn.content。
+    #[tokio::test]
+    async fn streaming_reasoning_flows_to_thinking_callback_not_content() {
+        let body: String = [
+            sse_frame(serde_json::json!({"choices": [{"delta": {"reasoning_content": "先查"}}]})).1,
+            sse_frame(serde_json::json!({"choices": [{"delta": {"reasoning": "良率資料"}}]})).1,
+            sse_frame(serde_json::json!({"choices": [{"delta": {"content": "答案"}, "finish_reason": "stop"}]})).1,
+            "data: [DONE]\n\n".into(),
+        ]
+        .concat();
+        let (base, _calls, _) = spawn_sse_stub(vec![(200, body)]).await;
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = Arc::clone(&seen);
+        let on_thinking = move |t: &str| seen2.lock().unwrap().push(t.to_string());
+        let res = chat_streaming(
+            &endpoint(&base),
+            &sampling(),
+            &[ChatMessage::user("hi")],
+            &[],
+            &|_| {},
+            &on_thinking,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["先查".to_string(), "良率資料".to_string()]
+        );
+        assert_eq!(res.content.as_deref(), Some("答案"), "reasoning 不得混入 content");
     }
 
     /// F1：400＋tools 字樣 → ToolsUnsupported（與非串流同分類，呼叫端降級 legacy）。
@@ -1245,6 +1293,7 @@ mod tests {
             &[ChatMessage::user("a")],
             &[ToolDef { name: "t".into(), description: "d".into(), parameters: serde_json::json!({}) }],
             &|_| {},
+            &|_| {},
         )
         .await
         .unwrap_err();
@@ -1259,7 +1308,7 @@ mod tests {
             serde_json::json!({"choices": [{"delta": {"content": "半"}}]}),
         )])
         .await;
-        let err = chat_streaming(&endpoint(&base), &sampling(), &[ChatMessage::user("hi")], &[], &|_| {})
+        let err = chat_streaming(&endpoint(&base), &sampling(), &[ChatMessage::user("hi")], &[], &|_| {}, &|_| {})
             .await
             .unwrap_err();
         assert!(err.to_string().contains("提前結束"), "{err}");
@@ -1280,7 +1329,7 @@ mod tests {
             (200, body),
         ])
         .await;
-        let res = chat_streaming(&endpoint(&base), &sampling(), &[ChatMessage::user("hi")], &[], &|_| {})
+        let res = chat_streaming(&endpoint(&base), &sampling(), &[ChatMessage::user("hi")], &[], &|_| {}, &|_| {})
             .await
             .unwrap();
         assert_eq!(res.content.as_deref(), Some("ok"));

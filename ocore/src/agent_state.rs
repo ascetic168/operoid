@@ -27,14 +27,21 @@ pub struct WakeSignal {
 /// **ephemeral 契約**：只走行程內 broadcast 匯流排，不落 DB、不進 events 表——
 /// 正確性由最終 `Message{Out}`（輪詢可達）保證，delta 丟失（斷線／Lagged）僅觀感問題。
 /// 客戶端語意（DR-5 草稿收回）：`StepStart` 清空草稿；`TextDelta` 附加；
-/// `TextEnd{final_reply:false}` 收回草稿（該步轉 tool_calls）；`TextEnd{final_reply:true}`
-/// 保留草稿、等待 watch 輪詢的最終訊息冪等替換；`TurnEnd` 回合收尾（連線保持開啟）。
+/// `TextEnd{final_reply:false}` 收回草稿（該步轉 tool_calls；客戶端可留作過程敘事）；
+/// `TextEnd{final_reply:true}` 保留草稿、等待 watch 輪詢的最終訊息冪等替換；`TurnEnd`
+/// 回合收尾（連線保持開啟）。過程可見性（v0.5.8）：`ThinkingDelta` 為模型的思考流
+/// 增量（provider 不送則不發）；`ToolCallStart/End` 為工具呼叫的進行中→完成對
+/// （與輪詢可達的 `tool_call` 事件同構，但即時——客戶端以此做「正在執行什麼」的
+/// 單行 ticker）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TurnDelta {
     StepStart { employee_id: String, task_id: String, step: u32 },
     TextDelta { employee_id: String, task_id: String, step: u32, text: String },
     TextEnd { employee_id: String, task_id: String, step: u32, final_reply: bool },
+    ThinkingDelta { employee_id: String, task_id: String, step: u32, text: String },
+    ToolCallStart { employee_id: String, task_id: String, step: u32, name: String, args: String },
+    ToolCallEnd { employee_id: String, task_id: String, step: u32, name: String, status: String, ms: u64 },
     TurnEnd { employee_id: String, task_id: String },
 }
 
@@ -87,7 +94,8 @@ impl AppState {
     ) -> Self {
         // 匯流排容量：串流 delta 節奏約每數十 ms 一幀，256 幀的緩衝遠超消費端處理速度；
         // 慢消費端（SSE 斷流未讀）溢出即 Lagged——客戶端 resync 回退輪詢，正確性不受影響。
-        let (delta_tx, _) = tokio::sync::broadcast::channel(256);
+        // v0.5.8 加思考流（ThinkingDelta）後幀量增大（小幀高頻）——放寬到 1024 降低 Lagged 機率。
+        let (delta_tx, _) = tokio::sync::broadcast::channel(1024);
         Self {
             busy: Arc::new(Mutex::new(HashSet::new())),
             wake_tx,

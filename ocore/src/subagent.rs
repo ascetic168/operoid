@@ -120,14 +120,16 @@ pub async fn run_subagent_turn(
             }
         }
         steps += 1;
-        // 暫態失敗單次重試（同母回合；llm 層已有 HTTP 重試）。子代理不串流（on_text 為
-        // no-op）——並行子代理的文字交錯沒有意義，母 UI 以 tool_call 事件呈現過程。
+        // 暫態失敗單次重試（同母回合；llm 層已有 HTTP 重試）。子代理不串流（on_text／
+        // on_thinking 為 no-op）——並行子代理的文字交錯沒有意義，母 UI 以 tool_call
+        // 事件呈現過程。
         let no_text = |_: &str| {};
-        let turn = match reasoner.chat_step_streaming(&history, &tools, &no_text).await {
+        let no_thinking = |_: &str| {};
+        let turn = match reasoner.chat_step_streaming(&history, &tools, &no_text, &no_thinking).await {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("[subagent] 步失敗（重試一次）: {e}");
-                match reasoner.chat_step_streaming(&history, &tools, &no_text).await {
+                match reasoner.chat_step_streaming(&history, &tools, &no_text, &no_thinking).await {
                     Ok(t) => t,
                     Err(e2) => return Err(anyhow::anyhow!("子代理步失敗: {e2}")),
                 }

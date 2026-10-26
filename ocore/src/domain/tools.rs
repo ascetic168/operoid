@@ -159,16 +159,20 @@ pub trait Reasoner: Send + Sync {
     }
 
     /// F1 串流：[`Reasoner::chat_step`] 的串流變體——模型文字以增量片段經 `on_text`
-    /// 即時回呼（工具呼叫的引數片段不回呼）。**預設實作＝委派 [`Reasoner::chat_step`]、
-    /// 忽略回呼**（DR-4：非串流 provider 零破壞，delta 缺席本身就是客戶端必須容忍的路徑）。
-    /// 呼叫端（runtime）保證 `on_text` 在 future 完成前有效（借用生存期綁定）。
+    /// 即時回呼（工具呼叫的引數片段不回呼）；模型的思考流（reasoning_content）以增量
+    /// 片段經 `on_thinking` 回呼（provider 不送思考幀則永不觸發）。**預設實作＝委派
+    /// [`Reasoner::chat_step`]、忽略回呼**（DR-4：非串流 provider 零破壞，delta 缺席
+    /// 本身就是客戶端必須容忍的路徑）。呼叫端（runtime）保證兩個回呼在 future 完成前
+    /// 有效（借用生存期綁定）。
     fn chat_step_streaming<'a>(
         &'a self,
         messages: &'a [crate::llm::ChatMessage],
         tools: &'a [crate::llm::ToolDef],
         on_text: &'a (dyn Fn(&str) + Send + Sync),
+        on_thinking: &'a (dyn Fn(&str) + Send + Sync),
     ) -> ChatStepFuture<'a> {
         let _ = on_text;
+        let _ = on_thinking;
         self.chat_step(messages, tools)
     }
 

@@ -13,6 +13,32 @@
 
 ---
 
+## [v0.5.8] - 2026-10-27
+
+### Streaming process visibility: thinking + tool-call delta frames (backend)
+
+The conversational turn now streams the model's reasoning (thinking) and
+the live tool-call lifecycle to the employee delta bus, in addition to
+text deltas — the raw material for a ZCode-style live process display in
+the chat UIs (frontend lands in the following commits).
+
+- `llm::chat_streaming` parses `delta.reasoning_content` (GLM/DeepSeek/
+  llama-server convention; `delta.reasoning` as fallback) and forwards it
+  through a new `on_thinking` callback. Thinking is ephemeral — never
+  accumulated into `LlmTurn` or the conversation history.
+- `Reasoner::chat_step_streaming` carries the new callback (default impl
+  still ignores it — DR-4; only `LlmReasoner` and the streaming test stub
+  override it). Subagents keep no-op callbacks (no streaming).
+- New ephemeral `TurnDelta` frames: `ThinkingDelta`,
+  `ToolCallStart{name,args}` (args clipped to 400 chars, same as
+  `tool_call` events) and `ToolCallEnd{name,status,ms}`. Emitted around
+  `execute_tool_call` in the native loop and coarsely around the
+  spawn_subagent fan-out; the legacy JSON protocol keeps the polled
+  `tool_call` events only. Delta bus capacity 256 → 1024 (thinking
+  frames are small and frequent).
+- No request-parameter changes: parse-if-present — providers without
+  thinking simply never emit the frames.
+
 ## [v0.5.7] - 2026-10-27
 
 ### Desktop chat bubbles follow messenger convention

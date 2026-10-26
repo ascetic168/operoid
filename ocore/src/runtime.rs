@@ -952,7 +952,17 @@ async fn run_conversational_turn(
                     text: t.to_string(),
                 });
             };
-            let turn = match reasoner.chat_step_streaming(&history, &tools, &on_text).await {
+            // v0.5.8 過程可見性：provider 思考流（reasoning_content）增量 → ThinkingDelta
+            //（非思考模型不送此幀 → 永不觸發，客戶端退回 spinner 模式）。
+            let on_thinking = |t: &str| {
+                emit_delta(TurnDelta::ThinkingDelta {
+                    employee_id: employee_id.to_string(),
+                    task_id: task.id.clone(),
+                    step: step_idx,
+                    text: t.to_string(),
+                });
+            };
+            let turn = match reasoner.chat_step_streaming(&history, &tools, &on_text, &on_thinking).await {
                 Ok(t) => t,
                 Err(e) => {
                     if e.downcast_ref::<llm::ToolsUnsupported>().is_some() {
@@ -970,7 +980,7 @@ async fn run_conversational_turn(
                         task_id: task.id.clone(),
                         step: step_idx,
                     });
-                    match reasoner.chat_step_streaming(&history, &tools, &on_text).await {
+                    match reasoner.chat_step_streaming(&history, &tools, &on_text, &on_thinking).await {
                         Ok(t) => t,
                         Err(e2) => {
                             eprintln!("[runtime] 對話 Reasoner 失敗（提前結束回合）: {e2}");
@@ -1036,9 +1046,19 @@ async fn run_conversational_turn(
                 if tc.name == "update_todos" || tc.name == "todos" {
                     last_todo_step = step_idx;
                 }
+                // v0.5.8 過程可見性：工具呼叫開始/結束幀（即時對應輪詢的 tool_call 事件；
+                // args 截 400 同事件慣例）。spawn_subagent 不在此——步尾 fan-out 另有對應幀。
+                emit_delta(TurnDelta::ToolCallStart {
+                    employee_id: employee_id.to_string(),
+                    task_id: task.id.clone(),
+                    step: step_idx,
+                    name: tc.name.clone(),
+                    args: clip_for_event(&tc.arguments.to_string(), 400),
+                });
                 let started = std::time::Instant::now();
                 let action = s.execute_tool_call(&tc.name, &tc.arguments).await;
                 let elapsed = started.elapsed();
+                let mut tc_status = "ok";
                 match action {
                     Some(TurnAction::Continue { note }) => {
                         record_tool_call_event(
@@ -1108,6 +1128,7 @@ async fn run_conversational_turn(
                     }
                     // native 的未知工具：回錯誤 note 讓模型改用列出的工具（不中斷回合）。
                     None => {
+                        tc_status = "unknown";
                         let note = format!(
                             "[{}] 不是可用的工具；請改用系統列出的工具。",
                             tc.name
@@ -1127,6 +1148,14 @@ async fn run_conversational_turn(
                         history.push(llm::ChatMessage::tool(&tc.id, note));
                     }
                 }
+                emit_delta(TurnDelta::ToolCallEnd {
+                    employee_id: employee_id.to_string(),
+                    task_id: task.id.clone(),
+                    step: step_idx,
+                    name: tc.name.clone(),
+                    status: tc_status.to_string(),
+                    ms: elapsed.as_millis() as u64,
+                });
                 if finish_now {
                     // 非 spawn 的剩餘呼叫補佔位；spawn（無論位置）統一由步尾處理。
                     for rest in turn
@@ -1162,6 +1191,16 @@ async fn run_conversational_turn(
                     ));
                 }
             } else if !spawn_calls.is_empty() {
+                // v0.5.8 過程可見性：spawn 為粗粒度一對幀（子代理內部步驟仍只走輪詢事件）。
+                for tc in &spawn_calls {
+                    emit_delta(TurnDelta::ToolCallStart {
+                        employee_id: employee_id.to_string(),
+                        task_id: task.id.clone(),
+                        step: step_idx,
+                        name: tc.name.clone(),
+                        args: clip_for_event(&tc.arguments.to_string(), 400),
+                    });
+                }
                 let knowledge = s.knowledge;
                 let sub_ctx = s.ctx;
                 let parent_name = emp.name.clone();
@@ -1229,6 +1268,14 @@ async fn run_conversational_turn(
                         elapsed,
                         &note,
                     );
+                    emit_delta(TurnDelta::ToolCallEnd {
+                        employee_id: employee_id.to_string(),
+                        task_id: task.id.clone(),
+                        step: step_idx,
+                        name: crate::tools::contract::FN_SPAWN_SUBAGENT.to_string(),
+                        status: status.to_string(),
+                        ms: elapsed.as_millis() as u64,
+                    });
                     steps.push(note.clone());
                     history.push(llm::ChatMessage::tool(&call_id, note));
                 }
@@ -3854,12 +3901,14 @@ impl Reasoner for LlmReasoner {
     }
 
     /// F1 串流版：permit／降級旗標／usage 記錄與 [`Self::chat_step`] 完全同構，
-    /// 改呼 [`llm::chat_streaming`]——文字增量即時經 `on_text` 回呼（由 runtime 轉發匯流排）。
+    /// 改呼 [`llm::chat_streaming`]——文字增量即時經 `on_text` 回呼（由 runtime 轉發匯流排）；
+    /// 思考流（reasoning_content，provider 不送則無）經 `on_thinking` 同路轉發。
     fn chat_step_streaming<'a>(
         &'a self,
         messages: &'a [llm::ChatMessage],
         tools: &'a [llm::ToolDef],
         on_text: &'a (dyn Fn(&str) + Send + Sync),
+        on_thinking: &'a (dyn Fn(&str) + Send + Sync),
     ) -> ChatStepFuture<'a> {
         let permits = Arc::clone(&self.permits);
         Box::pin(async move {
@@ -3870,6 +3919,7 @@ impl Reasoner for LlmReasoner {
                 messages,
                 tools,
                 on_text,
+                on_thinking,
             )
             .await;
             // auto 模式：provider 不支援原生工具 → session 內永久降級文字 JSON 協議。

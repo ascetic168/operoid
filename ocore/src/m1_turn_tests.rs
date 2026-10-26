@@ -513,10 +513,21 @@ async fn conversational_native_unknown_tool_event_marked() {
 /// F1 串流 stub：文字片段經 `chat_step_streaming` 的 on_text 腳本化回呼。
 struct StreamingStubReasoner {
     turns: std::sync::Mutex<std::collections::VecDeque<(LlmTurn, Vec<String>)>>,
+    /// 每步的思考流增量（v0.5.8；佇列耗盡或未注入＝該步無 ThinkingDelta）。
+    thinking: std::sync::Mutex<std::collections::VecDeque<Vec<String>>>,
 }
 impl StreamingStubReasoner {
     fn new(turns: Vec<(LlmTurn, Vec<String>)>) -> Self {
-        Self { turns: std::sync::Mutex::new(turns.into_iter().collect()) }
+        Self {
+            turns: std::sync::Mutex::new(turns.into_iter().collect()),
+            thinking: std::sync::Mutex::new(std::collections::VecDeque::new()),
+        }
+    }
+    fn with_thinking(turns: Vec<(LlmTurn, Vec<String>)>, thinking: Vec<Vec<String>>) -> Self {
+        Self {
+            turns: std::sync::Mutex::new(turns.into_iter().collect()),
+            thinking: std::sync::Mutex::new(thinking.into_iter().collect()),
+        }
     }
 }
 impl Reasoner for StreamingStubReasoner {
@@ -541,10 +552,20 @@ impl Reasoner for StreamingStubReasoner {
         _m: &'a [ChatMessage],
         _t: &'a [ToolDef],
         on_text: &'a (dyn Fn(&str) + Send + Sync),
+        on_thinking: &'a (dyn Fn(&str) + Send + Sync),
     ) -> ChatStepFuture<'a> {
         let next = self.turns.lock().unwrap().pop_front();
+        let thinking = self
+            .thinking
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_default();
         Box::pin(async move {
             let (turn, deltas) = next.unwrap_or_else(|| (NativeStubReasoner::text("done"), Vec::new()));
+            for d in &thinking {
+                on_thinking(d);
+            }
             for d in &deltas {
                 on_text(d);
             }
@@ -610,20 +631,25 @@ async fn conversational_native_streams_deltas_to_bus() {
             TD::StepStart { .. } => "step_start".into(),
             TD::TextDelta { text, .. } => format!("text:{text}"),
             TD::TextEnd { final_reply, .. } => format!("text_end:{}", final_reply),
+            TD::ThinkingDelta { .. } => "thinking".into(),
+            TD::ToolCallStart { name, .. } => format!("tool_start:{name}"),
+            TD::ToolCallEnd { name, status, .. } => format!("tool_end:{name}:{status}"),
             TD::TurnEnd { .. } => "turn_end".into(),
         })
         .collect();
     assert_eq!(
         kinds,
         vec![
-            "step_start",          // 步 1（tool 步）
-            "text:我先查一下",      // 中間步文字照發（草稿）
+            "step_start",                     // 步 1（tool 步）
+            "text:我先查一下",                 // 中間步文字照發（草稿）
             "text:良率資料",
-            "text_end:false",      // 轉 tool_calls → 收回
-            "step_start",          // 步 2（終局文字）
+            "text_end:false",                 // 轉 tool_calls → 收回
+            "tool_start:gbrain_think",        // v0.5.8：工具開始/結束幀（即時）
+            "tool_end:gbrain_think:ok",
+            "step_start",                     // 步 2（終局文字）
             "text:主因是",
             "text:接點氧化，已換件。",
-            "text_end:true",       // 終局 → 等最終訊息替換
+            "text_end:true",                  // 終局 → 等最終訊息替換
             "turn_end",
         ]
     );
@@ -631,6 +657,70 @@ async fn conversational_native_streams_deltas_to_bus() {
     let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].text, "主因是接點氧化，已換件。");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// v0.5.8 過程可見性：思考流（reasoning_content）增量 → ThinkingDelta 幀即時上匯流排；
+/// 思考內容不入對話——最終 Message 仍為 content 全量（DB 語意零改動）。
+#[tokio::test]
+async fn conversational_native_streams_thinking_deltas_to_bus() {
+    let dir = test_dir();
+    let store = JsonStore::new(&dir);
+    let emp_id = seed(&store);
+    seed_task(&store, &emp_id, "蝕刻良率怎麼了？");
+    let tool = StubTool::new("良率因 RF matching 接點氧化下降");
+    let reasoner = StreamingStubReasoner::with_thinking(
+        vec![
+            (
+                NativeStubReasoner::call("gbrain_think", serde_json::json!({"query": "蝕刻良率"})),
+                vec![],
+            ),
+            (
+                NativeStubReasoner::text("主因是接點氧化。"),
+                vec!["主因是".to_string(), "接點氧化。".to_string()],
+            ),
+        ],
+        vec![
+            vec!["先確認機台".to_string(), "，再看良率趨勢".to_string()],
+            vec!["綜合檢索結果".to_string()],
+        ],
+    );
+    let (wtx, _wrx) = tokio::sync::mpsc::channel(8);
+    let (etx, _erx) = tokio::sync::mpsc::channel(8);
+    let state = crate::agent_state::AppState::new(wtx, etx, 4);
+    let mut rx = state.subscribe_turn_deltas();
+    let mut ctx = ctx();
+    ctx.turn_deltas = Some(state.turn_delta_sender());
+    run_inbox(&emp_id, &tool, Some(&reasoner), &ctx, &store, &outbound_disabled())
+        .await
+        .unwrap();
+    let deltas = drain_until_turn_end(&mut rx).await;
+    use crate::agent_state::TurnDelta as TD;
+    let thinking: Vec<&str> = deltas
+        .iter()
+        .filter_map(|d| match d {
+            TD::ThinkingDelta { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        thinking,
+        vec!["先確認機台", "，再看良率趨勢", "綜合檢索結果"],
+        "思考流增量應全數上匯流排"
+    );
+    // 幀序：stub 先思考後文字——每步 ThinkingDelta 應在該步 TextDelta 之前。
+    let first_think = deltas
+        .iter()
+        .position(|d| matches!(d, TD::ThinkingDelta { .. }))
+        .unwrap();
+    let first_text = deltas
+        .iter()
+        .position(|d| matches!(d, TD::TextDelta { .. }))
+        .unwrap();
+    assert!(first_think < first_text);
+    let msgs = store.list_messages_by_employee(&emp_id, 10).unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].text, "主因是接點氧化。", "思考不得混入最終訊息");
     std::fs::remove_dir_all(&dir).ok();
 }
 

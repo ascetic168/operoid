@@ -188,6 +188,9 @@ fn delta_employee(ev: &ocore::agent_state::TurnDelta) -> &str {
         TD::StepStart { employee_id, .. }
         | TD::TextDelta { employee_id, .. }
         | TD::TextEnd { employee_id, .. }
+        | TD::ThinkingDelta { employee_id, .. }
+        | TD::ToolCallStart { employee_id, .. }
+        | TD::ToolCallEnd { employee_id, .. }
         | TD::TurnEnd { employee_id, .. } => employee_id,
     }
 }
@@ -401,6 +404,16 @@ mod tests {
                 text: "主因是接點氧化".into(),
             })
             .unwrap();
+        // v0.5.8：過程幀（ToolCallStart）同樣經 `event: delta` 直推。
+        sender
+            .send(ocore::agent_state::TurnDelta::ToolCallStart {
+                employee_id: "emp-mine".into(),
+                task_id: "task-1".into(),
+                step: 1,
+                name: "gbrain_think".into(),
+                args: "{\"query\":\"蝕刻良率\"}".into(),
+            })
+            .unwrap();
         drop(sender);
         // 丟掉全部 ServerState（含內含的發佈端）→ 匯流排 Closed → 流自然收尾。
         drop(app);
@@ -410,6 +423,8 @@ mod tests {
         assert!(s.contains("event: delta"), "幀名：{s}");
         assert!(s.contains("\"kind\":\"text_delta\""), "payload：{s}");
         assert!(s.contains("主因是接點氧化"), "文字：{s}");
+        assert!(s.contains("\"kind\":\"tool_call_start\""), "過程幀 payload：{s}");
+        assert!(s.contains("gbrain_think"), "工具名：{s}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
