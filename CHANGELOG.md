@@ -13,7 +13,7 @@
 
 ---
 
-## [v0.5.8] - 2026-10-27
+## [v0.5.7] - 2026-10-27
 
 ### Streaming process visibility: thinking + tool-call delta frames (backend)
 
@@ -65,8 +65,6 @@ auto-expand and narration retention as the desktop chat, applied to the
 user and manager web apps (shared api-client `TurnDelta` union extended
 with the three process frames; new `chat.thinking` i18n key in
 en/zh-TW/zh-CN).
-
-## [v0.5.7] - 2026-10-27
 
 ### Desktop chat bubbles follow messenger convention
 
