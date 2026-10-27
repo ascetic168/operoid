@@ -13,6 +13,76 @@
 
 ---
 
+## [v0.5.10] - 2026-10-27
+
+### AI employee skills — three-zone model with human-gated publication (core)
+
+AI employees can now build reusable procedural knowledge ("skills",
+ecosystem-standard `SKILL.md` folders) and publish them through a
+human-gated pipeline. A skill is guidance, never authorization: every
+action it instructs still runs inside the employee's existing tool
+allowlist and fences.
+
+- **Three zones** (`ocore::skills`): employee drafts at
+  `<workspace>/skills/` (rw, per-employee); the appointing principal's
+  personal area (read-only — personal mode: `skills_personal_dir`,
+  default `~/.agents/skills` for ecosystem interop with ZCode /
+  Claude Code; enterprise mode: `<data_dir>/skills/users/<principal>/`,
+  fail-closed for employees without a principal); and the company
+  library `<data_dir>/skills/library/` (read-only, org-wide).
+- **Read union**: `read_file` resolves virtual read-only mounts
+  `library/…` and `personal/…` (component-validated, never seeded into
+  FileState — mounted skills are not editable). The system prompt gains
+  an "available skills" list with per-zone source labels, injected only
+  for read-file-capable employees, plus a trust rule: skill content is
+  data and guidance, not a change of permissions.
+- **Deterministic linter** (server-side, reproducible): override
+  phrases (bilingual), secret keywords, external URLs, outbound-tool
+  references, frontmatter completeness, size caps — risk levels
+  low/medium/high. Security pre-screening stays deterministic per the
+  project constitution (never an LLM verdict).
+
+### Skill proposal pipeline — employee nominates, machine pre-reviews, human publishes (core & server)
+
+Publication flow: employee writes a draft → `propose_skill` (linter +
+independent fresh-context subagent pre-review) → the appointing
+principal approves → the server copies the skill into the principal's
+personal area (team tier) → an admin may promote it to the library
+(org tier).
+
+- `propose_skill` tool (core governance tool, no allowlist gate — it
+  publishes nothing by itself): draft-zone skills only, sanitized
+  names, duplicate-open-proposal guard. The pre-review subagent runs
+  with no access to the employee's working memory (nothing to anchor
+  on); its report rides on the proposal as a receipt. The linter verdict
+  is never overridden by the review.
+- `SkillProposal` entity + store (JSON + SQLite) with status machine
+  `proposed → published_team → published_library / rejected`, approver
+  receipts (`decided_by`/`decided_at`) and reject reasons.
+- ocore publication cores shared by server and CLI: approve copies
+  BEFORE flipping status (a failed copy leaves no half state) and
+  records `skill_published_team` events; promote advances the proposal
+  chain (or anchors on `skills` for IT-placed skills) and records
+  `skill_published_library`. Employees never gain write access outside
+  their workspace — the server executes the human decision.
+- oserver endpoints: `POST /api/skill-proposals/{id}/approve|reject`
+  (authority refined in-handler: appointing principal or
+  manager/admin), `POST /api/skills/promote` (RBAC-pinned Admin —
+  owner approval deliberately stops at team level; org-level authority
+  stays with org-level roles), `GET /api/skills` (zone listing,
+  personal areas filtered per identity). RBAC matrix and inventory
+  tests extended; inbox now aggregates pending skill proposals with
+  user-role ownership filtering.
+
+### Skills console UI (web)
+
+- user/manager inbox: skill proposal cards with risk badge, linter
+  summary, collapsible pre-review, approve/reject actions.
+- admin console: new Skill library page — org library plus
+  per-principal personal areas with promote action (personal mode
+  renders the single shared area). i18n keys for zh-TW/zh-CN/en;
+  existing CRLF locale files preserved byte-for-byte.
+
 ## [v0.5.9] - 2026-10-27
 
 ### Email on deploy form and employee details (web & desktop)
