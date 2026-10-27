@@ -62,7 +62,18 @@
     "knowledge": "Knowledge authz",
     "templates": "Employee templates",
     "brains": "Brains & prereq",
+    "skills": "Skill library",
     "obridge": "Mail bridge"
+  },
+  "skills": {
+    "library": "Company library",
+    "libraryHint": "Org-wide skills, readable by every employee. Promoted by an admin from personal areas — promotion is a second human review.",
+    "personal": "Personal areas (team tier)",
+    "personalHint": "Skills approved by each appointing principal — readable only by that principal's employees. Promote to the library to make them org-wide.",
+    "personalHintSingle": "Personal mode: one shared personal area (same directory as ecosystem tools). Promote to the library to make skills org-wide.",
+    "empty": "(empty)",
+    "promote": "Promote to library",
+    "promoted": "Promoted \"{name}\" to the library"
   },
   "accounts": {
     "createHeading": "Create an account",

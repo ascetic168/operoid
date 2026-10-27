@@ -69,6 +69,8 @@
     "empty": "目前沒有待核可提案",
     "approve": "核可",
     "reject": "退回",
+    "skillProposals": "技能提案（送審中）",
+    "skillReview": "獨立預審結論",
     "flagged": "異常員工"
   },
   "events": {

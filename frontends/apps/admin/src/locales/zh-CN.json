@@ -62,7 +62,18 @@
     "knowledge": "知识授权",
     "templates": "AI 员工模板",
     "brains": "脑与前置检查",
+    "skills": "技能库",
     "obridge": "邮件桥接"
+  },
+  "skills": {
+    "library": "公司共用库",
+    "libraryHint": "组织级技能——全体员工可读。由 admin 自各主体个人区晋升（晋升即再一道人类审核）。",
+    "personal": "主体个人区（团队级）",
+    "personalHint": "各委任主体核可后的技能——仅该主体的员工可读。晋升到共用库即全组织可用。",
+    "personalHintSingle": "个人模式：单一共用个人区（与生态系工具同一目录）。晋升到共用库即全组织可用。",
+    "empty": "（空）",
+    "promote": "晋升到共用库",
+    "promoted": "已晋升「{name}」到共用库"
   },
   "accounts": {
     "createHeading": "建立账号",

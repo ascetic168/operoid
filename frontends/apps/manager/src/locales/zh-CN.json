@@ -69,6 +69,8 @@
     "empty": "目前没有待核可提案",
     "approve": "核可",
     "reject": "退回",
+    "skillProposals": "技能提案（送审中）",
+    "skillReview": "独立预审结论",
     "flagged": "异常员工"
   },
   "events": {

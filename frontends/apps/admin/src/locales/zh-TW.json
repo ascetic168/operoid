@@ -62,7 +62,18 @@
     "knowledge": "知識授權",
     "templates": "AI 員工模板",
     "brains": "腦與前置檢查",
+    "skills": "技能庫",
     "obridge": "郵件橋接"
+  },
+  "skills": {
+    "library": "公司共用庫",
+    "libraryHint": "組織級技能——全體員工可讀。由 admin 自各主體個人區晉升（晉升即再一道人類審核）。",
+    "personal": "主體個人區（團隊級）",
+    "personalHint": "各委任主體核可後的技能——僅該主體的員工可讀。晉升到共用庫即全組織可用。",
+    "personalHintSingle": "個人模式：單一共用個人區（與生態系工具同一目錄）。晉升到共用庫即全組織可用。",
+    "empty": "（空）",
+    "promote": "晉升到共用庫",
+    "promoted": "已晉升「{name}」到共用庫"
   },
   "accounts": {
     "createHeading": "建立帳號",

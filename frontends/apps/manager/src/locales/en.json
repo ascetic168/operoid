@@ -69,6 +69,8 @@
     "empty": "No pending proposals",
     "approve": "Approve",
     "reject": "Reject",
+    "skillProposals": "Skill proposals (in review)",
+    "skillReview": "Independent pre-review",
     "flagged": "Flagged employees"
   },
   "events": {
