@@ -296,6 +296,20 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     };
     let db_path = agent_db_path_in(&dirs.db_dir);
 
+    // 預設技能庫冷啟動：內建策展技能（ocore/default-skills，見 skills_seed.rs）
+    // 種子進公司共用庫。冪等：只補缺的整顆外掛目錄——admin 刪除者不復活、永不覆寫。
+    let seed = ocore::skills_seed::seed_default_library(std::path::Path::new(&dirs.db_dir));
+    if !seed.seeded.is_empty() {
+        eprintln!(
+            "[oserver] 預設技能庫種子：{} 個外掛（{}）",
+            seed.seeded.len(),
+            seed.seeded.join("、")
+        );
+    }
+    for e in &seed.errors {
+        eprintln!("[oserver] 預設技能庫種子失敗：{e}");
+    }
+
     // ── bind-first（單例守衛）：bind 先行（失敗明確退出）→ serve 隨後。
     // HTTPS：std listener 先 bind（守住單例語意）→ axum-server from_tcp_rustls；HTTP 走既有 axum::serve。
     enum Bound {

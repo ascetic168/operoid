@@ -33,6 +33,7 @@ pub mod prereq;
 pub mod proc;
 pub mod registry;
 pub mod skills;
+pub mod skills_seed;
 pub mod slug;
 pub mod subagent;
 pub mod tools;

@@ -73,7 +73,8 @@ impl SkillZone {
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillEntry {
     pub zone: SkillZone,
-    /// 技能目錄名（canonical id；發佈時沿用）。
+    /// 技能相對區根的路徑（canonical id；發佈時沿用；外掛分組配置含 `/`，
+    /// 如 `sales/call-prep`——發佈流僅作用於平面配置的草稿／個人區，不受影響）。
     pub dir_name: String,
     /// frontmatter `name`（缺省＝目錄名）。
     pub name: String,
@@ -205,14 +206,19 @@ pub struct SkillMeta {
 
 /// 解析 `SKILL.md`：`---` 區塊內的 `name:`／`description:` 兩鍵（其餘忽略）。
 /// 寬鬆取值：去引號、去行尾空白；區塊缺漏或鍵缺漏不報錯（呼叫端以 linter 補償）。
+/// 支援 YAML 摺疊／字面量標量（`description: >`／`|` 及 `+`／`-` 變形）——上游
+/// 知識技能庫（Anthropic knowledge-work-plugins）大量使用多行描述；續行（縮排或
+/// 空行）收攏後以空白正規化成單行（本函式的消費面——技能清單與 linter——只需要
+/// 單行語意）。摺疊判定用**未去引號**的原始值（帶引號的 `">"` 是字面字串）。
 pub fn parse_skill_md(text: &str) -> SkillMeta {
     let mut meta = SkillMeta::default();
-    let mut lines = text.lines().map(str::trim);
-    if lines.next() != Some("---") {
+    let mut lines = text.lines().peekable();
+    if lines.next().map(str::trim) != Some("---") {
         return meta;
     }
     meta.has_frontmatter = true;
-    for line in lines.by_ref() {
+    while let Some(raw) = lines.next() {
+        let line = raw.trim();
         if line == "---" {
             break;
         }
@@ -222,13 +228,39 @@ pub fn parse_skill_md(text: &str) -> SkillMeta {
         let Some((key, value)) = line.split_once(':') else {
             break; // frontmatter 內首個非 kv 行——視為區塊結束（寬鬆）
         };
+        let key = key.trim();
+        if matches!(value.trim(), ">" | "<" | "|" | ">-" | "|-" | ">+" | "|+") {
+            // 摺疊／字面量標量：收攏縮排與空行續行，直到首個非縮排行（該行不消
+            // 耗——交回外層當下一個 key 或結尾標記）。含冒號的續行不再誤判為 key。
+            let mut joined = String::new();
+            while let Some(cont) = lines.peek() {
+                let t = cont.trim();
+                if !t.is_empty() && !cont.starts_with([' ', '\t']) {
+                    break;
+                }
+                lines.next();
+                if !t.is_empty() {
+                    if !joined.is_empty() {
+                        joined.push(' ');
+                    }
+                    joined.push_str(t);
+                }
+            }
+            let value = joined;
+            match key {
+                "name" if meta.name.is_empty() => meta.name = value,
+                "description" if meta.description.is_empty() => meta.description = value,
+                _ => {}
+            }
+            continue;
+        }
         let value = value
             .trim()
             .trim_matches('"')
             .trim_matches('\'')
             .trim()
             .to_string();
-        match key.trim() {
+        match key {
             "name" if meta.name.is_empty() => meta.name = value,
             "description" if meta.description.is_empty() => meta.description = value,
             _ => {}
@@ -237,36 +269,57 @@ pub fn parse_skill_md(text: &str) -> SkillMeta {
     meta
 }
 
-/// 掃一個技能區根：每個含 `SKILL.md` 的子目錄一個技能。壞目錄靜默跳過（清單面
-/// 不因單一壞技能失效）；結果按目錄名排序（確定性——prompt 穩定）。
+/// 分組下探深度上限（外掛一層＋上游 zoom 式兩層仍有餘裕）。
+const SCAN_MAX_DEPTH: usize = 4;
+
+/// 掃一個技能區根：每個含 `SKILL.md` 的目錄一個技能；目錄無 `SKILL.md` 則下探
+/// （深度上限 [`SCAN_MAX_DEPTH`]）——支援外掛分組配置 `library/<plugin>/<skill>/`，
+/// 讓導入技能的跨檔相對引用（`../shared/…`、`../CONNECTORS.md`）在掛載區內原樣
+/// 可用。命中即止（不再下探，避免同一檔重複列示）。壞目錄靜默跳過（清單面不因
+/// 單一壞技能失效）；結果按相對路徑排序（確定性——prompt 穩定）。
 pub fn scan_zone(root: &Path, zone: SkillZone) -> Vec<SkillEntry> {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
+    scan_zone_walk(root, root, zone, 0, &mut out);
+    out.sort_by(|a, b| a.dir_name.cmp(&b.dir_name));
+    out
+}
+
+fn scan_zone_walk(root: &Path, dir: &Path, zone: SkillZone, depth: usize, out: &mut Vec<SkillEntry>) {
+    if depth > SCAN_MAX_DEPTH {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-        let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(path.join(SKILL_MD)) else {
-            continue;
-        };
-        let meta = parse_skill_md(&text);
-        let prefix = zone.mount_prefix();
-        out.push(SkillEntry {
-            zone,
-            dir_name: dir_name.to_string(),
-            name: if meta.name.is_empty() { dir_name.to_string() } else { meta.name },
-            description: meta.description,
-            mount_path: format!("{prefix}{dir_name}/{SKILL_MD}"),
-        });
+        if path.join(SKILL_MD).is_file() {
+            let Ok(rel) = path.strip_prefix(root) else {
+                continue;
+            };
+            // 掛載路徑以 `/` 為準——Windows 分隔符正規化。
+            let Some(dir_name) = rel.to_str().map(|s| s.replace('\\', "/")) else {
+                continue;
+            };
+            let Ok(text) = std::fs::read_to_string(path.join(SKILL_MD)) else {
+                continue;
+            };
+            let meta = parse_skill_md(&text);
+            let prefix = zone.mount_prefix();
+            out.push(SkillEntry {
+                zone,
+                name: if meta.name.is_empty() { dir_name.clone() } else { meta.name },
+                description: meta.description,
+                mount_path: format!("{prefix}{dir_name}/{SKILL_MD}"),
+                dir_name,
+            });
+        } else {
+            scan_zone_walk(root, &path, zone, depth + 1, out);
+        }
     }
-    out.sort_by(|a, b| a.dir_name.cmp(&b.dir_name));
-    out
 }
 
 /// 三源聯集掃描（草稿＋個人區＋共用庫；區序＝Draft→Personal→Library，區內按名排序）。
@@ -616,6 +669,24 @@ mod tests {
         assert!(m.description.is_empty());
     }
 
+    #[test]
+    fn parse_folded_and_literal_descriptions() {
+        // 摺疊標量：續行收攏成單行；其後的一般 key 正常解析。
+        let folded = "---\nname: x\ndescription: >\n  Line one here\n  continued on next.\nversion: 1\n---\nbody";
+        let m = parse_skill_md(folded);
+        assert_eq!(m.name, "x");
+        assert_eq!(m.description, "Line one here continued on next.");
+        // 字面量標量與 `|-` 變形同樣收攏（消費面只需單行語意）。
+        let literal = "---\nname: y\ndescription: |\n  First.\n  Second.\n---\nbody";
+        assert_eq!(parse_skill_md(literal).description, "First. Second.");
+        // 含冒號的續行不再誤判為 key／區塊結束。
+        let colon = "---\ndescription: >\n  Use when: things happen\n---\nbody";
+        assert_eq!(parse_skill_md(colon).description, "Use when: things happen");
+        // 帶引號的 ">" 是字面字串，不是摺疊指示。
+        let quoted = "---\ndescription: \">\"\n---\nbody";
+        assert_eq!(parse_skill_md(quoted).description, ">");
+    }
+
     // ── 三源掃描與掛載路徑 ──
 
     #[test]
@@ -645,6 +716,30 @@ mod tests {
     fn scan_missing_zone_is_empty_not_error() {
         let dir = tmp("scan-missing");
         assert!(scan_zone(&dir.join("nope"), SkillZone::Library).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_zone_walks_grouped_layouts() {
+        let dir = tmp("scan-grouped");
+        // 外掛分組（導入配置）：library/sales/call-prep/＋同層 shared/（無 SKILL.md，
+        // 不列示、可 read_file）；zoom 式兩層巢狀同樣命中。
+        write_skill(&dir, "library/sales", "call-prep", GOOD_SKILL);
+        std::fs::create_dir_all(dir.join("library").join("sales").join("shared")).unwrap();
+        std::fs::write(dir.join("library").join("sales").join("shared").join("style.md"), "s").unwrap();
+        write_skill(&dir, "library/zoom/meeting-sdk", "windows", GOOD_SKILL);
+        let entries = scan_zone(&dir.join("library"), SkillZone::Library);
+        let mounts: Vec<&str> = entries.iter().map(|e| e.mount_path.as_str()).collect();
+        assert_eq!(
+            mounts,
+            ["library/sales/call-prep/SKILL.md", "library/zoom/meeting-sdk/windows/SKILL.md"],
+            "分組命中＋按相對路徑排序"
+        );
+        assert_eq!(entries[0].dir_name, "sales/call-prep");
+        // 命中即止：技能目錄內的更深 SKILL.md 不重複列示。
+        write_skill(&dir, "library/sales/call-prep", "nested", GOOD_SKILL);
+        let entries = scan_zone(&dir.join("library"), SkillZone::Library);
+        assert_eq!(entries.iter().filter(|e| e.dir_name.starts_with("sales/")).count(), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -172,6 +172,23 @@ Optional capabilities (knowledge-graph engine, local embeddings, complex-PDF par
 - Currently a consultant helping enterprises adopt AI.
 - Operoid's governance machinery — including the Action Registry — is distilled from real manufacturing-floor cases, not from theory.
 
+## Bundled default skills
+
+The company skill library ships with a curated starter set: `ocore/default-skills/`
+is imported from [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins)
+(commit `d9d8e13`, 2026-10-27) by `scripts/import_kwp_skills.py` and seeded into
+`<data_dir>/skills/library/` on server startup (missing plugin dirs only — never
+overwrites). 111 role skills across 11 plugins (productivity, sales,
+customer-support, product-management, marketing, legal, finance, data,
+enterprise-search, operations, human-resources).
+
+Upstream is © Anthropic and its partners, licensed under the **Apache License 2.0**
+(MIT for partner plugins); their LICENSE files are bundled per plugin. Provenance
+lives in `ocore/default-skills/SOURCE.md` and `ocore/default-skills/<plugin>/SOURCE.md`,
+the lint/import audit in `IMPORT-REPORT.md`. These skills are procedural guidance,
+not extra capability — every action they suggest still runs inside the employee's
+tool allowlist and the behavior rules.
+
 ## License
 
 Released under the **[MIT License](LICENSE)**.

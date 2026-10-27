@@ -1,6 +1,6 @@
 [package]
 name = "ocore"
-version = "0.5.10"
+version = "0.5.11"
 edition = "2021"
 description = "Operoid 核心域 crate — Runtime/Store/Tools/GBrain 能力（零 Tauri 依賴）"
 authors = ["朱國棟 (Charlie Chu)"]
@@ -34,6 +34,8 @@ hmac = "0.12"
 getrandom = "0.2"
 argon2 = "0.5"
 rmcp = { version = "3", features = ["client", "transport-child-process"] }
+# 預設技能庫冷啟動種子：內嵌 ocore/default-skills/（見 skills_seed.rs）。
+include_dir = "0.7"
 
 [dev-dependencies]
 axum = "0.8"
