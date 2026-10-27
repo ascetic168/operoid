@@ -297,13 +297,21 @@ async fn run(a: &DirArgs) -> anyhow::Result<()> {
     let db_path = agent_db_path_in(&dirs.db_dir);
 
     // 預設技能庫冷啟動：內建策展技能（ocore/default-skills，見 skills_seed.rs）
-    // 種子進公司共用庫。冪等：只補缺的整顆外掛目錄——admin 刪除者不復活、永不覆寫。
+    // 種子進公司共用庫。升級安全：已存在者永不覆寫；`.seeded` 標記記「種過」，
+    // admin 刪除的外掛不復活；刷新＝刪外掛目錄＋標記後重啟。
     let seed = ocore::skills_seed::seed_default_library(std::path::Path::new(&dirs.db_dir));
     if !seed.seeded.is_empty() {
         eprintln!(
             "[oserver] 預設技能庫種子：{} 個外掛（{}）",
             seed.seeded.len(),
             seed.seeded.join("、")
+        );
+    }
+    if !seed.admin_removed.is_empty() {
+        eprintln!(
+            "[oserver] 預設技能庫：{} 個外掛已被 admin 移除，不復活（{}）",
+            seed.admin_removed.len(),
+            seed.admin_removed.join("、")
         );
     }
     for e in &seed.errors {

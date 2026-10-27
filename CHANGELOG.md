@@ -27,10 +27,12 @@ authorization — everything still runs inside the employee's tool allowlist.
 
 - **Bundled defaults** (`ocore::skills_seed`): the curated set lives at
   `ocore/default-skills/`, embedded at compile time via `include_dir` and
-  seeded by `oserver` on startup. Seeding is idempotent at plugin-dir
-  granularity: only missing plugin dirs are copied (staged + renamed, no
-  half-written dirs), existing dirs are never overwritten — admin deletions
-  persist, and deleting a plugin dir re-seeds an updated import on restart.
+  seeded by `oserver` on startup with upgrade-safe semantics: an existing
+  plugin dir is skipped whole (user edits are never overwritten); a
+  `.seeded/<plugin>` marker records "was seeded", so a plugin dir deleted
+  by an admin stays deleted; refreshing bundled content means deleting the
+  plugin dir **and** its marker, then restarting. Seeding stages into a
+  temp dir and renames, so no half-written dirs are ever left behind.
 - **`parse_skill_md` handles YAML folded/literal scalars** (`description: >` /
   `|` with `+`/`-` indicators): continuation lines are folded into a single
   whitespace-normalized value. 55 upstream skills used multiline descriptions
