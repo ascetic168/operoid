@@ -673,8 +673,9 @@ async fn login_flow_end_to_end() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// F3（對話表現力）：artifact 端點的「限自身」細化——owner user 可讀、他人 user 403、
-/// manager/admin 可讀、不存在 404。資料面用真 SQLite 種子（員工歸屬 + artifact）。
+/// F3（對話表現力）：artifact 端點的存取語意——R2「聊天為主」開放後任何已認證 user
+/// 可讀（工件是對話中引用的工作產出；保密語意由員工提示詞 need-to-know 條款承擔）、
+/// 不存在 404。資料面用真 SQLite 種子（員工歸屬 + artifact）。
 #[tokio::test]
 async fn artifact_access_control_end_to_end() {
     let dir = temp_dir("artifact");
@@ -772,14 +773,14 @@ async fn artifact_access_control_end_to_end() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["id"], "art-1");
     assert_eq!(v["content"], "……");
-    // 他人 user → 403。
+    // 他人 user → 200（R2「聊天為主」開放——同事對話可引用工件）。
     b = Request::builder()
         .method(Method::GET)
         .uri("/api/artifacts/art-1")
         .header("authorization", format!("Bearer {mallory}"))
         .body(Body::empty())
         .unwrap();
-    assert_eq!(app.clone().oneshot(b).await.unwrap().status(), StatusCode::FORBIDDEN);
+    assert_eq!(app.clone().oneshot(b).await.unwrap().status(), StatusCode::OK);
     // 管理面放行：master token（operator＝admin 語意）→ 200。
     // （MatrixAuth 的 mgr 固定身份只掛在 matrix router；real_router 用 PrincipalTokenProvider。）
     b = Request::builder()

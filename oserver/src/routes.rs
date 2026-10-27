@@ -273,30 +273,27 @@ async fn api_watch(
     let res = tokio::task::spawn_blocking(move || {
         check_enabled(&st)?;
         let store = open_store(&st)?;
-        // R2「限自身」：user 僅能監看自己名下的員工（manager/admin 不限；既有員工＝operator 歸屬）。
+        // R2「聊天為主」開放：任何已認證者可監看（同事與 AI 員工對話的可見面）；
+        // 非部署者 user → 脫敏版（省記憶／任務／提案核可）；manager/admin/部署者 → 完整。
+        let mut redacted = false;
         if let Some(ident) = &identity {
             if let Some(emp) = store.get_employee(&id)? {
-                if !crate::rbac::can_access_employee(ident, emp.owner_principal.as_deref()) {
-                    return Err(AppError::new("auth.forbidden"));
-                }
+                redacted = !crate::rbac::can_access_employee(ident, emp.owner_principal.as_deref());
             }
         }
-        watch_payload(&st.cfg, &store, &id)
+        watch_payload(&st.cfg, &store, &id, redacted)
     })
     .await;
     finish(res)
 }
 
 /// 單一 artifact（含完整 content）——聊天頁 artifact 卡在 watch 近 10 筆之外的 fallback 載入。
-/// 「限自身」：artifact 無 owner 欄，以 `produced_by`（員工）的 `owner_principal` 判定；
-/// manager/admin 不限（rbac::can_access_employee 語意一致）。
+/// R2「聊天為主」開放：任何已認證者可讀（工件是對話中引用的工作產出；保密語意由
+/// 員工提示詞 need-to-know 條款承擔）。
 async fn api_artifact(
     State(state): State<Arc<ServerState>>,
-    identity: Option<axum::Extension<Identity>>,
-    headers: HeaderMap,
     AxPath(id): AxPath<String>,
 ) -> Response {
-    let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         check_enabled(&st)?;
@@ -304,13 +301,6 @@ async fn api_artifact(
         let art = store
             .get_artifact(&id)?
             .ok_or_else(|| AppError::new("agent_os.artifactNotFound").p("id", &id))?;
-        if let Some(ident) = &identity {
-            if let Some(emp) = store.get_employee(&art.produced_by)? {
-                if !crate::rbac::can_access_employee(ident, emp.owner_principal.as_deref()) {
-                    return Err(AppError::new("auth.forbidden"));
-                }
-            }
-        }
         Ok(serde_json::to_value(&art).unwrap_or(serde_json::Value::Null))
     })
     .await;

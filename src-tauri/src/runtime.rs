@@ -665,7 +665,7 @@ pub async fn agent_watch<R: tauri::Runtime>(
         return Err(AppError::new("agent_os.disabled"));
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
-    watch_payload(&cfg, &store, &employee_id)
+    watch_payload(&cfg, &store, &employee_id, false)
 }
 
 #[tauri::command]

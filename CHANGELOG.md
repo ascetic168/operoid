@@ -13,6 +13,46 @@
 
 ---
 
+## [v0.5.9] - 2026-10-27
+
+### Open cross-deployer chat + confidentiality guardrails (core & server)
+
+Chatting with a colleague's AI employee through the web console is now
+allowed — closing the contradiction where an email would reach the
+employee but a colleague's UI message would bounce with 403. Access is
+"chat-first": everyone authenticated can talk and see the conversation
+thread, while the employee's private sphere stays with the deployer and
+managers.
+
+- Prompt confidentiality (both editions): the conversational prompts now
+  carry explicit need-to-know rules — the Human-sender context line, the
+  native identity card (new behavior rule + owner line marked 預設保密)
+  and the legacy JSON protocol all instruct the employee to disclose
+  only what the request needs and never relay the deployer's
+  instructions or other parties' mail. Prompt rules are the soft layer;
+  the hard layer is the redaction below.
+- `GET /api/employees/{id}/watch` opens to all authenticated users with
+  a redacted payload for non-deployer users: memory (notes/todos),
+  task lists and resolved/proposed commitments are omitted; the
+  conversation thread, active commitments, artifacts and work-process
+  events remain (`watch_payload` gained a `redacted` flag; the desktop
+  shell passes full).
+- `POST /api/employees/{id}/messages` drops the owner-scoped guard —
+  any authenticated user may message any active employee; Owner vs
+  Human semantics (職權指示 vs 諮詢) are unchanged and archived
+  employees still refuse mail. Sender attribution now carries the
+  principal's display name (principals table) instead of the raw id,
+  so prompts read 來自「Alice」 instead of 來自「principal-alice」.
+- `GET /api/artifacts/{id}` opens to all authenticated users
+  (artifacts are work products referenced from chats).
+- Unchanged (still deployer/manager-only): the employee SSE turn
+  stream (thinking deltas are live reasoning — non-deployer chats fall
+  back to 2s polling), PATCH/rename/description, tools, stop,
+  unarchive, message deletion.
+- Tests: redacted-payload key assertions, confidentiality rendering
+  assertions (native/legacy/Human context line), artifact e2e updated
+  to the open semantics.
+
 ## [v0.5.8] - 2026-10-27
 
 ### Desktop: job description on templates and instances

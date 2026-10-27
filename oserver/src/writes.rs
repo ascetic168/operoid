@@ -468,6 +468,7 @@ async fn api_send_message(
         let store = open_store(&st)?;
         // D-M1：寄件者歸因——identity.name（principal id）＝該員工 owner → 職權指示；
         // 其他人類 → 諮詢或請求（硬約束仍由 registry＋核可 RBAC 承擔）。
+        // 歸因名用 principals.display_name（查無 → 原 id）——提示詞「來自 X」可讀可辨識。
         let from = match &identity {
             Some(ident) => {
                 let is_owner = store
@@ -477,6 +478,8 @@ async fn api_send_message(
                     .and_then(|e| e.owner_principal)
                     .map(|owner| owner == ident.name)
                     .unwrap_or(false);
+                let display = ocore::runtime::principal_display_name(&store, &ident.name)
+                    .unwrap_or_else(|| ident.name.clone());
                 ocore::domain::SenderAttribution::new(
                     if is_owner {
                         ocore::domain::SenderKind::Owner
@@ -484,7 +487,7 @@ async fn api_send_message(
                         ocore::domain::SenderKind::Human
                     },
                     Some(ident.name.clone()),
-                    Some(ident.name.clone()),
+                    Some(display),
                 )
             }
             None => ocore::domain::SenderAttribution::new(
@@ -493,9 +496,8 @@ async fn api_send_message(
                 None,
             ),
         };
-        if let Some(ident) = &identity {
-            ensure_employee_access(ident, &store, &id)?;
-        }
+        // R2「聊天為主」開放：任何已認證者可對在職員工送訊息（同事對話——與 email 通道對稱）；
+        // 封存員工由 send_message_core 拒收；保密語意由提示詞 need-to-know 條款＋脫敏 watch 承擔。
         send_message_core(as_, &store, &id, &b.text, b.commitment_id.as_deref(), from)
     })
     .await;
