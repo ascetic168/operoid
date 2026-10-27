@@ -28,6 +28,8 @@ interface EmployeeRow {
   name: string
   state: string
   owner_principal: string | null
+  /** 部署者顯示名（後端合併欄位；查無 → 原 principal id）。 */
+  owner_display_name?: string | null
 }
 
 const employees = ref<EmployeeRow[]>([])
@@ -37,14 +39,14 @@ const error = ref('')
 const loadError = ref('')
 
 const byState = computed(() => {
-  const m = new Map<string, string[]>()
+  const m = new Map<string, EmployeeRow[]>()
   for (const e of employees.value) {
     const list = m.get(e.state) ?? []
-    list.push(e.name)
+    list.push(e)
     m.set(e.state, list)
   }
   return Array.from(m.entries())
-    .map(([state, names]) => ({ state, count: names.length, names }))
+    .map(([state, rows]) => ({ state, count: rows.length, rows }))
     .sort((a, b) => b.count - a.count)
 })
 
@@ -85,7 +87,13 @@ onMounted(async () => {
             <tr v-for="g in byState" :key="g.state">
               <td class="st"><code>{{ g.state }}</code></td>
               <td class="n">{{ g.count }}</td>
-              <td class="names muted">{{ g.names.join('、') }}</td>
+              <td class="names muted">
+                <template v-for="(e, i) in g.rows" :key="e.id">
+                  <span v-if="i > 0">、</span>
+                  <span>{{ e.name }}</span>
+                  <span v-if="e.owner_display_name" class="owner">（{{ t('home.emp.owner') }}：{{ e.owner_display_name }}）</span>
+                </template>
+              </td>
             </tr>
             <tr v-if="!byState.length">
               <td class="muted">—</td>
@@ -110,6 +118,7 @@ onMounted(async () => {
 .st { width: 7rem; }
 .n { width: 3rem; font-weight: 700; color: var(--accent); }
 .names { word-break: break-word; }
+.names .owner { color: var(--text); opacity: 0.75; }
 .pre {
   margin: 0; padding: 0.6rem; background: var(--bg); border-radius: 0.5rem;
   font-size: 0.78rem; overflow-x: auto;

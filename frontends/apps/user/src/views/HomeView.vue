@@ -10,13 +10,17 @@ interface EmployeeRow {
   id: string
   name: string
   state: string
+  description: string | null
   owner_principal: string | null
+  /** 部署者顯示名（後端合併欄位；查無 → 原 principal id）。 */
+  owner_display_name?: string | null
   template_id: string | null
 }
 interface TemplateRow {
   id: string
   name: string
   role: string | null
+  description: string | null
 }
 
 const mine = ref<EmployeeRow[]>([])
@@ -29,6 +33,7 @@ const streamUp = ref(false)
 const latest = ref<StreamEvent | null>(null)
 
 const me = computed(() => session()?.principal.id ?? '')
+const selectedTemplate = computed(() => templates.value.find((x) => x.id === templateId.value))
 
 // 部署表單
 const templateId = ref('')
@@ -121,6 +126,7 @@ onBeforeUnmount(() => {
           </select>
           <label for="iname">{{ t('home.deploy.name') }}</label>
           <input id="iname" v-model="instanceName" data-test="instance" />
+          <p v-if="selectedTemplate?.description" class="muted tpldesc">{{ selectedTemplate.description }}</p>
           <p style="margin-top: 0.9rem">
             <button class="primary" :disabled="deploying" data-test="deploy" @click="deploy">
               {{ t('home.deploy.submit') }}
@@ -136,6 +142,8 @@ onBeforeUnmount(() => {
       <div v-for="e in mine" :key="e.id" class="card emp" data-test="my-employee">
         <h2>{{ e.name }}</h2>
         <p class="muted">{{ t('home.emp.state') }}：<code>{{ e.state }}</code></p>
+        <p v-if="e.owner_display_name" class="muted">{{ t('home.emp.owner') }}：{{ e.owner_display_name }}</p>
+        <p v-if="e.description?.trim()" class="muted clamp2" :title="e.description">{{ e.description }}</p>
         <div class="row">
           <router-link class="btn" :to="'/chat/' + encodeURIComponent(e.id)" data-test="chat">
             {{ t('home.emp.chat') }}
@@ -158,6 +166,8 @@ onBeforeUnmount(() => {
       <div v-for="e in others" :key="e.id" class="card emp ro">
         <h2>{{ e.name }}</h2>
         <p class="muted">{{ t('home.emp.state') }}：<code>{{ e.state }}</code></p>
+        <p v-if="e.owner_display_name" class="muted">{{ t('home.emp.owner') }}：{{ e.owner_display_name }}</p>
+        <p v-if="e.description?.trim()" class="muted clamp2" :title="e.description">{{ e.description }}</p>
       </div>
     </div>
 
@@ -168,6 +178,11 @@ onBeforeUnmount(() => {
 <style scoped>
 .sec { margin: 1.6rem 0 0.8rem; font-size: 1.05rem; }
 .emp .row { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+.emp p { margin: 0.25rem 0 0; }
+.clamp2 {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tpldesc { margin-top: 0.4rem; white-space: pre-line; }
 .btn {
   display: inline-block; padding: 0.4rem 0.9rem; border-radius: 0.5rem;
   border: 1px solid var(--border); background: var(--surface); color: var(--accent);

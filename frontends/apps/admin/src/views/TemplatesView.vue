@@ -11,6 +11,7 @@ interface TemplateRow {
   name: string
   brain: { brain_id: string }
   role: string | null
+  description: string | null
   tools: string[] | null
   created_at: string
 }
@@ -37,6 +38,7 @@ const busyId = ref('')
 const tName = ref('')
 const tBrain = ref('')
 const tRole = ref('')
+const tDesc = ref('')
 const tTools = ref('')
 // 改名（inline）
 const renameId = ref('')
@@ -72,6 +74,7 @@ async function create(): Promise<void> {
       name: tName.value.trim(),
       brain_id: tBrain.value || null,
       role: tRole.value.trim() || null,
+      description: tDesc.value.trim() || null,
       tools: tTools.value.trim()
         ? tTools.value.split(/[,，\s]+/).filter(Boolean)
         : null,
@@ -80,6 +83,7 @@ async function create(): Promise<void> {
     tName.value = ''
     tBrain.value = ''
     tRole.value = ''
+    tDesc.value = ''
     tTools.value = ''
     await load()
   } catch (e) {
@@ -147,6 +151,8 @@ async function remove(row: TemplateRow): Promise<void> {
         </select>
         <label for="trole">{{ t('templates.role') }}</label>
         <input id="trole" v-model="tRole" />
+        <label for="tdesc">{{ t('templates.description') }}</label>
+        <textarea id="tdesc" v-model="tDesc" rows="3" :placeholder="t('templates.descriptionPh')"></textarea>
         <label for="ttools">{{ t('templates.tools') }}</label>
         <input id="ttools" v-model="tTools" placeholder="write-note, read-file, write-file, edit-file, run-command" />
         <p style="margin-top: 0.9rem">
@@ -165,6 +171,7 @@ async function remove(row: TemplateRow): Promise<void> {
               <th>id</th>
               <th>brain</th>
               <th>{{ t('templates.role') }}</th>
+              <th>{{ t('templates.description') }}</th>
               <th>tools</th>
               <th></th>
             </tr>
@@ -186,6 +193,7 @@ async function remove(row: TemplateRow): Promise<void> {
               <td><code>{{ row.id }}</code></td>
               <td><code>{{ row.brain?.brain_id }}</code></td>
               <td>{{ row.role || '—' }}</td>
+              <td class="muted desc" :title="row.description || ''">{{ row.description || '—' }}</td>
               <td class="muted">{{ row.tools?.join(', ') || '—' }}</td>
               <td class="row">
                 <button class="mini" :disabled="busyId === row.id || renameId === row.id" @click="startRename(row)">
@@ -222,6 +230,8 @@ td.row { justify-content: flex-end; }
 .mini:disabled { opacity: 0.5; cursor: wait; }
 .mini.bad { color: var(--danger); }
 .mini.ok { color: var(--ok); }
+td.desc { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+textarea { width: 100%; box-sizing: border-box; }
 .errline { color: var(--danger); font-size: 0.9rem; }
 .okline { color: var(--ok); font-size: 0.9rem; }
 </style>

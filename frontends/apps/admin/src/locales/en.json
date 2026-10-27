@@ -146,6 +146,8 @@
     "brain": "Brain (knowledge source on deploy)",
     "activeBrain": "Active brain (empty = default)",
     "role": "Role (optional)",
+    "description": "Job description (optional)",
+    "descriptionPh": "e.g. Handles weekly report digest and vendor inquiries — copied to every deployed instance",
     "tools": "Tool allowlist (comma-separated, empty = default set)",
     "create": "Create",
     "created": "Template created",

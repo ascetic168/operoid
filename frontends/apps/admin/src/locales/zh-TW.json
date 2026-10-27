@@ -146,6 +146,8 @@
     "brain": "腦（部署來源知識）",
     "activeBrain": "作用中腦（留空＝預設）",
     "role": "角色（選填）",
+    "description": "職責描述（選填）",
+    "descriptionPh": "例如：負責週報彙整與供應商詢問——部署時複製到每個實例",
     "tools": "工具 allowlist（逗號分隔，留空＝預設集）",
     "create": "建立",
     "created": "模板已建立",

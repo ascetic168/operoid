@@ -36,7 +36,8 @@
     "emp": {
       "chat": "聊天",
       "stop": "停止",
-      "state": "狀態"
+      "state": "狀態",
+      "owner": "部署者"
     },
     "commit": {
       "title": "交辦標題",
@@ -83,6 +84,12 @@
     "proposed": "附帶提案",
     "processing": "處理中…",
     "thinking": "思考中",
+    "deployedBy": "部署者",
+    "desc": "職責描述",
+    "descPh": "例如：負責週報彙整、供應商聯絡窗口——也可描述特殊任務（選填）",
+    "editDesc": "編輯描述",
+    "save": "儲存",
+    "cancel": "取消",
     "traceCount": "{n} 個工具呼叫",
     "artifactLoadFailed": "載入產出內容失敗——請稍後再試"
   },

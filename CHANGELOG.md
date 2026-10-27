@@ -15,6 +15,25 @@
 
 ## [v0.5.8] - 2026-10-27
 
+### Enterprise web: deployer + job description on employee views
+
+The enterprise consoles now show who deployed an AI employee (their
+human supervisor) and what the employee is for — plus inline editing of
+the job description where the RBAC allows it.
+
+- Employee chat pages (user + manager apps): a detail line under the
+  header shows the deployer (resolved display name) and the job
+  description; a pencil-in edit affordance (owner, or manager/admin)
+  opens a textarea and PATCHes the description (blank clears).
+- User home: employee cards (mine + others) show the deployer and a
+  two-line description excerpt; the deploy form previews the selected
+  template's description before deploying.
+- Manager dashboard: the by-state table annotates each employee with
+  its deployer.
+- Admin templates: create-form textarea for the template's default job
+  description (copied to every deployed instance) and a table column.
+- New i18n keys (en/zh-CN/zh-TW) across the three apps.
+
 ### Employee job description + deployer display name (core & server)
 
 AI employees now carry a free-text job description (職責描述), and the

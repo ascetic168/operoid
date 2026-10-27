@@ -146,6 +146,8 @@
     "brain": "脑（部署来源知识）",
     "activeBrain": "作用中脑（留空＝默认）",
     "role": "角色（选填）",
+    "description": "职责描述（选填）",
+    "descriptionPh": "例如：负责周报汇总与供应商询问——部署时复制到每个实例",
     "tools": "工具 allowlist（逗号分隔，留空＝默认集）",
     "create": "建立",
     "created": "模板已建立",

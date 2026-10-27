@@ -24,7 +24,8 @@
   "home": {
     "welcome": "Connected",
     "emp": {
-      "chat": "Chat"
+      "chat": "Chat",
+      "owner": "Deployed by"
     }
   },
   "header": {
@@ -87,6 +88,12 @@
     "proposed": "with proposal",
     "processing": "Working…",
     "thinking": "Thinking",
+    "deployedBy": "Deployed by",
+    "desc": "Job description",
+    "descPh": "e.g. Weekly report digest, vendor contact window — describe special assignments too (optional)",
+    "editDesc": "Edit description",
+    "save": "Save",
+    "cancel": "Cancel",
     "traceCount": "{n} tool call(s)",
     "artifactLoadFailed": "Failed to load artifact content — try again later"
   },

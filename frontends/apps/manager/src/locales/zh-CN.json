@@ -24,7 +24,8 @@
   "home": {
     "welcome": "连接正常",
     "emp": {
-      "chat": "聊天"
+      "chat": "聊天",
+      "owner": "部署者"
     }
   },
   "header": {
@@ -87,6 +88,12 @@
     "proposed": "附带提案",
     "processing": "处理中…",
     "thinking": "思考中",
+    "deployedBy": "部署者",
+    "desc": "职责描述",
+    "descPh": "例如：负责周报汇总、供应商联络窗口——也可描述特殊任务（选填）",
+    "editDesc": "编辑描述",
+    "save": "保存",
+    "cancel": "取消",
     "traceCount": "{n} 个工具调用",
     "artifactLoadFailed": "加载产出内容失败——请稍后再试"
   },

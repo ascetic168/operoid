@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ApiError, api, openTurnStream, type TurnDelta } from '@front/api-client'
+import { ApiError, api, openTurnStream, session, type TurnDelta } from '@front/api-client'
 import { ErrorBox, MarkdownText, figureImagePaths } from '@front/ui'
 import { useI18n } from 'vue-i18n'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -10,7 +10,16 @@ const route = useRoute()
 const empId = decodeURIComponent(route.params.id as string)
 
 interface WatchPayload {
-  employee: { id: string; name: string; state: string; owner_principal: string | null }
+  employee: {
+    id: string
+    name: string
+    state: string
+    role: string | null
+    description: string | null
+    archived?: boolean
+    owner_principal: string | null
+  }
+  owner_display_name?: string | null
   commitments: Array<{
     id: string
     title: string
@@ -59,6 +68,46 @@ const activeCommitments = computed(
   () => (w.value?.commitments ?? []).filter((c) => c.status === 'active'),
 )
 const proposals = computed(() => w.value?.proposals ?? [])
+
+// ── 部署者＋職責描述（詳情行）——部署者＝owner_principal 解析後的顯示名；描述可由
+//    部署者本人或 manager/admin 編輯（PATCH /api/employees/{id}，空字串＝清除）。──
+const ownerName = computed(() => w.value?.owner_display_name ?? '')
+const empDesc = computed(() => w.value?.employee.description?.trim() ?? '')
+const canEditDesc = computed(() => {
+  const emp = w.value?.employee
+  if (!emp || emp.archived) return false
+  const s = session()
+  if (!s) return false
+  return (
+    emp.owner_principal === s.principal.id ||
+    s.principal.roles.includes('manager') ||
+    s.principal.roles.includes('admin')
+  )
+})
+const editingDesc = ref(false)
+const descDraft = ref('')
+const savingDesc = ref(false)
+
+function startEditDesc(): void {
+  descDraft.value = empDesc.value
+  editingDesc.value = true
+}
+
+async function saveDesc(): Promise<void> {
+  savingDesc.value = true
+  actionError.value = ''
+  try {
+    await api.patch('/api/employees/' + encodeURIComponent(empId), {
+      description: descDraft.value.trim(),
+    })
+    editingDesc.value = false
+    await poll()
+  } catch (e) {
+    actionError.value = e instanceof ApiError ? e.code : 'server.internal'
+  } finally {
+    savingDesc.value = false
+  }
+}
 
 // ── 對話串：訊息（最新在前 → 反轉成時序）＋插入的「工具過程列」 ──
 type ChatMessage = NonNullable<WatchPayload['messages'][number]>
@@ -451,6 +500,29 @@ onBeforeUnmount(() => {
       <code class="state">{{ empState }}</code>
       <span v-if="w?.llm_model" class="muted model">{{ w.llm_model }}</span>
     </div>
+    <!-- 詳情行：部署者（人類主管）＋職責描述——誰的員工、做什麼，一眼可辨識 -->
+    <div v-if="ownerName || empDesc || canEditDesc" class="empmeta">
+      <span v-if="ownerName" class="muted">
+        {{ t('chat.deployedBy') }}：<strong class="owner">{{ ownerName }}</strong>
+      </span>
+      <span v-if="empDesc && !editingDesc" class="muted desc" :title="empDesc">
+        {{ t('chat.desc') }}：{{ empDesc }}
+      </span>
+      <button v-if="canEditDesc && !editingDesc" class="minibtn" data-test="edit-desc" @click="startEditDesc">
+        {{ t('chat.editDesc') }}
+      </button>
+    </div>
+    <div v-if="editingDesc" class="descedit">
+      <textarea v-model="descDraft" rows="3" data-test="desc-input" :placeholder="t('chat.descPh')"></textarea>
+      <div class="row">
+        <button class="minibtn ok" :disabled="savingDesc" data-test="desc-save" @click="saveDesc">
+          {{ t('chat.save') }}
+        </button>
+        <button class="minibtn" :disabled="savingDesc" @click="editingDesc = false">
+          {{ t('chat.cancel') }}
+        </button>
+      </div>
+    </div>
     <ErrorBox :message="offline ? t('login.offline') : error || actionError" />
 
     <p v-if="forbidden" class="muted">{{ t('chat.forbidden') }}</p>
@@ -600,6 +672,17 @@ onBeforeUnmount(() => {
 <style scoped>
 .head { display: flex; align-items: baseline; gap: 0.8rem; }
 .head h1 { margin: 0; font-size: 1.3rem; }
+.empmeta { display: flex; align-items: baseline; gap: 0.8rem; margin-top: 0.15rem; flex-wrap: wrap; }
+.empmeta .owner { color: var(--text); }
+.empmeta .desc { min-width: 0; max-width: 60rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.minibtn {
+  font-size: 0.78rem; padding: 0.1rem 0.5rem; border: 1px solid var(--border);
+  border-radius: 0.4rem; background: var(--surface); color: var(--accent); cursor: pointer;
+}
+.minibtn:hover { border-color: var(--accent); }
+.descedit { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem; max-width: 40rem; }
+.descedit textarea { width: 100%; box-sizing: border-box; }
+.descedit .row { display: flex; gap: 0.5rem; }
 .back { color: var(--accent); text-decoration: none; font-size: 0.88rem; }
 .state { font-size: 0.8rem; }
 .model { font-size: 0.78rem; }

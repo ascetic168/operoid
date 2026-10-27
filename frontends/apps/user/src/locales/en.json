@@ -36,7 +36,8 @@
     "emp": {
       "chat": "Chat",
       "stop": "Stop",
-      "state": "State"
+      "state": "State",
+      "owner": "Deployed by"
     },
     "commit": {
       "title": "Commitment title",
@@ -83,6 +84,12 @@
     "proposed": "with proposal",
     "processing": "Working…",
     "thinking": "Thinking",
+    "deployedBy": "Deployed by",
+    "desc": "Job description",
+    "descPh": "e.g. Weekly report digest, vendor contact window — describe special assignments too (optional)",
+    "editDesc": "Edit description",
+    "save": "Save",
+    "cancel": "Cancel",
     "traceCount": "{n} tool call(s)",
     "artifactLoadFailed": "Failed to load artifact content — try again later"
   },
