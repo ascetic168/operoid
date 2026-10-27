@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 const routes = [
   { path: "/", redirect: "/inbox" },
   { path: "/inbox", name: "inbox", component: () => import("@/views/InboxView.vue") },
+  { path: "/skills", name: "skills", component: () => import("@/views/SkillsView.vue") },
   { path: "/events", name: "events", component: () => import("@/views/EventsView.vue") },
   { path: "/factories", name: "factories", component: () => import("@/views/FactoriesView.vue") },
   { path: "/templates", name: "templates", component: () => import("@/views/EmployeeTemplateView.vue") },

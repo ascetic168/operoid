@@ -48,13 +48,13 @@ inside the employee's tool allowlist.
 - **Prompt hint**: one line tells the employee a catalog exists and to
   suggest adoption when a task reveals a skill gap — shown even when the
   employee's union is empty (that is exactly who needs it).
-- **Skill browsing UI** (user & manager apps): a read-only `/skills` page —
-  catalog (with adopt), personal areas (with remove), employee drafts, and
-  the org library — with inline SKILL.md content viewing. Backed by
-  `GET /api/skills` (now also returns `drafts` and `catalog`) and
-  `GET /api/skills/content` (read_file-style mount resolution: traversal
-  protection reused, manager may pass `principal` for other principals'
-  personal areas, 1 MB cap).
+- **Skill browsing UI** (user & manager web apps + the desktop GUI): a
+  read-only skills page — catalog (with adopt), personal areas (with
+  remove), employee drafts, and the org library — with inline SKILL.md
+  content viewing. Backed by `GET /api/skills` (now also returns `drafts`
+  and `catalog`) and `GET /api/skills/content` (read_file-style mount
+  resolution: traversal protection reused, manager may pass `principal`
+  for other principals' personal areas, 1 MB cap).
 - **`parse_skill_md` handles YAML folded/literal scalars** (`description: >` /
   `|` with `+`/`-` indicators): continuation lines are folded into a single
   whitespace-normalized value. 55 upstream skills used multiline descriptions

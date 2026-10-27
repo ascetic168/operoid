@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { RouterView } from "vue-router";
-import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity, RefreshCw, Download, RotateCcw } from "lucide-vue-next";
+import { Factory, Wrench, Settings, Brain, Boxes, Users, UserSquare, AlertTriangle, ExternalLink, Terminal, X, Bell, Inbox, Activity, RefreshCw, Download, RotateCcw, BookOpen } from "lucide-vue-next";
 import { useConfigStore } from "@/stores/config";
 import { useInboxStore } from "@/stores/inbox";
 import { useUpdateStore } from "@/stores/update";
@@ -85,6 +85,7 @@ const nav = [
   { to: "/factories", labelKey: "app.nav.factories", icon: Factory },
   { to: "/templates", labelKey: "app.nav.employeeTemplate", icon: Users },
   { to: "/instances", labelKey: "app.nav.employeeInstance", icon: UserSquare },
+  { to: "/skills", labelKey: "app.nav.skills", icon: BookOpen },
   { to: "/operations", labelKey: "app.nav.operations", icon: Wrench },
   { to: "/brains", labelKey: "app.nav.brains", icon: Boxes },
   { to: "/config", labelKey: "app.nav.config", icon: Settings },

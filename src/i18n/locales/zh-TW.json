@@ -114,7 +114,8 @@
       "brains": "腦",
       "config": "設定",
       "employeeTemplate": "員工模板",
-      "employeeInstance": "員工實體"
+      "employeeInstance": "員工實體",
+      "skills": "技能庫"
     },
     "prereq": {
       "title": "缺少前置程式",
@@ -848,5 +849,19 @@
     "vlmUnknown": "未探測——配置 chat 端點後可評估「讀圖作答」能力。",
     "vlmOk": "可讀圖作答——檢索命中圖片時，生成端可直接讀原圖回答數值與細節。",
     "vlmNo": "不可讀圖——生成端降級為「定位者」模式：答案指向哪張圖（文件／頁／圖號），像素內容由人類開圖確認。"
+  },
+  "skills": {
+    "title": "技能庫",
+    "catalog": "技能圖書館",
+    "catalogHint": "內建策展技能（唯讀掛載 catalog/…，不佔提示詞）——挑選加入個人區後，AI 員工才會載入。",
+    "personal": "個人區",
+    "drafts": "員工草稿區",
+    "library": "公司共用庫",
+    "empty": "（空）",
+    "adopt": "加入",
+    "adopted": "已將「{name}」加入個人區。",
+    "remove": "移除",
+    "confirmRemove": "確認移除？",
+    "removed": "已從個人區移除「{name}」。"
   }
 }

@@ -114,7 +114,8 @@
       "brains": "Brains",
       "config": "Settings",
       "employeeTemplate": "Templates",
-      "employeeInstance": "Instances"
+      "employeeInstance": "Instances",
+      "skills": "Skill Library"
     },
     "prereq": {
       "title": "Missing prerequisites",
@@ -848,5 +849,19 @@
     "vlmUnknown": "Not probed - configure a chat endpoint to evaluate read-image answering.",
     "vlmOk": "Can read images - when retrieval hits a figure, the generator can read the original image for values and details.",
     "vlmNo": "Cannot read images - the generator degrades to locator mode: answers point at the figure (document / page / number), humans open the image to read pixels."
+  },
+  "skills": {
+    "title": "Skill Library",
+    "catalog": "Skill Catalog",
+    "catalogHint": "Curated bundled skills (read-only mount catalog/…, not loaded into prompts) — adopt into your personal area for AI employees to use.",
+    "personal": "Personal Area",
+    "drafts": "Employee Drafts",
+    "library": "Company Library",
+    "empty": "(empty)",
+    "adopt": "Adopt",
+    "adopted": "Adopted \"{name}\" into your personal area.",
+    "remove": "Remove",
+    "confirmRemove": "Confirm remove?",
+    "removed": "Removed \"{name}\" from your personal area."
   }
 }

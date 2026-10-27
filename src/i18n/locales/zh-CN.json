@@ -114,7 +114,8 @@
       "brains": "脑",
       "config": "设置",
       "employeeTemplate": "员工模板",
-      "employeeInstance": "员工实体"
+      "employeeInstance": "员工实体",
+      "skills": "技能库"
     },
     "prereq": {
       "title": "缺少前置程序",
@@ -848,5 +849,19 @@
     "vlmUnknown": "未探测——配置 chat 端点后可评估「读图作答」能力。",
     "vlmOk": "可读图作答——检索命中图片时，生成端可直接读原图回答数值与细节。",
     "vlmNo": "不可读图——生成端降级为「定位者」模式：答案指向哪张图（文件／页／图号），像素内容由人类开图确认。"
+  },
+  "skills": {
+    "title": "技能库",
+    "catalog": "技能图书馆",
+    "catalogHint": "内置策展技能（只读挂载 catalog/…，不占提示词）——挑选加入个人区后，AI 员工才会载入。",
+    "personal": "个人区",
+    "drafts": "员工草稿区",
+    "library": "公司共用库",
+    "empty": "（空）",
+    "adopt": "加入",
+    "adopted": "已将「{name}」加入个人区。",
+    "remove": "移除",
+    "confirmRemove": "确认移除？",
+    "removed": "已从个人区移除「{name}」。"
   }
 }
