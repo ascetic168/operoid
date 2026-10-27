@@ -15,6 +15,17 @@
 
 ## [v0.5.8] - 2026-10-27
 
+### Desktop: job description on templates and instances
+
+The personal-edition template form gains an optional job-description
+textarea (sent on create, shown in the template detail panel), and the
+instance detail modal shows the description the employee carries (read
+only — the desktop edition has no accounts, so there is no deployer to
+attribute). The Tauri `agent_create_template` command accepts the new
+`description` argument for signature parity with the shared core. New
+`templates.description` / `templates.descriptionPh` i18n keys
+(zh-TW/zh-CN/en).
+
 ### Enterprise web: deployer + job description on employee views
 
 The enterprise consoles now show who deployed an AI employee (their

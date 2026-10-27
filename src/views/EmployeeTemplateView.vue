@@ -32,6 +32,7 @@ const addOpen = ref(false);
 const addName = ref("");
 const addBrain = ref("");
 const addRole = ref("");
+const addDesc = ref("");
 // 工具 allowlist（W3 閘門）：write-note＋M2 桌面工具。預設全關——人類逐一授權。
 const addTools = reactive<Record<string, boolean>>({
   "write-note": false,
@@ -46,6 +47,7 @@ const addError = ref<string | null>(null);
 function openAdd() {
   addName.value = "";
   addRole.value = "";
+  addDesc.value = "";
   Object.keys(addTools).forEach((k) => (addTools[k] = false));
   addBrain.value = brains.activeId ?? brains.brains[0]?.id ?? "";
   addError.value = null;
@@ -60,6 +62,7 @@ async function submitAdd() {
       addName.value.trim(),
       addBrain.value,
       addRole.value.trim() || null,
+      addDesc.value.trim() || null,
       Object.entries(addTools)
         .filter(([, v]) => v)
         .map(([k]) => k)
@@ -181,6 +184,8 @@ async function confirmDelete() {
           <dd>{{ brainName(selected.brain.brain_id) }}</dd>
           <dt class="text-muted-foreground">{{ t("templates.role") }}</dt>
           <dd>{{ selected.role ?? "—" }}</dd>
+          <dt class="text-muted-foreground">{{ t("templates.description") }}</dt>
+          <dd class="whitespace-pre-line">{{ selected.description ?? "—" }}</dd>
           <dt class="text-muted-foreground">{{ t("templates.tools") }}</dt>
           <dd>
             <span v-if="selected.tools?.length" class="rounded bg-muted px-1.5 py-0.5 text-[11px]">
@@ -242,6 +247,15 @@ async function confirmDelete() {
               :placeholder="t('templates.rolePh')"
               class="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
             />
+          </label>
+          <label class="flex flex-col gap-1 text-xs">
+            {{ t("templates.description") }}
+            <textarea
+              v-model="addDesc"
+              rows="3"
+              :placeholder="t('templates.descriptionPh')"
+              class="rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+            ></textarea>
           </label>
           <div class="flex flex-col gap-1 text-xs">
             <span class="font-medium">{{ t("templates.toolsLabel") }}</span>

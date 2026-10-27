@@ -36,6 +36,8 @@
     "pickBrain": "Pick a brain…",
     "role": "Role (optional)",
     "rolePh": "e.g. procurement",
+    "description": "Job description (optional)",
+    "descriptionPh": "e.g. Weekly report digest and vendor inquiries — copied to every deployed instance",
     "tools": "Tools",
     "toolsLabel": "Tool access (tools not granted are invisible to the employee)",
     "toolsWriteNote": "Allow write-note (employees can write notes to their own output directory)",

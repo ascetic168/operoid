@@ -36,6 +36,8 @@
     "pickBrain": "選擇腦…",
     "role": "角色（選填）",
     "rolePh": "例如：procurement",
+    "description": "職責描述（選填）",
+    "descriptionPh": "例如：負責週報彙整與供應商詢問——部署時複製到每個實例",
     "tools": "工具",
     "toolsLabel": "工具授權（未勾選的工具員工看不到）",
     "toolsWriteNote": "允許寫入筆記（員工可將產出寫到專屬產出目錄）",

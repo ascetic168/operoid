@@ -53,9 +53,10 @@ export const useAgentStore = defineStore("agent", () => {
     name: string,
     brainId: string | null,
     role: string | null,
+    description: string | null = null,
     tools: string[] | null = null,
   ) {
-    await agentCreateTemplate(name, brainId, role, tools, workspaceId.value);
+    await agentCreateTemplate(name, brainId, role, description, tools, workspaceId.value);
     await loadTemplates();
   }
   async function renameTemplate(id: string, name: string) {

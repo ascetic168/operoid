@@ -637,6 +637,8 @@ export interface EmployeeTemplate {
   name: string;
   brain: BrainRef;
   role: string | null;
+  /** 職責描述（自由文字；部署時抄襲到 Instance，實例可個別修改；舊資料缺欄 → undefined）。 */
+  description?: string | null;
   /** W3（D-H3）：工具 allowlist（如 ["write-note"]；null＝預設集）。 */
   tools?: string[] | null;
   created_at: string;
@@ -648,6 +650,8 @@ export interface Employee {
   name: string;
   brain: BrainRef;
   role: string | null;
+  /** 職責描述（自由文字；進 system prompt 職務意識；舊資料缺欄 → undefined）。 */
+  description?: string | null;
   template_id: string | null;
   state: EmployeeState;
   /** W1（E13）：封存旗標（舊資料可能缺欄 → falsy）。 */
@@ -672,12 +676,13 @@ export const agentCreateTemplate = (
   name: string,
   brainId: string | null,
   role: string | null,
+  description: string | null = null,
   tools: string[] | null = null,
   workspaceId: string = AGENT_WS,
 ): Promise<{ template_id: string }> =>
   agentFetch<{ template_id: string }>("/api/templates", {
     method: "POST",
-    body: { workspace_id: workspaceId, name, brain_id: brainId, role, tools },
+    body: { workspace_id: workspaceId, name, brain_id: brainId, role, description, tools },
   });
 /** W3：開啟員工產出目錄（桌面殼能力——檔案管理員）。 */
 export const employeeOpenOutputDir = (): Promise<{ path: string }> =>
