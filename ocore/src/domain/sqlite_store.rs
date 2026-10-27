@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use super::models::{
     Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Message,
-    Project, Task, TaskStatus, Workspace,
+    Project, SkillProposal, Task, TaskStatus, Workspace,
 };
 use super::store::Store;
 
@@ -82,7 +82,11 @@ impl SqliteStore {
              CREATE INDEX IF NOT EXISTS idx_receipts_principal ON retrieval_receipts(principal_id); \
              CREATE TABLE IF NOT EXISTS knowledge_grants (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL, scope_id TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL); \
              CREATE INDEX IF NOT EXISTS idx_grants_principal ON knowledge_grants(principal_id); \
-             CREATE INDEX IF NOT EXISTS idx_grants_scope ON knowledge_grants(scope_id);",
+             CREATE INDEX IF NOT EXISTS idx_grants_scope ON knowledge_grants(scope_id); \
+             CREATE TABLE IF NOT EXISTS skill_proposals (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, employee_id TEXT NOT NULL, owner_principal TEXT, data TEXT NOT NULL); \
+             CREATE INDEX IF NOT EXISTS idx_skill_proposals_ws ON skill_proposals(workspace_id); \
+             CREATE INDEX IF NOT EXISTS idx_skill_proposals_employee ON skill_proposals(employee_id); \
+             CREATE INDEX IF NOT EXISTS idx_skill_proposals_principal ON skill_proposals(owner_principal);",
         )
         .map_err(|e| anyhow!("init schema: {e}"))?;
         Ok(())
@@ -721,6 +725,38 @@ impl Store for SqliteStore {
             params![employee_id],
         )
         .map_err(|e| anyhow!("delete_memory: {e}"))?;
+        Ok(())
+    }
+
+    fn put_skill_proposal(&self, p: &SkillProposal) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO skill_proposals (id, workspace_id, employee_id, owner_principal, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![p.id, p.workspace_id, p.employee_id, p.owner_principal, encode(p)?],
+        )
+        .map_err(|e| anyhow!("put_skill_proposal: {e}"))?;
+        Ok(())
+    }
+    fn get_skill_proposal(&self, id: &str) -> Result<Option<SkillProposal>> {
+        let conn = self.lock()?;
+        select_one(&conn, "skill_proposals", "id", id)
+    }
+    fn list_skill_proposals(&self, workspace_id: &str) -> Result<Vec<SkillProposal>> {
+        let conn = self.lock()?;
+        select_all(
+            &conn,
+            "skill_proposals",
+            "WHERE workspace_id = ?1",
+            params![workspace_id],
+        )
+    }
+    fn delete_skill_proposals_by_employee(&self, employee_id: &str) -> Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM skill_proposals WHERE employee_id = ?1",
+            params![employee_id],
+        )
+        .map_err(|e| anyhow!("delete_skill_proposals_by_employee: {e}"))?;
         Ok(())
     }
 }

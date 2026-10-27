@@ -19,8 +19,8 @@ pub mod tools;
 pub use models::{
     Artifact, ArtifactStatus, BrainRef, Commitment, CommitmentStatus, Employee, EmployeeState,
     EmployeeTemplate, Event, Memory, Message, MessageDirection, Project, ProjectStatus,
-    SenderAttribution, SenderKind, Task, TaskStatus, Timestamp, TodoItem, Workspace,
-    WorkspaceStatus,
+    SenderAttribution, SenderKind, SkillProposal, SkillProposalStatus, Task, TaskStatus, Timestamp,
+    TodoItem, Workspace, WorkspaceStatus,
 };
 pub use sqlite_store::SqliteStore;
 pub use store::{id_from_name, next_id, now_rfc3339, JsonStore, Store};

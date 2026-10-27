@@ -256,6 +256,65 @@ pub enum CommitmentStatus {
     Archived,
 }
 
+// ───────────────── SkillProposal（技能提名——三區發佈流的提案面）─────────────────
+
+/// 技能提名——員工把自建技能送審的提案（治理鐵律：員工只生產與提名，機器只預審與
+/// 留痕，人類是唯一有權移動檔案的角色）。提案通過＝伺服器**代為執行**人類決定（複製
+/// 草稿到目標區），全程留收據（`decided_by`／`decided_at`＋`skill_*` 事件）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SkillProposal {
+    pub id: String,
+    pub workspace_id: String,
+    /// 提名員工（provenance 與審計錨點）。
+    pub employee_id: String,
+    /// 員工名快照（核可卡顯示用；不隨員工改名漂移）。
+    pub employee_name: String,
+    /// 委任主體快照（核可權限的依據：主體本人或 manager/admin；None＝operator 歸屬）。
+    #[serde(default)]
+    pub owner_principal: Option<String>,
+    /// 技能目錄名（canonical id，`ocore::skills::sanitize_skill_name` 驗過）。
+    pub skill_name: String,
+    /// frontmatter name 快照（顯示用；缺省＝目錄名）。
+    pub skill_title: String,
+    /// frontmatter description 快照（核可卡顯示）。
+    #[serde(default)]
+    pub description: String,
+    /// 確定性 linter 報告（`ocore::skills::LintReport` 的 JSON）。
+    #[serde(default)]
+    pub linter: serde_json::Value,
+    /// 獨立子代理預審結論（原文；非 native 協定缺席——linter 仍在）。
+    #[serde(default)]
+    pub review_report: Option<String>,
+    /// 綜合風險（`low`｜`medium`｜`high`；以確定性 linter 為準，預審不改判）。
+    #[serde(default)]
+    pub risk: String,
+    /// 提名者的說明（可空）。
+    #[serde(default)]
+    pub note: Option<String>,
+    pub status: SkillProposalStatus,
+    /// 退回理由（`rejected` 帶；回饋給提名員工）。
+    #[serde(default)]
+    pub reject_reason: Option<String>,
+    pub created_at: Timestamp,
+    #[serde(default)]
+    pub decided_at: Option<Timestamp>,
+    /// 核可／退回／晉升者 principal id（收據）。
+    #[serde(default)]
+    pub decided_by: Option<String>,
+}
+
+/// 技能提案生命週期：`proposed → published_team → published_library`，或 `rejected`。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillProposalStatus {
+    Proposed,
+    /// 已發佈到主體個人區（團隊級——核可權限止步於此）。
+    PublishedTeam,
+    /// 已晉升公司共用庫（組織級——admin 專屬）。
+    PublishedLibrary,
+    Rejected,
+}
+
 // ───────────────── Task（Handbook Ch.10）─────────────────
 
 /// 寄件者類別（D-M1，2026-10-26）——收信職權語意的確定性錨點：

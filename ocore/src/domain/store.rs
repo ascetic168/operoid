@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use super::models::{
     Artifact, Commitment, CommitmentStatus, Employee, EmployeeTemplate, Event, Memory, Message,
-    Project, Task, TaskStatus, Workspace,
+    Project, SkillProposal, Task, TaskStatus, Workspace,
 };
 
 /// Domain 持久化介面。Phase 0 提供 collection 層級的讀寫；upsert 以 id 為準。
@@ -72,6 +72,15 @@ pub trait Store: Send + Sync {
         let mut out = Vec::new();
         for ws in self.list_workspaces()? {
             out.extend(self.list_commitments(&ws.id)?);
+        }
+        Ok(out)
+    }
+
+    /// 列出**所有** workspace 的技能提案（收件匣聚合用）。
+    fn list_all_skill_proposals(&self) -> Result<Vec<SkillProposal>> {
+        let mut out = Vec::new();
+        for ws in self.list_workspaces()? {
+            out.extend(self.list_skill_proposals(&ws.id)?);
         }
         Ok(out)
     }
@@ -196,6 +205,17 @@ pub trait Store: Send + Sync {
     fn delete_artifacts_by_producer(&self, produced_by: &str) -> Result<()>;
     /// 刪除某員工的 working memory。
     fn delete_memory(&self, employee_id: &str) -> Result<()>;
+
+    // ── 技能提案（三區發佈流的提案面）──
+
+    /// 寫入（upsert）一個技能提案。
+    fn put_skill_proposal(&self, p: &SkillProposal) -> Result<()>;
+    /// 依 id 讀取技能提案。
+    fn get_skill_proposal(&self, id: &str) -> Result<Option<SkillProposal>>;
+    /// 列出某 workspace 的技能提案（id 排序；過濾在 Rust 端——家法）。
+    fn list_skill_proposals(&self, workspace_id: &str) -> Result<Vec<SkillProposal>>;
+    /// 刪除某員工的全部技能提案（W1e 串聯刪除）。
+    fn delete_skill_proposals_by_employee(&self, employee_id: &str) -> Result<()>;
 }
 
 /// 檔案式 JSON store。所有實體存於 `<base>/domain/{workspaces,employees,
@@ -628,6 +648,27 @@ impl Store for JsonStore {
     fn delete_memory(&self, employee_id: &str) -> Result<()> {
         retain_where(&self.path("memories.json"), |m: &Memory| {
             m.employee_id != employee_id
+        })
+    }
+    fn put_skill_proposal(&self, p: &SkillProposal) -> Result<()> {
+        upsert_by_id(&self.path("skill-proposals.json"), p, |p| &p.id)
+    }
+    fn get_skill_proposal(&self, id: &str) -> Result<Option<SkillProposal>> {
+        Ok(self
+            .read::<SkillProposal>("skill-proposals.json")?
+            .into_iter()
+            .find(|p| p.id == id))
+    }
+    fn list_skill_proposals(&self, workspace_id: &str) -> Result<Vec<SkillProposal>> {
+        Ok(self
+            .read::<SkillProposal>("skill-proposals.json")?
+            .into_iter()
+            .filter(|p| p.workspace_id == workspace_id)
+            .collect())
+    }
+    fn delete_skill_proposals_by_employee(&self, employee_id: &str) -> Result<()> {
+        retain_where(&self.path("skill-proposals.json"), |p: &SkillProposal| {
+            p.employee_id != employee_id
         })
     }
 }

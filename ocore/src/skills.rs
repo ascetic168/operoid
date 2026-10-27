@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 技能清單檔名（生態系慣例）。
 pub const SKILL_MD: &str = "SKILL.md";
@@ -322,15 +322,15 @@ pub fn resolve_read_path(path: &str, areas: Option<&SkillAreas>) -> Option<Resul
 // ───────────────── 確定性 linter ─────────────────
 
 /// 單一 linter 發現（`level`: `high`｜`warn`｜`info`）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LintFinding {
-    pub level: &'static str,
-    pub code: &'static str,
+    pub level: String,
+    pub code: String,
     pub detail: String,
 }
 
 /// linter 報告（存入提案、給核可人看；`risk`: `low`｜`medium`｜`high`）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LintReport {
     pub risk: String,
     pub findings: Vec<LintFinding>,
@@ -406,8 +406,8 @@ pub fn lint_skill_text(text: &str, size_bytes: u64) -> LintReport {
         let hay = phrase.to_lowercase();
         if lower.contains(&hay) {
             findings.push(LintFinding {
-                level: "high",
-                code: "override_phrase",
+                level: "high".into(),
+                code: "override_phrase".into(),
                 detail: format!("命中覆寫指示措辭：「{phrase}」"),
             });
         }
@@ -415,8 +415,8 @@ pub fn lint_skill_text(text: &str, size_bytes: u64) -> LintReport {
     for kw in SECRET_KEYWORDS {
         if lower.contains(kw) {
             findings.push(LintFinding {
-                level: "warn",
-                code: "secret_keyword",
+                level: "warn".into(),
+                code: "secret_keyword".into(),
                 detail: format!("提及密鑰類詞彙：「{kw}」——請確認技能真的需要"),
             });
         }
@@ -424,16 +424,16 @@ pub fn lint_skill_text(text: &str, size_bytes: u64) -> LintReport {
     let url_count = lower.matches("http://").count() + lower.matches("https://").count();
     if url_count > 0 {
         findings.push(LintFinding {
-            level: "info",
-            code: "external_url",
+            level: "info".into(),
+            code: "external_url".into(),
             detail: format!("含 {url_count} 個外部位址連結"),
         });
     }
     for tool in OUTBOUND_TOOLS {
         if lower.contains(tool) {
             findings.push(LintFinding {
-                level: "info",
-                code: "outbound_reference",
+                level: "info".into(),
+                code: "outbound_reference".into(),
                 detail: format!("指示使用外送／shell 工具「{tool}」——執行時仍受工具授權約束"),
             });
         }
@@ -441,30 +441,30 @@ pub fn lint_skill_text(text: &str, size_bytes: u64) -> LintReport {
     let meta = parse_skill_md(text);
     if !meta.has_frontmatter {
         findings.push(LintFinding {
-            level: "warn",
-            code: "no_frontmatter",
+            level: "warn".into(),
+            code: "no_frontmatter".into(),
             detail: "缺 --- frontmatter 區塊（name／description）".into(),
         } );
     } else {
         if meta.description.is_empty() {
             findings.push(LintFinding {
-                level: "warn",
-                code: "no_description",
+                level: "warn".into(),
+                code: "no_description".into(),
                 detail: "frontmatter 缺 description——清單將難以被正確選用".into(),
             });
         }
         if meta.name.is_empty() {
             findings.push(LintFinding {
-                level: "info",
-                code: "no_name",
+                level: "info".into(),
+                code: "no_name".into(),
                 detail: "frontmatter 缺 name（將以目錄名代替）".into(),
             });
         }
     }
     if size_bytes > MAX_SKILL_MD_BYTES {
         findings.push(LintFinding {
-            level: "warn",
-            code: "oversize",
+            level: "warn".into(),
+            code: "oversize".into(),
             detail: format!(
                 "檔案 {} bytes 超過建議上限 {MAX_SKILL_MD_BYTES}——read_file 將讀不完",
                 size_bytes

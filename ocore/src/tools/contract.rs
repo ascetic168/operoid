@@ -21,6 +21,7 @@ pub const FN_WRITE_FILE: &str = "write_file";
 pub const FN_EDIT_FILE: &str = "edit_file";
 pub const FN_RUN_COMMAND: &str = "run_command";
 pub const FN_SPAWN_SUBAGENT: &str = "spawn_subagent";
+pub const FN_PROPOSE_SKILL: &str = "propose_skill";
 
 // ── allowlist id（保留給未來的治理開關；v1 spawn_subagent 為預設啟用核心工具）──
 pub const TOOL_SPAWN_SUBAGENT: &str = "spawn-subagent";
@@ -124,6 +125,20 @@ pub fn turn_tool_contracts(ctx: &crate::domain::tools::ToolCtx) -> Vec<ToolContr
                 "hint": {"type": "string", "description": "額外指示（可省）：查詢角度建議、關注點、期望的輸出格式"}
             }),
             &["task"],
+        ),
+    });
+    // ── 技能提名（三區發佈流的提案面；核心治理工具，不設 allowlist 閘——它自己不發佈任何東西）──
+    defs.push(ToolContract {
+        name: FN_PROPOSE_SKILL,
+        description: "把你寫好的技能（工作區 skills/<名稱>/SKILL.md）提名送審：系統先做確定性\
+                     安全檢查，再派一個獨立子代理預審，最後由你的委任主體核可——核可過才會發佈到\
+                     主體的個人技能區給團隊使用。提名不是發佈；你不會因此獲得或失去任何權限。",
+        parameters: obj_schema(
+            serde_json::json!({
+                "skill": {"type": "string", "description": "技能目錄名（skills/ 下的目錄名；僅 a-z A-Z 0-9 _ -）"},
+                "note": {"type": "string", "description": "給核可人的說明：這技能做什麼、為什麼值得團隊使用（可省）"}
+            }),
+            &["skill"],
         ),
     });
     // ── 員工間信箱（D-M2/D-M3；`internal_mail_enabled` 總閘——關閉即不存在）──
