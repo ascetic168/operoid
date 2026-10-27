@@ -355,6 +355,7 @@ mod tests {
                     brain: BrainRef { brain_id: "b1".into() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,

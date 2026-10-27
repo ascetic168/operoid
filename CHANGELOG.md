@@ -15,6 +15,35 @@
 
 ## [v0.5.9] - 2026-10-27
 
+### Employee email binding with obridge.toml auto-sync (core & server)
+
+An AI employee's external email becomes a first-class property of the
+employee instead of config living only in obridge.toml — answering "how
+do I give/reassign an employee's address after deploy?".
+
+- `Employee` gains `email: Option<String>` (serde-default; no
+  migration; template-level deliberately omitted — addresses are
+  per-instance). `deploy_instance` takes it (trimmed, must contain '@',
+  blank → None; invalid rejects the deploy) and `PATCH
+  /api/employees/{id}` accepts an `email` field (blank clears; archived
+  refuse) via new `update_employee_email_core` with an `email_changed`
+  governance event. The Tauri `agent_deploy_instance` command gains the
+  argument for parity.
+- oserver syncs the binding into obridge.toml on deploy and on patch
+  (`obridge_admin::sync_employee_email`): strips the employee's stale
+  routes/senders entries, then adds `routes: {address → employee}` and
+  `senders: {employee → address, name = employee name}` on the target
+  channel (the one already holding the employee's entries, else the
+  first editable email-imap channel). Writes go through the existing
+  `write_checked` path (temp file → `obridge --check` → atomic rename);
+  obridge hot-reloads within 2s. Missing config/channel → logged,
+  deploy/edit still succeeds (the field remains the source of truth).
+  Admins can still fine-tune in ObridgeView — sync only touches the
+  employee's own entries.
+- Tests: deploy email trim/invalid rejection, update set/clear/archived
+  lifecycle, and a TOML-sync test asserting add/clear semantics with
+  other employees' entries and non-editable channels preserved.
+
 ### User console: chat with colleagues' AI employees
 
 The user web app now supports the open chat semantics end to end.

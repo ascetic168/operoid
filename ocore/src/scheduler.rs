@@ -531,6 +531,7 @@ mod tests {
             brain: BrainRef { brain_id: "b".into() },
             role: None,
             description: None,
+            email: None,
             template_id: None,
             state,
             archived,

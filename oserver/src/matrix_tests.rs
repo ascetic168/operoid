@@ -700,6 +700,7 @@ async fn artifact_access_control_end_to_end() {
                 brain: ocore::domain::BrainRef { brain_id: "__default__".into() },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: ocore::domain::EmployeeState::Sleeping,
                 archived: false,
@@ -837,5 +838,81 @@ async fn login_lockout_after_repeated_failures() {
     )
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "鎖定期間正確密碼也拒");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// R2 通道綁定同步：`sync_employee_email` 對 obridge.toml 的 routes/senders
+/// 新增／清除，他人條目與 preserved 頻道原樣保留。
+#[test]
+fn sync_employee_email_updates_obridge_toml() {
+    let dir = temp_dir("obridge-sync");
+    std::fs::create_dir_all(dir.join("obridge")).unwrap();
+    let cfg = dir.join("obridge").join("obridge.toml");
+    std::fs::write(
+        &cfg,
+        r#"[operoid]
+ingress_url = "http://127.0.0.1:1/event"
+ingress_secret = "s"
+
+[listen]
+port = 17401
+secret = "obridge-send-secret"
+
+[[channels]]
+type = "email-imap"
+source = "email"
+
+[channels.email_imap]
+poll_secs = 60
+
+[channels.email_imap.imap]
+host = "imap.test"
+username = "shared@test"
+password = "p"
+
+[channels.email_imap.smtp]
+host = "smtp.test"
+username = "shared@test"
+password = "p"
+
+[[channels.email_imap.routes]]
+address = "old@test"
+employee = "emp-a"
+
+[[channels]]
+type = "wasm"
+source = "other"
+
+[channels.wasm]
+plugin = "plugins/slack-30.wasm"
+"#,
+    )
+    .unwrap();
+    // 新增：emp-b 綁定 bob@test（含 senders 寄件身分）。
+    assert!(
+        crate::obridge_admin::sync_employee_email(&dir, "emp-b", "Bob 客服", Some("bob@test"))
+            .unwrap()
+    );
+    let doc: toml::Value = toml::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+    let ei = &doc["channels"][0]["email_imap"];
+    let routes = ei["routes"].as_array().unwrap();
+    assert!(routes
+        .iter()
+        .any(|v| v["address"].as_str() == Some("bob@test") && v["employee"].as_str() == Some("emp-b")));
+    assert!(
+        routes.iter().any(|v| v["address"].as_str() == Some("old@test")),
+        "他人（emp-a）條目保留"
+    );
+    let senders = ei["senders"].as_array().unwrap();
+    assert!(senders.iter().any(|v| v["employee"].as_str() == Some("emp-b")
+        && v["address"].as_str() == Some("bob@test")
+        && v["name"].as_str() == Some("Bob 客服")));
+    assert_eq!(doc["channels"][1]["type"].as_str(), Some("wasm"), "preserved 頻道原樣保留");
+    // 清除（email=None）→ 僅移除 emp-b 條目。
+    assert!(crate::obridge_admin::sync_employee_email(&dir, "emp-b", "Bob 客服", None).unwrap());
+    let doc: toml::Value = toml::from_str(&std::fs::read_to_string(&cfg).unwrap()).unwrap();
+    let routes = doc["channels"][0]["email_imap"]["routes"].as_array().unwrap();
+    assert!(!routes.iter().any(|v| v["employee"].as_str() == Some("emp-b")));
+    assert!(routes.iter().any(|v| v["employee"].as_str() == Some("emp-a")));
     std::fs::remove_dir_all(&dir).ok();
 }

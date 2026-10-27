@@ -692,6 +692,7 @@ mod tests {
             brain: crate::domain::models::BrainRef { brain_id: "__default__".into() },
             role: None,
             description: None,
+            email: None,
             template_id: None,
             state: crate::domain::models::EmployeeState::Sleeping,
             archived: false,

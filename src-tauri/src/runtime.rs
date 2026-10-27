@@ -50,6 +50,7 @@ pub async fn agent_seed<R: tauri::Runtime>(
         },
         role: Some("general".into()),
         description: None,
+        email: None,
         template_id: None,
         state: EmployeeState::Sleeping,
         archived: false,
@@ -97,6 +98,7 @@ pub async fn agent_recruit<R: tauri::Runtime>(
         brain: BrainRef { brain_id },
         role: None,
         description: None,
+        email: None,
         template_id: None,
         state: EmployeeState::Sleeping,
         archived: false,
@@ -143,13 +145,14 @@ pub async fn agent_deploy_instance<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     template_id: String,
     instance_name: String,
+    email: Option<String>,
 ) -> Result<DeployResult, AppError> {
     let cfg = app_config::load(&app)?;
     if !cfg.agent_os_enabled {
         return Err(AppError::new("agent_os.disabled"));
     }
     let store = SqliteStore::open(agent_db_path(&app)?)?;
-    let employee_id = deploy_instance(&store, &template_id, &instance_name, None)?;
+    let employee_id = deploy_instance(&store, &template_id, &instance_name, None, email.as_deref())?;
     Ok(DeployResult { employee_id })
 }
 

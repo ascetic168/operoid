@@ -95,6 +95,10 @@ pub struct Employee {
     /// 進 system prompt（身分卡）強化職務意識。
     #[serde(default)]
     pub description: Option<String>,
+    /// 對外 email（實例層級；部署時可帶、事後可改）。單一真相在 Employee——oserver 於
+    /// 設定／變更時同步寫入 obridge.toml 的 routes（地址→employee）＋senders（employee→From）。
+    #[serde(default)]
+    pub email: Option<String>,
     /// 溯源：由哪個 [`EmployeeTemplate`] 部署而來（None＝獨立建立，如 `agent_seed`／`agent_recruit`）。
     #[serde(default)]
     pub template_id: Option<String>,
@@ -483,6 +487,7 @@ mod tests {
             },
             role: None,
             description: None,
+            email: None,
             template_id: None,
             state: EmployeeState::Created,
             archived: false,

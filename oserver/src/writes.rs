@@ -26,7 +26,7 @@ use ocore::runtime::{
     reject_commitment_core, registry_drill_core, registry_save_core, review_commitment_core,
     deploy_instance, ensure_workspace_core, rename_employee_core, rename_template_core,
     send_message_core, stop_employee_core, unarchive_employee_core,
-    update_employee_description_core, update_employee_tools_core,
+    update_employee_description_core, update_employee_email_core, update_employee_tools_core,
 };
 
 use crate::routes::{err_response, open_store, require_auth, require_identity, ServerState};
@@ -369,6 +369,8 @@ struct PatchEmployeeBody {
     name: Option<String>,
     /// 有帶才改（職責描述；空字串＝清除）。空白 trim 後不落地。
     description: Option<String>,
+    /// 有帶才改（對外 email；空字串＝清除）。變更後同步 obridge.toml routes/senders。
+    email: Option<String>,
 }
 
 async fn api_patch_employee(
@@ -391,6 +393,18 @@ async fn api_patch_employee(
         }
         if let Some(desc) = b.description {
             update_employee_description_core(&store, &id, Some(&desc))?;
+        }
+        if let Some(email) = b.email {
+            let emp = update_employee_email_core(&store, &id, Some(&email))?;
+            // obridge.toml 同步（best-effort）：有值→加/改 routes+senders；清除→移除。
+            if let Err(e) = crate::obridge_admin::sync_employee_email(
+                &st.settings_dir,
+                &id,
+                &emp.name,
+                emp.email.as_deref(),
+            ) {
+                eprintln!("[oserver] email 同步 obridge.toml 失敗（{id}）：{e}");
+            }
         }
         store
             .get_employee(&id)?
@@ -425,6 +439,9 @@ async fn api_stop_employee(
 struct DeployBody {
     template_id: String,
     instance_name: String,
+    /// 對外 email（選填）。單一真相在 Employee.email——server 於部署後同步
+    /// obridge.toml 的 routes/senders（best-effort：設定檔缺漏僅記事件，不擋部署）。
+    email: Option<String>,
 }
 
 /// R2：部署記錄部署者（`owner_principal`）——「限自身」歸屬的資料源。
@@ -439,8 +456,24 @@ async fn api_deploy(
     let b = body.0;
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
-        let employee_id =
-            deploy_instance(&store, &b.template_id, &b.instance_name, identity.as_ref().map(|i| i.name.as_str()))?;
+        let employee_id = deploy_instance(
+            &store,
+            &b.template_id,
+            &b.instance_name,
+            identity.as_ref().map(|i| i.name.as_str()),
+            b.email.as_deref(),
+        )?;
+        // email 通道綁定同步（best-effort——obridge.toml 缺漏不擋部署）。
+        if let Some(email) = b.email.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Err(e) = crate::obridge_admin::sync_employee_email(
+                &st.settings_dir,
+                &employee_id,
+                &b.instance_name,
+                Some(email),
+            ) {
+                eprintln!("[oserver] email 同步 obridge.toml 失敗（{employee_id}）：{e}");
+            }
+        }
         Ok(json!({ "employee_id": employee_id }))
     })
     .await;

@@ -806,6 +806,18 @@ fn employee_desc(emp: &Employee) -> Option<&str> {
         .filter(|d| !d.is_empty())
 }
 
+/// email 欄位正規化（部署／更新共同語意）：trim；空白＝None（清除）；
+/// 須含 '@' 且不含空白——寬鬆語法檢查（實際送達性由郵件伺服器別名設定決定）。
+fn normalize_email(email: Option<&str>) -> Result<Option<String>, String> {
+    let Some(e) = email.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if !e.contains('@') || e.contains(char::is_whitespace) {
+        return Err(format!("invalid email: {e}"));
+    }
+    Ok(Some(e.to_string()))
+}
+
 /// 對話系統 prompt：基礎 [`TURN_SYSTEM`] ＋職責描述（若有）＋ write 動作說明（allowlist 閘門）＋
 /// 已授權類別清單（Ch.20 §5——登記表有效的 Fenced/Owned 類別；員工看不到的類別
 /// 就聲稱不了，封閉白名單的廉價實現）。
@@ -3668,11 +3680,14 @@ pub fn satisfy_commitment_core(
 
 /// 從 template 部署一個獨立 Instance（Ch.04 §7）：抄襲 brain／role、設 `template_id`、
 /// fresh Sleeping。抽成函式以便單測（免 AppHandle）。
+/// `email`（R2 通道綁定）：trim／空白→None／須含 '@' 且無空白——單一真相在 Employee，
+/// oserver 於呼叫後另行同步 obridge.toml。
 pub fn deploy_instance(
     store: &(dyn Store + Send + Sync),
     template_id: &str,
     instance_name: &str,
     deployed_by: Option<&str>,
+    email: Option<&str>,
 ) -> anyhow::Result<String> {
     let tmpl = store
         .get_template(template_id)?
@@ -3683,6 +3698,7 @@ pub fn deploy_instance(
         .map(|e| e.id)
         .collect();
     let emp_id = id_from_name(instance_name, &existing);
+    let email = normalize_email(email).map_err(anyhow::Error::msg)?;
     store.put_employee(&Employee {
         id: emp_id.clone(),
         workspace_id: tmpl.workspace_id.clone(),
@@ -3690,6 +3706,7 @@ pub fn deploy_instance(
         brain: tmpl.brain.clone(),
         role: tmpl.role.clone(),
         description: tmpl.description.clone(),
+        email,
         template_id: Some(template_id.to_string()),
         state: EmployeeState::Sleeping,
         archived: false,
@@ -4319,6 +4336,7 @@ Caption-only figure（無原圖 → 不收）
                 },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -4383,6 +4401,7 @@ Caption-only figure（無原圖 → 不收）
                 },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: true,
@@ -4414,7 +4433,7 @@ Caption-only figure（無原圖 → 不收）
             None,
         )
         .unwrap();
-        let emp_id = deploy_instance(&store, "writer", "W1", None).unwrap();
+        let emp_id = deploy_instance(&store, "writer", "W1", None, None).unwrap();
         let emp = store.get_employee(&emp_id).unwrap().unwrap();
         assert_eq!(
             emp.description.as_deref(),
@@ -4438,6 +4457,7 @@ Caption-only figure（無原圖 → 不收）
             },
             role: None,
             description: Some("負責週報彙整".into()),
+            email: None,
             template_id: None,
             state: EmployeeState::Sleeping,
             archived: false,
@@ -4477,6 +4497,7 @@ Caption-only figure（無原圖 → 不收）
             },
             role: None,
             description: None,
+            email: None,
             template_id: None,
             state: EmployeeState::Sleeping,
             archived: false,
@@ -4496,6 +4517,63 @@ Caption-only figure（無原圖 → 不收）
         assert!(sender_context_line(&s).contains("need-to-know"));
     }
 
+    /// email 綁定：部署帶 email（trim）／無效拒絕；更新三態（設定／清除／archived 拒改）＋事件留痕。
+    #[test]
+    fn employee_email_binding_lifecycle() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let cfg = app_config::AppConfig::default();
+        create_template_core(
+            &cfg,
+            &store,
+            "ws",
+            "writer",
+            Some("__default__"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        // 無效 email → 部署拒絕。
+        assert!(deploy_instance(&store, "writer", "W0", None, Some("not-an-email")).is_err());
+        // 有效（含前後空白）→ trim 落地。
+        let emp_id = deploy_instance(&store, "writer", "W1", None, Some("  steve@corp.com  "))
+            .unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(emp.email.as_deref(), Some("steve@corp.com"));
+        // 更新：設定 → 清除（空白）。
+        let emp = update_employee_email_core(&store, &emp_id, Some("new@corp.com")).unwrap();
+        assert_eq!(emp.email.as_deref(), Some("new@corp.com"));
+        let emp = update_employee_email_core(&store, &emp_id, Some("   ")).unwrap();
+        assert_eq!(emp.email, None);
+        let evs = store.list_events_by_employee(&emp_id, 10).unwrap();
+        assert!(evs.iter().any(|e| e.kind == "email_changed"), "治理事件留痕");
+        // archived 拒改。
+        store
+            .put_employee(&Employee {
+                id: "emp-arch2".into(),
+                workspace_id: "ws".into(),
+                name: "A".into(),
+                brain: BrainRef {
+                    brain_id: "__default__".into(),
+                },
+                role: None,
+                description: None,
+                email: None,
+                template_id: None,
+                state: EmployeeState::Sleeping,
+                archived: true,
+                tools: None,
+                created_at: "t".into(),
+                owner_principal: None,
+            })
+            .unwrap();
+        let err = update_employee_email_core(&store, "emp-arch2", Some("x@y.z")).unwrap_err();
+        assert_eq!(err.code, "agent_os.employeeArchived");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// watch payload 帶部署者顯示名：principals 查得到 → display_name；查無 → 原 id（可辨識性優先）。
     #[test]
     fn watch_payload_resolves_owner_display_name() {
@@ -4512,6 +4590,7 @@ Caption-only figure（無原圖 → 不收）
             },
             role: None,
             description: None,
+            email: None,
             template_id: None,
             state: EmployeeState::Sleeping,
             archived: false,
@@ -4912,6 +4991,7 @@ Caption-only figure（無原圖 → 不收）
                 brain: BrainRef { brain_id: "__default__".into() },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -6300,7 +6380,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             Some(&[crate::write_note::TOOL_WRITE_NOTE]),
         )
         .unwrap();
-        let emp_id = deploy_instance(&store, "writer", "W1", None).unwrap();
+        let emp_id = deploy_instance(&store, "writer", "W1", None, None).unwrap();
         let emp = store.get_employee(&emp_id).unwrap().unwrap();
         assert_eq!(
             emp.tools,
@@ -6850,6 +6930,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -6959,6 +7040,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -7071,6 +7153,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
                 description: None,
+                email: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -7196,6 +7279,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: "__default__".into() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7333,6 +7417,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7388,6 +7473,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7497,6 +7583,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: active.clone() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7576,9 +7663,9 @@ todos: Vec::new(),                updated_at: "t".into(),
             })
             .unwrap();
         // 部署 3 個 instance
-        let tw = deploy_instance(&store, "steve", "Steve-TW", None).unwrap();
-        let nj = deploy_instance(&store, "steve", "Steve-NJ", None).unwrap();
-        let vn = deploy_instance(&store, "steve", "Steve-VN", None).unwrap();
+        let tw = deploy_instance(&store, "steve", "Steve-TW", None, None).unwrap();
+        let nj = deploy_instance(&store, "steve", "Steve-NJ", None, None).unwrap();
+        let vn = deploy_instance(&store, "steve", "Steve-VN", None, None).unwrap();
 
         let emps = store.list_employees(&ws).unwrap();
         assert_eq!(emps.len(), 3);
@@ -7662,6 +7749,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7722,6 +7810,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: "__default__".into() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7845,6 +7934,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: active.clone() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7912,6 +8002,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     brain: BrainRef { brain_id: "x".into() },
                     role: None,
                     description: None,
+                    email: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -8744,6 +8835,35 @@ pub fn update_employee_description_core(
     Ok(e)
 }
 
+/// 對外 email 更新（實例層級）。`None`／空白＝清除；須含 '@' 且無空白。
+/// 治理事件 `email_changed` 留痕（from→to）。obridge.toml 的 routes/senders 同步
+/// 由呼叫端（oserver）承擔——ocore 只管單一真相欄位。
+pub fn update_employee_email_core(
+    store: &(dyn Store + Send + Sync),
+    employee_id: &str,
+    email: Option<&str>,
+) -> Result<Employee, AppError> {
+    let mut e = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    if e.archived {
+        return Err(AppError::new("agent_os.employeeArchived").p("id", employee_id));
+    }
+    let email = normalize_email(email)
+        .map_err(|m| AppError::new("agent_os.invalidEmail").p("detail", m))?;
+    let from = e.email.clone();
+    e.email = email.clone();
+    store.put_employee(&e)?;
+    record_event(
+        store,
+        &e.workspace_id,
+        employee_id,
+        "email_changed",
+        serde_json::json!({ "from": from, "to": email }).to_string(),
+    );
+    Ok(e)
+}
+
 /// 投遞一則人類訊息：Message{In}（對話紀錄）＋ Inbox Task（Assigned）＋ wake。
 /// scheduler 的 scan_inbox/run_inbox 會消化——訊息無 commitment 也會被處理（6c）。
 /// D-M1：`from` 為寄件者歸因——委任主體（Owner）的訊息渲染為職權指示，其他人類（Human）
@@ -9118,6 +9238,7 @@ mod recovery_tests {
             brain: BrainRef { brain_id: "brain".into() },
             role: None,
             description: None,
+            email: None,
             template_id: None,
             state: EmployeeState::Working,
             archived: false,

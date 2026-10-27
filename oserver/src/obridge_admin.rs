@@ -740,6 +740,101 @@ fn write_checked(cfg_path: &Path, doc: &toml::Value, exe: Option<&Path>) -> Resu
     Ok(())
 }
 
+/// R2 通道綁定同步：把 `Employee.email` 變更反映進 obridge.toml——先剔除該員工既有的
+/// routes／senders 條目，有值時在目標頻道加 `routes += {address→employee}` 與
+/// `senders += {employee→address, name=員工名}`。
+/// 目標頻道：優先原本含該員工條目的頻道，否則第一個 editable email-imap 頻道。
+/// 設定檔不存在／無 channels／無可編輯頻道 → `Ok(false)`（email 欄位留作宣告，
+/// 呼叫端記 log 即可——不擋員工操作）；其餘走 [`write_checked`]（obridge --check＋原子改名，
+/// obridge 2s mtime 熱載免重啟）。管理員仍可在 ObridgeView 手動微調（本函式只動該員工的條目）。
+pub fn sync_employee_email(
+    settings_dir: &Path,
+    employee_id: &str,
+    employee_name: &str,
+    email: Option<&str>,
+) -> Result<bool, AppError> {
+    let cfg_path = config_path(settings_dir);
+    if !cfg_path.exists() {
+        return Ok(false);
+    }
+    let raw = std::fs::read_to_string(&cfg_path)
+        .map_err(|e| AppError::new("obridge.configReadFail").p("detail", e.to_string()))?;
+    let mut doc: toml::Value = toml::from_str(&raw)
+        .map_err(|e| AppError::new("obridge.configParseFail").p("detail", e.to_string()))?;
+    let Some(channels) = doc.get_mut("channels").and_then(|v| v.as_array_mut()) else {
+        return Ok(false);
+    };
+    // 剔除該員工的舊條目＋找出目標頻道（原本含其條目者優先）。
+    let mut target_idx: Option<usize> = None;
+    for (i, ch) in channels.iter_mut().enumerate() {
+        if !editable_email(ch) {
+            continue;
+        }
+        let Some(ei) = ch.get_mut("email_imap").and_then(|v| v.as_table_mut()) else {
+            continue;
+        };
+        let mut had_here = false;
+        for key in ["routes", "senders"] {
+            if let Some(arr) = ei.get_mut(key).and_then(|v| v.as_array_mut()) {
+                let before = arr.len();
+                arr.retain(|v| {
+                    v.get("employee").and_then(|x| x.as_str()) != Some(employee_id)
+                });
+                had_here |= arr.len() != before;
+            }
+        }
+        if had_here && target_idx.is_none() {
+            target_idx = Some(i);
+        }
+    }
+    let ti = match target_idx {
+        Some(i) => i,
+        None => match channels.iter().position(|ch| editable_email(ch)) {
+            Some(i) => i,
+            None => return Ok(false),
+        },
+    };
+    if let Some(email) = email.map(str::trim).filter(|s| !s.is_empty()) {
+        let Some(ei) = channels[ti]
+            .get_mut("email_imap")
+            .and_then(|v| v.as_table_mut())
+        else {
+            return Ok(false);
+        };
+        let mut route = toml::map::Map::new();
+        route.insert("address".into(), toml::Value::String(email.to_string()));
+        route.insert(
+            "employee".into(),
+            toml::Value::String(employee_id.to_string()),
+        );
+        let mut sender = toml::map::Map::new();
+        sender.insert(
+            "employee".into(),
+            toml::Value::String(employee_id.to_string()),
+        );
+        sender.insert("address".into(), toml::Value::String(email.to_string()));
+        sender.insert(
+            "name".into(),
+            toml::Value::String(employee_name.to_string()),
+        );
+        let routes = ei
+            .entry("routes")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        if let Some(arr) = routes.as_array_mut() {
+            arr.push(toml::Value::Table(route));
+        }
+        let senders = ei
+            .entry("senders")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        if let Some(arr) = senders.as_array_mut() {
+            arr.push(toml::Value::Table(sender));
+        }
+    }
+    let cfg = crate::config::load_config(settings_dir);
+    write_checked(&cfg_path, &doc, resolve_exe(&cfg).as_deref())?;
+    Ok(true)
+}
+
 /// 跑 `obridge --check --config <path>`（10s 逾時）。stderr 導回呼叫端供錯誤明細。
 fn check_config(exe: &Path, cfg: &Path) -> Result<(), AppError> {
     let mut child = match std::process::Command::new(exe)
