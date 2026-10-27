@@ -16,6 +16,7 @@ interface WatchPayload {
     state: string
     role: string | null
     description: string | null
+    email: string | null
     archived?: boolean
     owner_principal: string | null
   }
@@ -72,6 +73,7 @@ const proposals = computed(() => w.value?.proposals ?? [])
 // ── 部署者＋職責描述（詳情行）——manager/admin 恆可編輯（RBAC：manager 以上不限歸屬）。──
 const ownerName = computed(() => w.value?.owner_display_name ?? '')
 const empDesc = computed(() => w.value?.employee.description?.trim() ?? '')
+const empEmail = computed(() => w.value?.employee.email?.trim() ?? '')
 const canEditDesc = computed(() => {
   const emp = w.value?.employee
   return !!emp && !emp.archived
@@ -497,6 +499,7 @@ onBeforeUnmount(() => {
       <span v-if="ownerName" class="muted">
         {{ t('chat.deployedBy') }}：<strong class="owner">{{ ownerName }}</strong>
       </span>
+      <span v-if="empEmail" class="muted">✉ {{ empEmail }}</span>
       <span v-if="empDesc && !editingDesc" class="muted desc" :title="empDesc">
         {{ t('chat.desc') }}：{{ empDesc }}
       </span>

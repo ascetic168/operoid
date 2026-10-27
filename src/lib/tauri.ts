@@ -652,6 +652,8 @@ export interface Employee {
   role: string | null;
   /** 職責描述（自由文字；進 system prompt 職務意識；舊資料缺欄 → undefined）。 */
   description?: string | null;
+  /** 對外 email（實例層級；舊資料缺欄 → undefined）。 */
+  email?: string | null;
   template_id: string | null;
   state: EmployeeState;
   /** W1（E13）：封存旗標（舊資料可能缺欄 → falsy）。 */

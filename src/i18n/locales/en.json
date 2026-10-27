@@ -58,6 +58,7 @@
     "empty": "No instances yet. Deploy one from a template (e.g. Steve{'@'}TW).",
     "deploy": "Deploy Instance",
     "template": "Template",
+    "email": "External email",
     "pickTemplate": "Pick a template…",
     "instanceName": "Instance name",
     "instanceNamePh": "e.g. Steve{'@'}TW",

@@ -27,6 +27,8 @@
       "heading": "Deploy a new employee",
       "template": "Template",
       "name": "Employee name",
+      "email": "External email (optional)",
+      "emailPh": "e.g. steve@corp.com — must be an alias that lands in the configured mailbox",
       "submit": "Deploy",
       "empty": "No templates yet — ask an admin to create one"
     },

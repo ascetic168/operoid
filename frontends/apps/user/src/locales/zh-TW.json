@@ -27,6 +27,8 @@
       "heading": "部署新員工",
       "template": "選擇模板",
       "name": "員工名稱",
+      "email": "對外 email（選填）",
+      "emailPh": "例如：steve@corp.com——須為所設信箱收得到的別名地址",
       "submit": "部署",
       "empty": "尚無模板——請系統管理者先建立"
     },

@@ -15,6 +15,16 @@
 
 ## [v0.5.9] - 2026-10-27
 
+### Email on deploy form and employee details (web & desktop)
+
+UI for the new email binding: the user console deploy form gains an
+optional external-email field (with a hint that the address must be an
+alias landing in the configured mailbox), employee cards and the
+user/manager chat detail line show the address (✉), and the desktop
+instance detail modal shows it read-only (desktop has no oserver
+sync — the field is declarative there). TS types and i18n keys
+(en/zh-CN/zh-TW) updated accordingly.
+
 ### Employee email binding with obridge.toml auto-sync (core & server)
 
 An AI employee's external email becomes a first-class property of the

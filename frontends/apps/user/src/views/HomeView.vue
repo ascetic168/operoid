@@ -11,6 +11,7 @@ interface EmployeeRow {
   name: string
   state: string
   description: string | null
+  email: string | null
   owner_principal: string | null
   /** 部署者顯示名（後端合併欄位；查無 → 原 principal id）。 */
   owner_display_name?: string | null
@@ -38,6 +39,7 @@ const selectedTemplate = computed(() => templates.value.find((x) => x.id === tem
 // 部署表單
 const templateId = ref('')
 const instanceName = ref('')
+const deployEmail = ref('')
 const deploying = ref(false)
 
 let close: (() => void) | null = null
@@ -70,8 +72,10 @@ async function deploy(): Promise<void> {
     await api.post('/api/employees/deploy', {
       template_id: templateId.value,
       instance_name: instanceName.value.trim(),
+      email: deployEmail.value.trim() || null,
     })
     instanceName.value = ''
+    deployEmail.value = ''
     await load()
   } catch (e) {
     actionError.value = e instanceof ApiError ? e.code : 'server.internal'
@@ -126,6 +130,8 @@ onBeforeUnmount(() => {
           </select>
           <label for="iname">{{ t('home.deploy.name') }}</label>
           <input id="iname" v-model="instanceName" data-test="instance" />
+          <label for="iemail">{{ t('home.deploy.email') }}</label>
+          <input id="iemail" v-model="deployEmail" data-test="email" :placeholder="t('home.deploy.emailPh')" />
           <p v-if="selectedTemplate?.description" class="muted tpldesc">{{ selectedTemplate.description }}</p>
           <p style="margin-top: 0.9rem">
             <button class="primary" :disabled="deploying" data-test="deploy" @click="deploy">
@@ -143,6 +149,7 @@ onBeforeUnmount(() => {
         <h2>{{ e.name }}</h2>
         <p class="muted">{{ t('home.emp.state') }}：<code>{{ e.state }}</code></p>
         <p v-if="e.owner_display_name" class="muted">{{ t('home.emp.owner') }}：{{ e.owner_display_name }}</p>
+        <p v-if="e.email" class="muted">✉ {{ e.email }}</p>
         <p v-if="e.description?.trim()" class="muted clamp2" :title="e.description">{{ e.description }}</p>
         <div class="row">
           <router-link class="btn" :to="'/chat/' + encodeURIComponent(e.id)" data-test="chat">
@@ -167,6 +174,7 @@ onBeforeUnmount(() => {
         <h2>{{ e.name }}</h2>
         <p class="muted">{{ t('home.emp.state') }}：<code>{{ e.state }}</code></p>
         <p v-if="e.owner_display_name" class="muted">{{ t('home.emp.owner') }}：{{ e.owner_display_name }}</p>
+        <p v-if="e.email" class="muted">✉ {{ e.email }}</p>
         <p v-if="e.description?.trim()" class="muted clamp2" :title="e.description">{{ e.description }}</p>
         <div class="row">
           <router-link class="btn" :to="'/chat/' + encodeURIComponent(e.id)" data-test="chat-others">

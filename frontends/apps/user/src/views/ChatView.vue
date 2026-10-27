@@ -16,6 +16,7 @@ interface WatchPayload {
     state: string
     role: string | null
     description: string | null
+    email: string | null
     archived?: boolean
     owner_principal: string | null
   }
@@ -74,6 +75,7 @@ const proposals = computed(() => w.value?.proposals ?? [])
 //    部署者本人或 manager/admin 編輯（PATCH /api/employees/{id}，空字串＝清除）。──
 const ownerName = computed(() => w.value?.owner_display_name ?? '')
 const empDesc = computed(() => w.value?.employee.description?.trim() ?? '')
+const empEmail = computed(() => w.value?.employee.email?.trim() ?? '')
 // R2「聊天為主」：部署者本人或 manager/admin＝可治理面（編輯描述／提案核可／SSE 即時流）；
 // 其他同事＝對話面（可對話＋看對話串，員工級 stream 仍限治理面——thinking 屬即時推理）。
 const canManage = computed(() => {
@@ -516,6 +518,7 @@ onBeforeUnmount(() => {
       <span v-if="ownerName" class="muted">
         {{ t('chat.deployedBy') }}：<strong class="owner">{{ ownerName }}</strong>
       </span>
+      <span v-if="empEmail" class="muted">✉ {{ empEmail }}</span>
       <span v-if="empDesc && !editingDesc" class="muted desc" :title="empDesc">
         {{ t('chat.desc') }}：{{ empDesc }}
       </span>

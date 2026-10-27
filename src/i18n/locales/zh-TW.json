@@ -58,6 +58,7 @@
     "empty": "尚無實體。從模板部署一個（例如 Steve{'@'}TW）。",
     "deploy": "部署新實體",
     "template": "來源模板",
+    "email": "對外 email",
     "pickTemplate": "選擇模板…",
     "instanceName": "實體名稱",
     "instanceNamePh": "例如：Steve{'@'}TW",

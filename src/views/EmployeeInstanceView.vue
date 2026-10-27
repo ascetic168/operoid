@@ -783,6 +783,8 @@ const archivedEmployees = computed(() => store.employees.filter((e) => e.archive
             <dd>{{ detailTarget.state }}</dd>
             <dt class="text-muted-foreground">{{ t("templates.description") }}</dt>
             <dd class="whitespace-pre-line">{{ detailTarget.description ?? "—" }}</dd>
+            <dt class="text-muted-foreground">{{ t("instances.email") }}</dt>
+            <dd>{{ detailTarget.email ?? "—" }}</dd>
             <dt class="text-muted-foreground">{{ t("templates.createdAt") }}</dt>
             <dd class="font-mono text-xs">{{ detailTarget.created_at }}</dd>
           </dl>
