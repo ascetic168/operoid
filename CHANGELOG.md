@@ -80,12 +80,16 @@ thread, while the employee's private sphere stays with the deployer and
 managers.
 
 - Prompt confidentiality (both editions): the conversational prompts now
-  carry explicit need-to-know rules — the Human-sender context line, the
-  native identity card (new behavior rule + owner line marked 預設保密)
-  and the legacy JSON protocol all instruct the employee to disclose
-  only what the request needs and never relay the deployer's
-  instructions or other parties' mail. Prompt rules are the soft layer;
-  the hard layer is the redaction below.
+  carry a hard confidentiality red line — the Human-sender context line,
+  the native identity card (new behavior rule + owner line marked 預設保密)
+  and the legacy JSON protocol all instruct the employee that the
+  deployer's instructions, working memory and confidential /
+  restricted-access knowledge-base content are never disclosed to
+  non-deployers — "the request needs it" is explicitly NOT an exception;
+  such requests are declined and referred to the deployer, and only
+  publicly shareable content is answered. Prompt rules are the soft
+  layer; the hard layer is the redaction below (and the knowledge
+  policy system).
 - `GET /api/employees/{id}/watch` opens to all authenticated users with
   a redacted payload for non-deployer users: memory (notes/todos),
   task lists and resolved/proposed commitments are omitted; the
