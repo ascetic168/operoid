@@ -74,7 +74,7 @@ const libraryGroups = computed(() => groupBy(library.value))
 // ── 摺疊（區層＋外掛分組層）──
 // 區預設：全部展開；外掛分組預設**收合**（書架只看外掛清單＋數量，點開才攤技能）。
 const expanded = ref<Record<string, boolean>>({
-  catalog: true,
+  catalog: false,
   personal: true,
   drafts: true,
   library: true,
@@ -185,42 +185,27 @@ onMounted(load)
   <div>
     <ErrorBox :message="offline ? t('login.offline') : error" />
     <p v-if="notice" class="notice">{{ notice }}</p>
-
-    <button class="sec head" :data-test="'section-catalog'" @click="toggleSection('catalog')">
-      <span class="chev">{{ expanded.catalog ? '▾' : '▸' }}</span>
-      <h2>{{ t('skills.catalog') }}</h2>
-      <span class="count">{{ catalog.length }}</span>
+    <button class="sec head" data-test="section-drafts" @click="toggleSection('drafts')">
+      <span class="chev">{{ expanded.drafts ? '▾' : '▸' }}</span>
+      <h2>{{ t('skills.drafts') }}</h2>
+      <span class="count">{{ drafts.reduce((n, d) => n + d.skills.length, 0) }}</span>
     </button>
-    <template v-if="expanded.catalog">
-      <p class="muted">{{ t('skills.catalogHint') }}</p>
-      <template v-if="catalogGroups.length">
-        <section v-for="[plugin, skills] in catalogGroups" :key="plugin" class="area">
-          <button class="grouphead" :data-test="'group-' + plugin" @click="toggleGroup('catalog:' + plugin)">
-            <span class="chev">{{ expandedGroups.has('catalog:' + plugin) ? '▾' : '▸' }}</span>
-            <h3>📦 {{ plugin }}</h3>
-            <span class="count">{{ t('skills.skillCount', { n: skills.length }) }}</span>
-          </button>
-          <template v-if="expandedGroups.has('catalog:' + plugin)">
-            <div v-for="s in skills" :key="s.mount_path" class="item">
-              <div class="row" :data-test="'skill-' + s.mount_path">
-                <span class="name">{{ s.name }}</span>
-                <span class="desc" :title="s.description">{{ s.description }}</span>
-                <code class="mount">{{ s.mount_path }}</code>
-                <button class="mini" @click="toggle(s.mount_path, 'catalog')">
-                  {{ openKey === keyOf(s.mount_path, 'catalog') ? t('skills.hideContent') : t('skills.viewContent') }}
-                </button>
-                <button
-                  class="mini accent"
-                  :disabled="busyKey === 'adopt:' + s.dir_name"
-                  :data-test="'adopt-' + s.dir_name"
-                  @click="adopt(s.dir_name)"
-                >
-                  {{ t('skills.adopt') }}
-                </button>
-              </div>
-              <pre v-if="openKey === keyOf(s.mount_path, 'catalog')" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
+    <template v-if="expanded.drafts">
+      <p class="muted">{{ t('skills.draftsHint') }}</p>
+      <template v-if="drafts.length">
+        <section v-for="d in drafts" :key="d.employee_id" class="area">
+          <h3>🛠 {{ d.employee_name }}</h3>
+          <div v-for="s in d.skills" :key="s.mount_path" class="item">
+            <div class="row" :data-test="'skill-' + s.mount_path">
+              <span class="name">{{ s.name }}</span>
+              <span class="desc" :title="s.description">{{ s.description }}</span>
+              <code class="mount">{{ s.mount_path }}</code>
+              <button class="mini" @click="toggle(s.mount_path, d.employee_id, { employee: d.employee_id })">
+                {{ openKey === keyOf(s.mount_path, d.employee_id) ? t('skills.hideContent') : t('skills.viewContent') }}
+              </button>
             </div>
-          </template>
+            <pre v-if="openKey === keyOf(s.mount_path, d.employee_id)" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
+          </div>
         </section>
       </template>
       <p v-else class="muted">{{ t('skills.empty') }}</p>
@@ -265,32 +250,6 @@ onMounted(load)
       <p v-else class="muted">{{ t('skills.empty') }}</p>
     </template>
 
-    <button class="sec head" data-test="section-drafts" @click="toggleSection('drafts')">
-      <span class="chev">{{ expanded.drafts ? '▾' : '▸' }}</span>
-      <h2>{{ t('skills.drafts') }}</h2>
-      <span class="count">{{ drafts.reduce((n, d) => n + d.skills.length, 0) }}</span>
-    </button>
-    <template v-if="expanded.drafts">
-      <p class="muted">{{ t('skills.draftsHint') }}</p>
-      <template v-if="drafts.length">
-        <section v-for="d in drafts" :key="d.employee_id" class="area">
-          <h3>🛠 {{ d.employee_name }}</h3>
-          <div v-for="s in d.skills" :key="s.mount_path" class="item">
-            <div class="row" :data-test="'skill-' + s.mount_path">
-              <span class="name">{{ s.name }}</span>
-              <span class="desc" :title="s.description">{{ s.description }}</span>
-              <code class="mount">{{ s.mount_path }}</code>
-              <button class="mini" @click="toggle(s.mount_path, d.employee_id, { employee: d.employee_id })">
-                {{ openKey === keyOf(s.mount_path, d.employee_id) ? t('skills.hideContent') : t('skills.viewContent') }}
-              </button>
-            </div>
-            <pre v-if="openKey === keyOf(s.mount_path, d.employee_id)" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
-          </div>
-        </section>
-      </template>
-      <p v-else class="muted">{{ t('skills.empty') }}</p>
-    </template>
-
     <button class="sec head" data-test="section-library" @click="toggleSection('library')">
       <span class="chev">{{ expanded.library ? '▾' : '▸' }}</span>
       <h2>{{ t('skills.library') }}</h2>
@@ -322,6 +281,48 @@ onMounted(load)
       </template>
       <p v-else class="muted">{{ t('skills.empty') }}</p>
     </template>
+
+    <button class="sec head" :data-test="'section-catalog'" @click="toggleSection('catalog')">
+      <span class="chev">{{ expanded.catalog ? '▾' : '▸' }}</span>
+      <h2>{{ t('skills.catalog') }}</h2>
+      <span class="count">{{ catalog.length }}</span>
+    </button>
+    <template v-if="expanded.catalog">
+      <p class="muted">{{ t('skills.catalogHint') }}</p>
+      <template v-if="catalogGroups.length">
+        <section v-for="[plugin, skills] in catalogGroups" :key="plugin" class="area">
+          <button class="grouphead" :data-test="'group-' + plugin" @click="toggleGroup('catalog:' + plugin)">
+            <span class="chev">{{ expandedGroups.has('catalog:' + plugin) ? '▾' : '▸' }}</span>
+            <h3>📦 {{ plugin }}</h3>
+            <span class="count">{{ t('skills.skillCount', { n: skills.length }) }}</span>
+          </button>
+          <template v-if="expandedGroups.has('catalog:' + plugin)">
+            <div v-for="s in skills" :key="s.mount_path" class="item">
+              <div class="row" :data-test="'skill-' + s.mount_path">
+                <span class="name">{{ s.name }}</span>
+                <span class="desc" :title="s.description">{{ s.description }}</span>
+                <code class="mount">{{ s.mount_path }}</code>
+                <button class="mini" @click="toggle(s.mount_path, 'catalog')">
+                  {{ openKey === keyOf(s.mount_path, 'catalog') ? t('skills.hideContent') : t('skills.viewContent') }}
+                </button>
+                <button
+                  class="mini accent"
+                  :disabled="busyKey === 'adopt:' + s.dir_name"
+                  :data-test="'adopt-' + s.dir_name"
+                  @click="adopt(s.dir_name)"
+                >
+                  {{ t('skills.adopt') }}
+                </button>
+              </div>
+              <pre v-if="openKey === keyOf(s.mount_path, 'catalog')" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
+            </div>
+          </template>
+        </section>
+      </template>
+      <p v-else class="muted">{{ t('skills.empty') }}</p>
+    </template>
+
+
   </div>
 </template>
 
