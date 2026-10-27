@@ -171,14 +171,17 @@ Employee 因触发而醒来：
 - 目前是协助企业导入 AI 的顾问。
 - Operoid 的治理机制——包括动作类别登记表——正是从制造业现场的真实个案蒸馏而来，不是纸上理论。
 
-## 内置默认技能
+## 内置技能图书馆
 
-公司技能库出厂即附策展入门组：`ocore/default-skills/` 由 `scripts/import_kwp_skills.py`
+产品出厂即附策展技能目录：`ocore/default-skills/` 由 `scripts/import_kwp_skills.py`
 自 [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins)
-（commit `d9d8e13`，2026-10-27）导入，oserver 启动时种子进 `<data_dir>/skills/library/`
-（只补缺的整颗外挂目录——永不覆写）。共 11 个外挂、111 个职能技能（productivity、
-sales、customer-support、product-management、marketing、legal、finance、data、
-enterprise-search、operations、human-resources）。
+（commit `d9d8e13`，2026-10-27）导入，oserver 启动时种子进**技能图书馆**
+（`<data_dir>/skills/catalog/`，只读挂载 `catalog/…`）——一个不占任何人提示词的
+书架。主体从 UI 挑选技能加入个人区（也可移除）；只有「已挑选技能＋组织共用库＋
+员工草稿」（受 `skills_union_limit` 约束，默认 30）会出现在 AI 员工的提示词里。
+共 11 个外挂、111 个职能技能（productivity、sales、customer-support、
+product-management、marketing、legal、finance、data、enterprise-search、
+operations、human-resources）。
 
 上游内容 © Anthropic 及其伙伴，采用 **Apache License 2.0**（partner 外挂为 MIT）；
 各外挂目录附其 LICENSE。出处记录见 `ocore/default-skills/SOURCE.md` 与各外挂目录

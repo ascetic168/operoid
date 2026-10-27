@@ -60,12 +60,15 @@ pub(crate) fn err_response(e: &AppError) -> Response {
     let status = match e.code.as_str() {
         "agent_os.employeeNotFound" | "agent_os.templateNotFound" | "agent_os.commitmentNotFound"
         | "agent_os.taskNotFound" | "agent_os.artifactNotFound"
-        | "agent_os.skillProposalNotFound" | "agent_os.skillContentNotFound" => StatusCode::NOT_FOUND,
+        | "agent_os.skillProposalNotFound" | "agent_os.skillContentNotFound"
+        | "agent_os.skillNotFound" => StatusCode::NOT_FOUND,
         // 技能發佈面：來源不存在／名稱不合法屬呼叫端問題（400）；其餘檔案系統失敗走 500
         "agent_os.skillPublishFailed" => StatusCode::BAD_REQUEST,
         // 技能瀏覽面：內容檢視的授權裁定與尺寸上限
         "agent_os.skillContentForbidden" => StatusCode::FORBIDDEN,
         "agent_os.skillContentTooLarge" => StatusCode::PAYLOAD_TOO_LARGE,
+        // 技能挑選面：同名已存在／聯集總量超限屬狀態衝突（409）
+        "agent_os.skillAlreadyPresent" | "agent_os.skillLimitExceeded" => StatusCode::CONFLICT,
         "agent_os.employeeBusy" => StatusCode::CONFLICT, // busy-lock 快速回絕（API 契約）
         "agent_os.employeeNotRunning" | "agent_os.employeeArchived" => StatusCode::CONFLICT,
         "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
@@ -403,6 +406,9 @@ async fn api_skills(
             .unwrap_or(false);
         let library =
             ocore::skills::scan_zone(&ocore::skills::library_root(&data_dir), ocore::skills::SkillZone::Library);
+        // 技能圖書館（app store 書架）：唯讀、不進員工讀取聯集——清單面供挑選。
+        let catalog =
+            ocore::skills::scan_zone(&ocore::skills::catalog_root(&data_dir), ocore::skills::SkillZone::Catalog);
         let personal_cfg = st.cfg.skills_personal_dir.trim().to_string();
         let mut personal_areas: Vec<serde_json::Value> = Vec::new();
         if personal_cfg.is_empty() {
@@ -475,6 +481,7 @@ async fn api_skills(
             "library": library,
             "personal_areas": personal_areas,
             "drafts": drafts,
+            "catalog": catalog,
         }))
     })
     .await;

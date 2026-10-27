@@ -15,32 +15,54 @@
 
 ## [v0.5.11] - 2026-10-28
 
-### Default company skill library — curated import from Anthropic knowledge-work-plugins
+### Skill catalog (app-store model) + bundled curated skills from Anthropic knowledge-work-plugins
 
-The company library (`<data_dir>/skills/library/`) now ships with content:
+Bundled content no longer loads into everyone's prompt. The curated set —
 111 role skills across 11 plugins (productivity, sales, customer-support,
 product-management, marketing, legal, finance, data, enterprise-search,
-operations, human-resources), curated from
+operations, human-resources), imported from
 [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins)
-(Apache-2.0; MIT for partner plugins). Skills are procedural guidance, never
-authorization — everything still runs inside the employee's tool allowlist.
+(Apache-2.0; MIT for partner plugins) — now seeds into a **skill catalog**
+(`<data_dir>/skills/catalog/`, read-only mount `catalog/…`): a browse-and-adopt
+shelf that is **not** part of the employee read union. Principals adopt skills
+into their personal area from the UI; only then do AI employees load them.
+Skills are procedural guidance, never authorization — everything still runs
+inside the employee's tool allowlist.
 
-- **Bundled defaults** (`ocore::skills_seed`): the curated set lives at
-  `ocore/default-skills/`, embedded at compile time via `include_dir` and
-  seeded by `oserver` on startup with upgrade-safe semantics: an existing
-  plugin dir is skipped whole (user edits are never overwritten); a
-  `.seeded/<plugin>` marker records "was seeded", so a plugin dir deleted
-  by an admin stays deleted; refreshing bundled content means deleting the
-  plugin dir **and** its marker, then restarting. Seeding stages into a
-  temp dir and renames, so no half-written dirs are ever left behind.
+- **Skill catalog & adoption** (`ocore::skills_seed` + `POST /api/skills/adopt`
+  / `POST /api/skills/remove`): the bundled set is embedded at compile time
+  (`include_dir`) and seeded into the catalog with upgrade-safe semantics —
+  existing plugin dirs are skipped whole (never overwritten), a
+  `.seeded/<plugin>` marker keeps admin deletions from resurrecting, and
+  refreshing content means deleting the dir and its marker (seeding stages
+  into a temp dir + rename, so no half-written state). Adoption copies a
+  catalog skill into the caller's own personal area (never overwrites an
+  existing one; names are validated against the catalog scan), and removal
+  deletes it again — both human-only moves, executed by the server.
+- **Union limit `skills_union_limit`** (default 30, `0` = unlimited): every
+  add-path checks `x library + y personal + z draft ≤ t` before acting —
+  draft creation (`write_file` into a new `skills/<name>/SKILL.md`),
+  proposal approval (core), admin promote (oserver), and catalog adoption.
+  Keeps the prompt's skill listing bounded as a hard gate; the catalog shelf
+  itself is free because it is never listed.
+- **Prompt hint**: one line tells the employee a catalog exists and to
+  suggest adoption when a task reveals a skill gap — shown even when the
+  employee's union is empty (that is exactly who needs it).
+- **Skill browsing UI** (user & manager apps): a read-only `/skills` page —
+  catalog (with adopt), personal areas (with remove), employee drafts, and
+  the org library — with inline SKILL.md content viewing. Backed by
+  `GET /api/skills` (now also returns `drafts` and `catalog`) and
+  `GET /api/skills/content` (read_file-style mount resolution: traversal
+  protection reused, manager may pass `principal` for other principals'
+  personal areas, 1 MB cap).
 - **`parse_skill_md` handles YAML folded/literal scalars** (`description: >` /
   `|` with `+`/`-` indicators): continuation lines are folded into a single
   whitespace-normalized value. 55 upstream skills used multiline descriptions
   that the line-based parser previously reduced to a stray `>` / `|`.
 - **`scan_zone` walks grouped layouts**: directories without a `SKILL.md`
-  are descended (bounded depth, first hit wins) so `library/<plugin>/<skill>/`
+  are descended (bounded depth, first hit wins) so `catalog/<plugin>/<skill>/`
   works and upstream cross-file references (`../shared/…`, `../CONNECTORS.md`)
-  resolve unchanged inside the `library/` read mount. Flat layouts unchanged.
+  resolve unchanged inside the read mounts. Flat layouts unchanged.
 - **Import pipeline** (`scripts/import_kwp_skills.py`): curation list,
   `skills/<name>/` flattening, `../../` reference rewrite with resolution
   check, `${CLAUDE_PLUGIN_ROOT}` rewrite, per-file environment note (Claude

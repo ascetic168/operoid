@@ -57,7 +57,14 @@
     "viewContent": "检视内容",
     "hideContent": "收起",
     "skillCount": "{n} 个技能",
-    "contentError": "无法载入技能内容。"
+    "contentError": "无法载入技能内容。",
+    "catalog": "技能图书馆",
+    "catalogHint": "内置策展技能（只读挂载 catalog/…，不占提示词）——挑选加入个人区后，AI 员工才会载入。",
+    "adopt": "加入我的技能区",
+    "adopted": "已将「{name}」加入个人区。",
+    "remove": "移除",
+    "confirmRemove": "确认移除？",
+    "removed": "已从个人区移除「{name}」。"
   },
   "dash": {
     "employeesByState": "员工状态总览",

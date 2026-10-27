@@ -1,11 +1,11 @@
-//! 公司共用庫的內建預設技能（冷啟動種子）。
+//! 技能圖書館的內建策展技能（冷啟動種子；app store 模式）。
 //!
 //! `ocore/default-skills/` 由 `scripts/import_kwp_skills.py` 自 Anthropic
 //! 《knowledge-work-plugins》策展導入（Apache-2.0；來源 commit、授權與 linter
 //! 報告見目錄內 `SOURCE.md`／`IMPORT-REPORT.md`），編譯期以 `include_dir` 內嵌。
-//! oserver 啟動時種子進 `<data_dir>/skills/library/`，升級安全語意：
+//! oserver 啟動時種子進技能圖書館 `<data_dir>/skills/catalog/`（app store 模式——主體從 UI 挑選 adopt 進個人區才生效），升級安全語意：
 //! - 外掛目錄**已存在即整顆跳過**——使用者改過的技能永不覆寫；
-//! - `<library>/.seeded/<plugin>` 標記已種過：目錄被刪除＝admin 策展決定，
+//! - `<catalog>/.seeded/<plugin>` 標記已種過：目錄被刪除＝admin 策展決定，
 //!   **不復活**；
 //! - 要刷新內建內容：刪除外掛目錄**與**其 `.seeded` 標記後重啟。
 //! 種子先寫暫存目錄再改名，避免半套目錄被誤判為已存在。
@@ -19,7 +19,7 @@ use include_dir::{include_dir, Dir, DirEntry};
 /// include_dir 的路徑以 proc-macro 行程 CWD 為基準，須明確錨定 crate 根。
 static DEFAULT_SKILLS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/default-skills");
 
-/// 「已種過」標記目錄名（位於共用庫根下；無 SKILL.md，掃描面不列示）。
+/// 「已種過」標記目錄名（位於圖書館根下；無 SKILL.md，掃描面不列示）。
 const SEEDED_MARKER_DIR: &str = ".seeded";
 
 /// 種子結果（啟動日誌用）。
@@ -35,16 +35,16 @@ pub struct SeedReport {
     pub errors: Vec<String>,
 }
 
-/// 將內建預設技能種子進公司共用庫（冪等；升級安全語意見模組文件）。
-pub fn seed_default_library(data_dir: &Path) -> SeedReport {
-    let library = crate::skills::library_root(data_dir);
-    let markers = library.join(SEEDED_MARKER_DIR);
+/// 將內建策展技能種子進技能圖書館（冪等；升級安全語意見模組文件）。
+pub fn seed_default_catalog(data_dir: &Path) -> SeedReport {
+    let catalog = crate::skills::catalog_root(data_dir);
+    let markers = catalog.join(SEEDED_MARKER_DIR);
     let mut report = SeedReport::default();
     for plugin in DEFAULT_SKILLS.dirs() {
         let Some(name) = plugin.path().file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        let target = library.join(name);
+        let target = catalog.join(name);
         if target.is_dir() {
             report.skipped.push(name.to_string());
             continue;
@@ -58,7 +58,7 @@ pub fn seed_default_library(data_dir: &Path) -> SeedReport {
         // 「已存在」而永不補齊）。標記在改名**之後**寫——若崩潰在兩步之間，
         // 目錄已存在會走「跳過」，下次啟動補不上標記的代價只是「刪除後復活
         // 一次」，遠優於「有標記無目錄」的永久跳過。
-        let staging = library.join(format!(".{name}.seeding"));
+        let staging = catalog.join(format!(".{name}.seeding"));
         let _ = std::fs::remove_dir_all(&staging);
         let outcome = write_dir_recursively(plugin, &staging)
             .and_then(|()| std::fs::rename(&staging, &target))
@@ -124,19 +124,19 @@ mod tests {
         let dir = tmp("seed");
         let n = DEFAULT_SKILLS.dirs().count();
         assert!(n > 0, "內建預設技能庫不應為空");
-        let r1 = seed_default_library(&dir);
+        let r1 = seed_default_catalog(&dir);
         assert_eq!(r1.seeded.len(), n);
         assert!(r1.errors.is_empty(), "seed 錯誤：{:?}", r1.errors);
         // 每顆種子外掛在磁碟上至少含一個 SKILL.md（掃描面可見）——驗證磁碟產物
         // 而非內嵌樹，確保遞迴寫入沒漏層。
-        let library = crate::skills::library_root(&dir);
+        let catalog = crate::skills::catalog_root(&dir);
         for plugin in DEFAULT_SKILLS.dirs() {
-            let target = library.join(plugin.path());
+            let target = catalog.join(plugin.path());
             assert!(target.is_dir(), "{} 未落地", plugin.path().display());
             assert!(has_skill_md(&target), "{} 內無 SKILL.md", plugin.path().display());
         }
         // 冪等：第二次啟動不再種任何東西。
-        let r2 = seed_default_library(&dir);
+        let r2 = seed_default_catalog(&dir);
         assert!(r2.seeded.is_empty());
         assert_eq!(r2.skipped.len(), n);
         std::fs::remove_dir_all(&dir).ok();
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn seed_never_overwrites_existing_plugin_dir() {
         let dir = tmp("seed-keep");
-        let library = crate::skills::library_root(&dir);
+        let catalog = crate::skills::catalog_root(&dir);
         let first = DEFAULT_SKILLS
             .dirs()
             .next()
@@ -168,10 +168,10 @@ mod tests {
             .and_then(|n| n.to_str())
             .unwrap()
             .to_string();
-        let target = library.join(&first);
+        let target = catalog.join(&first);
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("admin-marker.txt"), "keep").unwrap();
-        let r = seed_default_library(&dir);
+        let r = seed_default_catalog(&dir);
         assert!(r.skipped.contains(&first));
         assert!(!r.seeded.contains(&first));
         assert_eq!(std::fs::read_to_string(target.join("admin-marker.txt")).unwrap(), "keep");
@@ -181,23 +181,23 @@ mod tests {
     #[test]
     fn seed_admin_deleted_plugin_is_not_resurrected() {
         let dir = tmp("seed-delete");
-        let library = crate::skills::library_root(&dir);
+        let catalog = crate::skills::catalog_root(&dir);
         let n = DEFAULT_SKILLS.dirs().count();
-        assert!(seed_default_library(&dir).errors.is_empty());
+        assert!(seed_default_catalog(&dir).errors.is_empty());
 
         // admin 刪除整顆外掛目錄（標記仍在）→ 重啟不復活。
         let victim = DEFAULT_SKILLS.dirs().next().unwrap();
         let name = victim.path().file_name().and_then(|n| n.to_str()).unwrap().to_string();
-        std::fs::remove_dir_all(library.join(&name)).unwrap();
-        let r2 = seed_default_library(&dir);
+        std::fs::remove_dir_all(catalog.join(&name)).unwrap();
+        let r2 = seed_default_catalog(&dir);
         assert!(r2.admin_removed.contains(&name), "應記為 admin 已移除");
         assert!(!r2.seeded.contains(&name));
         assert!(!r2.skipped.contains(&name));
         assert_eq!(r2.seeded.len() + r2.admin_removed.len() + r2.skipped.len(), n);
 
         // 刷新路徑：連 `.seeded` 標記一起刪 → 重新種子。
-        std::fs::remove_file(library.join(".seeded").join(&name)).unwrap();
-        let r3 = seed_default_library(&dir);
+        std::fs::remove_file(catalog.join(".seeded").join(&name)).unwrap();
+        let r3 = seed_default_catalog(&dir);
         assert!(r3.seeded.contains(&name), "刪除標記後應重種");
         assert!(r3.errors.is_empty());
         std::fs::remove_dir_all(&dir).ok();

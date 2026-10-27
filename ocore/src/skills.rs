@@ -1,4 +1,4 @@
-//! 技能（Skills）——員工的「作業手冊」層（三區模型，2026-10-27 共識）。
+//! 技能（Skills）——員工的「作業手冊」層（三區＋圖書館，2026-10-28 共識）。
 //!
 //! 技能是**標準格式的程序性知識**（`SKILL.md`：YAML frontmatter `name`/`description`
 //! ＋本文指令＋選配腳本），不是能力——skill 要求的任何動作仍受工具 allowlist 與行為
@@ -11,12 +11,19 @@
 //!   `<data_dir>/skills/users/<principal>/`（無委任主體的員工讀不到任何個人區——fail closed）。
 //! - **共用庫**（唯讀）——`<data_dir>/skills/library/`，admin 晉升後全組織可用。
 //!
+//! **技能圖書館**（catalog，唯讀、**不進**讀取聯集）——`<data_dir>/skills/catalog/`：
+//! 內建策展技能的「書架」（app store 模式）。主體從 UI 挑選複製進個人區（adopt），
+//! 讓每個員工實際載入的技能數保持小（提示詞面可控）；聯集總量受
+//! `skills_union_limit` 約束（x公用＋y個人＋z草稿 ≤ t，違反即禁止新增）。
+//!
 //! 發佈流（人類是唯一有權移動檔案的角色）：
 //! `員工寫草稿 → propose_skill（確定性 linter＋子代理獨立預審）→ 委任主體核可
-//! → 伺服器自動複製到個人區（團隊級）→ admin 晉升共用庫（組織級）`。
+//! → 伺服器自動複製到個人區（團隊級）→ admin 晉升共用庫（組織級）`；
+//! 圖書館反向補給：`主體挑選 adopt（人類動作）→ 個人區`。
 //!
-//! read_file 的唯讀掛載：`library/…`、`personal/…` 前綴分別映射到共用庫與個人區
-//! （[`resolve_read_path`]）；掛載路徑不進 FileState（不可編輯、無 staleness 語意）。
+//! read_file 的唯讀掛載：`library/…`、`personal/…`、`catalog/…` 前綴分別映射到
+//! 共用庫、個人區與圖書館（[`resolve_read_path`]）；掛載路徑不進 FileState
+//! （不可編輯、無 staleness 語意）。
 
 use std::path::{Path, PathBuf};
 
@@ -30,6 +37,8 @@ pub const DRAFT_DIR: &str = "skills";
 pub const MOUNT_LIBRARY: &str = "library/";
 /// read_file 唯讀掛載前綴：個人區。
 pub const MOUNT_PERSONAL: &str = "personal/";
+/// read_file 唯讀掛載前綴：技能圖書館（不進讀取聯集／提示清單）。
+pub const MOUNT_CATALOG: &str = "catalog/";
 
 /// 單一 SKILL.md 的上限（與 fs_tools 讀檔上限同級；超限即 linter 警告）。
 pub const MAX_SKILL_MD_BYTES: u64 = 128 * 1024;
@@ -48,6 +57,8 @@ pub enum SkillZone {
     Personal,
     /// 公司共用庫（唯讀）。
     Library,
+    /// 技能圖書館（唯讀；不進讀取聯集與提示清單——挑選後入個人區才生效）。
+    Catalog,
 }
 
 impl SkillZone {
@@ -57,6 +68,7 @@ impl SkillZone {
             SkillZone::Draft => "自建",
             SkillZone::Personal => "主體",
             SkillZone::Library => "共用庫",
+            SkillZone::Catalog => "圖書館",
         }
     }
     /// 該區的 read_file 掛載前綴（草稿區掛在工作區的 skills/ 下）。
@@ -65,6 +77,7 @@ impl SkillZone {
             SkillZone::Draft => "skills/",
             SkillZone::Personal => MOUNT_PERSONAL,
             SkillZone::Library => MOUNT_LIBRARY,
+            SkillZone::Catalog => MOUNT_CATALOG,
         }
     }
 }
@@ -84,13 +97,15 @@ pub struct SkillEntry {
     pub mount_path: String,
 }
 
-/// 本員工的技能區解析結果（唯讀聯集的外部兩區；草稿區由工作區根推導，不在此）。
+/// 本員工的技能區解析結果（唯讀聯集的外部兩區＋圖書館；草稿區由工作區根推導，不在此）。
 #[derive(Debug, Clone)]
 pub struct SkillAreas {
     /// 公司共用庫根（`<data_dir>/skills/library`）。
     pub library_root: PathBuf,
     /// 個人區根；`None`＝此員工無個人區（企業模式且無委任主體——fail closed）。
     pub personal_root: Option<PathBuf>,
+    /// 技能圖書館根（`<data_dir>/skills/catalog`；唯讀書架，不在讀取聯集內）。
+    pub catalog_root: PathBuf,
 }
 
 impl SkillAreas {
@@ -162,7 +177,7 @@ pub fn personal_area_root(
     Some(expand_home(personal_dir_cfg))
 }
 
-/// 本員工的技能區（[`build_tool_ctx`] 建構；oserver 發佈核心亦用）。
+/// 本員工的技能區（[`build_tool_ctx`] 建構；oserver 發佈／挑選核心亦用）。
 pub fn areas_for(
     personal_dir_cfg: &str,
     data_dir: &Path,
@@ -171,6 +186,7 @@ pub fn areas_for(
     SkillAreas {
         library_root: data_dir.join("skills").join("library"),
         personal_root: personal_area_root(personal_dir_cfg, data_dir, owner_principal),
+        catalog_root: catalog_root(data_dir),
     }
 }
 
@@ -191,6 +207,11 @@ pub fn team_publish_target(
 /// 公司共用庫根。
 pub fn library_root(data_dir: &Path) -> PathBuf {
     data_dir.join("skills").join("library")
+}
+
+/// 技能圖書館根（內建策展技能的書架；唯讀、不進讀取聯集）。
+pub fn catalog_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("skills").join("catalog")
 }
 
 // ───────────────── SKILL.md 解析與掃描 ─────────────────
@@ -334,6 +355,44 @@ pub fn scan_all(ws_root: &Path, areas: Option<&SkillAreas>) -> Vec<SkillEntry> {
     out
 }
 
+/// 員工實際載入的技能總數（x公用＋y個人＋z草稿；提示清單的條目數）。
+pub fn union_count(ws_root: &Path, areas: Option<&SkillAreas>) -> usize {
+    scan_all(ws_root, areas).len()
+}
+
+/// 總量限制檢查：再新增一個技能是否會超過 `limit`（`limit == 0`＝不設限）。
+/// 語意：新增後須滿足 `x+y+z ≤ t`，故現有聯集必須 `< limit`。
+pub fn union_limit_exceeded(ws_root: &Path, areas: Option<&SkillAreas>, limit: usize) -> bool {
+    limit > 0 && union_count(ws_root, areas) >= limit
+}
+
+/// 草稿技能新增的總量限制檢查（write_file 進 skills/ 前呼叫）。
+/// 僅在「路徑為 `skills/<name>/SKILL.md` 且該技能尚不存在」時視為新增；
+/// 回傳 `Some(reason)`＝超限應擋下（既有技能的改寫與技能內其他檔案不受限）。
+pub fn draft_skill_addition_blocked(
+    ws_root: &Path,
+    areas: Option<&SkillAreas>,
+    limit: usize,
+    path: &str,
+) -> Option<String> {
+    let p = path.trim().replace('\\', "/");
+    if limit == 0 || !(p.starts_with("skills/") && p.ends_with(&format!("/{SKILL_MD}"))) {
+        return None;
+    }
+    if ws_root.join(&p).exists() {
+        return None; // 既有技能的改寫，不是新增
+    }
+    if union_limit_exceeded(ws_root, areas, limit) {
+        Some(format!(
+            "[write_file] 已達技能總量上限（目前聯集 {} 個 ≥ t={limit}；x公用＋y個人＋z草稿）\
+             ——請先精簡技能，或請主體/管理面調整 skills_union_limit。",
+            union_count(ws_root, areas),
+        ))
+    } else {
+        None
+    }
+}
+
 // ───────────────── read_file 唯讀掛載 ─────────────────
 
 /// 解析 read_file 的唯讀掛載路徑。`Some(Ok(abs))`＝掛載命中（唯讀區的絕對路徑）；
@@ -345,6 +404,8 @@ pub fn resolve_read_path(path: &str, areas: Option<&SkillAreas>) -> Option<Resul
         (MOUNT_LIBRARY, areas.map(|a| &a.library_root))
     } else if trimmed.starts_with(MOUNT_PERSONAL) {
         (MOUNT_PERSONAL, areas.and_then(|a| a.personal_root.as_ref()))
+    } else if trimmed.starts_with(MOUNT_CATALOG) {
+        (MOUNT_CATALOG, areas.map(|a| &a.catalog_root))
     } else {
         return None;
     };
@@ -594,7 +655,11 @@ pub fn skills_prompt_section(
         return String::new();
     }
     let entries = scan_all(ws_root, areas);
-    if entries.is_empty() {
+    // 圖書館書架提示（一行；catalog 不進聯集——員工需要新技能時知道去哪找；
+    // 聯集為空但圖書館有貨時更該提示——那正是還沒有任何技能的員工）。
+    let has_catalog =
+        areas.map(|a| !scan_zone(&a.catalog_root, SkillZone::Catalog).is_empty()) == Some(true);
+    if entries.is_empty() && !has_catalog {
         return String::new();
     }
     let mut lines: Vec<String> = entries
@@ -611,6 +676,13 @@ pub fn skills_prompt_section(
         .collect();
     if entries.len() > PROMPT_MAX_ENTRIES {
         lines.push(format!("（另有 {} 個技能未列出）", entries.len() - PROMPT_MAX_ENTRIES));
+    }
+    if has_catalog {
+        lines.push(
+            "另設技能圖書館（catalog/… 掛載，唯讀、未列入上表）：需要某類技能時，\
+             可建議你的主體從技能庫頁面挑選加入個人區。"
+                .to_string(),
+        );
     }
     format!(
         "\n## 可用技能（read_file 讀取 SKILL.md 全文後遵循）\n{}\n",
@@ -782,16 +854,24 @@ mod tests {
         );
         let hit = resolve_read_path("personal/x/SKILL.md", Some(&areas)).unwrap().unwrap();
         assert!(hit.starts_with(Path::new("/data").join("skills").join("users").join("alice")));
+        // 圖書館掛載：唯讀書架，同樣元件驗證。
+        let hit = resolve_read_path("catalog/sales/call-prep/SKILL.md", Some(&areas)).unwrap().unwrap();
+        assert_eq!(
+            hit,
+            Path::new("/data").join("skills").join("catalog").join("sales").join("call-prep").join("SKILL.md")
+        );
         // 非掛載路徑 → None（走工作區）
         assert!(resolve_read_path("docs/a.md", Some(&areas)).is_none());
         assert!(resolve_read_path("library-notes/x", Some(&areas)).is_none(), "前綴須含 /");
         // 穿越 / 絕對路徑 → Err
         assert!(resolve_read_path("library/../secret", Some(&areas)).unwrap().is_err());
         assert!(resolve_read_path("personal/C:/x", Some(&areas)).unwrap().is_err());
+        assert!(resolve_read_path("catalog/../../etc", Some(&areas)).unwrap().is_err());
         // 無個人區（無主體）→ personal 命中但 Err
         let none = areas_for("", Path::new("/data"), None);
         assert!(resolve_read_path("personal/x", Some(&none)).unwrap().is_err());
         assert!(resolve_read_path("library/x", Some(&none)).unwrap().is_ok(), "共用庫不受主體影響");
+        assert!(resolve_read_path("catalog/x", Some(&none)).unwrap().is_ok(), "圖書館不受主體影響");
     }
 
     // ── linter ──
@@ -910,6 +990,37 @@ mod tests {
         let sec = skills_prompt_section(&ws, None, true);
         assert_eq!(sec.matches("\n- [").count(), PROMPT_MAX_ENTRIES);
         assert!(sec.contains("未列出"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── 技能圖書館與總量限制 ──
+
+    #[test]
+    fn prompt_section_hints_catalog_even_when_union_empty() {
+        let dir = tmp("prompt-catalog");
+        let ws = dir.join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        write_skill(&dir, "skills/catalog", "sales/call-prep", GOOD_SKILL);
+        let areas = areas_for("", &dir, Some("alice"));
+        let sec = skills_prompt_section(&ws, Some(&areas), true);
+        assert!(sec.contains("技能圖書館"), "聯集為空時更要提示書架存在");
+        assert!(!sec.contains("library/"), "catalog 不進聯集清單");
+        // 圖書館空 → 無提示、無區塊（不佔 context）。
+        let bare = areas_for("", &dir.join("nodata"), Some("alice"));
+        assert_eq!(skills_prompt_section(&ws, Some(&bare), true), "");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn union_limit_exceeded_semantics() {
+        let dir = tmp("limit");
+        let ws = dir.join("ws");
+        write_skill(&ws, DRAFT_DIR, "d1", GOOD_SKILL);
+        let areas = areas_for("", &dir, Some("alice"));
+        assert_eq!(union_count(&ws, Some(&areas)), 1);
+        assert!(union_limit_exceeded(&ws, Some(&areas), 1), "再加一個會超過 1 ⇒ 擋");
+        assert!(!union_limit_exceeded(&ws, Some(&areas), 2), "再加一個後 = 2 ≤ 2 ⇒ 放行");
+        assert!(!union_limit_exceeded(&ws, Some(&areas), 0), "0＝不設限");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

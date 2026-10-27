@@ -6,7 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 
 // ── API 資料形（對應 oserver GET /api/skills；SkillEntry 為 ocore::skills 的序列化）──
 interface SkillEntry {
-  zone: 'draft' | 'personal' | 'library'
+  zone: 'draft' | 'personal' | 'library' | 'catalog'
   dir_name: string
   name: string
   description: string
@@ -27,15 +27,19 @@ interface SkillsPayload {
   library: SkillEntry[]
   personal_areas: PersonalArea[]
   drafts: DraftArea[]
+  catalog: SkillEntry[]
 }
 
 const { t } = useI18n()
 const library = ref<SkillEntry[]>([])
 const personalAreas = ref<PersonalArea[]>([])
 const drafts = ref<DraftArea[]>([])
+const catalog = ref<SkillEntry[]>([])
 const mode = ref<'personal' | 'enterprise'>('enterprise')
 const offline = ref(false)
 const error = ref('')
+const busyKey = ref('')
+const notice = ref('')
 
 async function load(): Promise<void> {
   try {
@@ -43,6 +47,7 @@ async function load(): Promise<void> {
     library.value = data.library
     personalAreas.value = data.personal_areas
     drafts.value = data.drafts
+    catalog.value = data.catalog
     mode.value = data.mode
     error.value = ''
     offline.value = false
@@ -53,16 +58,18 @@ async function load(): Promise<void> {
   }
 }
 
-// 共用庫以外掛分組（dir_name 形如 <plugin>/<skill>；無 `/` 者歸根層技能）。
-const libraryGroups = computed(() => {
+/** 依 dir_name 前綴分組（`<plugin>/<skill>`；無 `/` 者歸根層）。 */
+function groupBy(skills: SkillEntry[]): [string, SkillEntry[]][] {
   const groups = new Map<string, SkillEntry[]>()
-  for (const s of library.value) {
+  for (const s of skills) {
     const plugin = s.dir_name.includes('/') ? s.dir_name.split('/')[0] : '·'
     if (!groups.has(plugin)) groups.set(plugin, [])
     groups.get(plugin)!.push(s)
   }
   return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))
-})
+}
+const catalogGroups = computed(() => groupBy(catalog.value))
+const libraryGroups = computed(() => groupBy(library.value))
 
 // 內容檢視：同時只展開一列（key＝scope 前綴＋mount）。
 const openKey = ref('')
@@ -78,7 +85,7 @@ function isManager(): boolean {
 }
 
 /**
- * 內容檢視：path 採 read_file 同款掛載語意（library/…／personal/…／skills/…）。
+ * 內容檢視：path 採 read_file 同款掛載語意（library/…／personal/…／skills/…／catalog/…）。
  * personal/ 他人區帶 principal——僅 Manager+ 生效（server 裁定，一般使用者帶了會 403）。
  */
 async function toggle(
@@ -109,31 +116,83 @@ async function toggle(
   }
 }
 
+// ── 圖書館挑選／個人區移除（人類是唯一有權移動檔案的角色；伺服器代為執行）──
+
+/** 圖書館 → 我的個人區（同名已存在由 server 409 拒絕）。 */
+async function adopt(name: string): Promise<void> {
+  busyKey.value = `adopt:${name}`
+  notice.value = ''
+  error.value = ''
+  try {
+    await api.post('/api/skills/adopt', { name })
+    notice.value = t('skills.adopted', { name })
+    await load()
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) return
+    error.value = e instanceof ApiError ? e.code : 'server.offline'
+  } finally {
+    busyKey.value = ''
+  }
+}
+
+// 兩段確認：第一次點擊進入待確認態，再點一次才真的移除。
+const confirmKey = ref('')
+
+async function remove(name: string): Promise<void> {
+  if (confirmKey.value !== name) {
+    confirmKey.value = name
+    return
+  }
+  confirmKey.value = ''
+  busyKey.value = `remove:${name}`
+  notice.value = ''
+  error.value = ''
+  try {
+    await api.post('/api/skills/remove', { name })
+    notice.value = t('skills.removed', { name })
+    await load()
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) return
+    error.value = e instanceof ApiError ? e.code : 'server.offline'
+  } finally {
+    busyKey.value = ''
+  }
+}
+
 onMounted(load)
 </script>
 
 <template>
   <div>
     <ErrorBox :message="offline ? t('login.offline') : error" />
+    <p v-if="notice" class="notice">{{ notice }}</p>
 
-    <h2 class="sec">{{ t('skills.drafts') }}</h2>
-    <p class="muted">{{ t('skills.draftsHint') }}</p>
-    <template v-if="drafts.length">
-      <section v-for="d in drafts" :key="d.employee_id" class="area">
-        <h3>🛠 {{ d.employee_name }}</h3>
-        <div v-for="s in d.skills" :key="s.mount_path" class="item">
+    <h2 class="sec">{{ t('skills.catalog') }}</h2>
+    <p class="muted">{{ t('skills.catalogHint') }}</p>
+    <template v-if="catalogGroups.length">
+      <section v-for="[plugin, skills] in catalogGroups" :key="plugin" class="area">
+        <h3>
+          📦 {{ plugin }}
+          <span class="count">{{ t('skills.skillCount', { n: skills.length }) }}</span>
+        </h3>
+        <div v-for="s in skills" :key="s.mount_path" class="item">
           <div class="row" :data-test="'skill-' + s.mount_path">
             <span class="name">{{ s.name }}</span>
             <span class="desc" :title="s.description">{{ s.description }}</span>
             <code class="mount">{{ s.mount_path }}</code>
+            <button class="mini" @click="toggle(s.mount_path, 'catalog')">
+              {{ openKey === keyOf(s.mount_path, 'catalog') ? t('skills.hideContent') : t('skills.viewContent') }}
+            </button>
             <button
-              class="mini"
-              @click="toggle(s.mount_path, d.employee_id, { employee: d.employee_id })"
+              class="mini accent"
+              :disabled="busyKey === 'adopt:' + s.dir_name"
+              :data-test="'adopt-' + s.dir_name"
+              @click="adopt(s.dir_name)"
             >
-              {{ openKey === keyOf(s.mount_path, d.employee_id) ? t('skills.hideContent') : t('skills.viewContent') }}
+              {{ t('skills.adopt') }}
             </button>
           </div>
-          <pre v-if="openKey === keyOf(s.mount_path, d.employee_id)" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
+          <pre v-if="openKey === keyOf(s.mount_path, 'catalog')" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
         </div>
       </section>
     </template>
@@ -157,8 +216,36 @@ onMounted(load)
             >
               {{ openKey === keyOf(s.mount_path, area.principal ?? 'personal') ? t('skills.hideContent') : t('skills.viewContent') }}
             </button>
+            <button
+              class="mini danger"
+              :disabled="busyKey === 'remove:' + s.dir_name"
+              :data-test="'remove-' + s.dir_name"
+              @click="remove(s.dir_name)"
+            >
+              {{ confirmKey === s.dir_name ? t('skills.confirmRemove') : t('skills.remove') }}
+            </button>
           </div>
           <pre v-if="openKey === keyOf(s.mount_path, area.principal ?? 'personal')" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
+        </div>
+      </section>
+    </template>
+    <p v-else class="muted">{{ t('skills.empty') }}</p>
+
+    <h2 class="sec">{{ t('skills.drafts') }}</h2>
+    <p class="muted">{{ t('skills.draftsHint') }}</p>
+    <template v-if="drafts.length">
+      <section v-for="d in drafts" :key="d.employee_id" class="area">
+        <h3>🛠 {{ d.employee_name }}</h3>
+        <div v-for="s in d.skills" :key="s.mount_path" class="item">
+          <div class="row" :data-test="'skill-' + s.mount_path">
+            <span class="name">{{ s.name }}</span>
+            <span class="desc" :title="s.description">{{ s.description }}</span>
+            <code class="mount">{{ s.mount_path }}</code>
+            <button class="mini" @click="toggle(s.mount_path, d.employee_id, { employee: d.employee_id })">
+              {{ openKey === keyOf(s.mount_path, d.employee_id) ? t('skills.hideContent') : t('skills.viewContent') }}
+            </button>
+          </div>
+          <pre v-if="openKey === keyOf(s.mount_path, d.employee_id)" class="content">{{ contentBusy && !contentText ? '…' : contentText }}</pre>
         </div>
       </section>
     </template>
@@ -205,9 +292,13 @@ onMounted(load)
   padding: 0.3rem 0.8rem; cursor: pointer; font-size: 0.85rem; white-space: nowrap;
 }
 .mini:hover { border-color: var(--accent); color: var(--accent); }
+.mini.accent { border-color: var(--accent); color: var(--accent); }
+.mini.danger:hover { border-color: var(--danger, #c0392b); color: var(--danger, #c0392b); }
+.mini:disabled { opacity: 0.5; cursor: wait; }
 .content {
   margin: 0; padding: 0.8rem 1rem; border-top: 1px solid var(--border);
   max-height: 26rem; overflow: auto; font-size: 0.82rem; line-height: 1.45;
   white-space: pre-wrap; word-break: break-word; background: var(--bg, transparent);
 }
+.notice { color: var(--ok); font-size: 0.9rem; }
 </style>

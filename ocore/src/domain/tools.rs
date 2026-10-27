@@ -94,6 +94,9 @@ pub struct ToolCtx {
     /// `None`＝未啟用（read_file 僅工作區、系統提示無技能清單）。草稿區由
     /// `employee_output_root`＋員工 id 推導，不在此。
     pub skill_areas: Option<std::sync::Arc<crate::skills::SkillAreas>>,
+    /// 技能讀取聯集總量上限 t（`AppConfig::skills_union_limit`；`0`＝不設限）。
+    /// 員工新建草稿技能（write_file 進 skills/）前檢查 x+y+z+1 ≤ t。
+    pub skills_union_limit: usize,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -111,6 +114,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("turn_max_steps", &self.turn_max_steps)
             .field("subagent_max_steps", &self.subagent_max_steps)
             .field("internal_mail_enabled", &self.internal_mail_enabled)
+            .field("skills_union_limit", &self.skills_union_limit)
             .field("wake", &self.wake.is_some())
             .field("turn_deltas", &self.turn_deltas.is_some())
             .field("skill_areas", &self.skill_areas.is_some())

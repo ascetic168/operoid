@@ -57,7 +57,14 @@
     "viewContent": "View",
     "hideContent": "Collapse",
     "skillCount": "{n} skills",
-    "contentError": "Failed to load skill content."
+    "contentError": "Failed to load skill content.",
+    "catalog": "Skill catalog",
+    "catalogHint": "Curated bundled skills (read-only mount catalog/…, not loaded into prompts) — adopt into your personal area for AI employees to use.",
+    "adopt": "Adopt",
+    "adopted": "Adopted \"{name}\" into your personal area.",
+    "remove": "Remove",
+    "confirmRemove": "Confirm remove?",
+    "removed": "Removed \"{name}\" from your personal area."
   },
   "dash": {
     "employeesByState": "Employees by state",

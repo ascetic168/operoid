@@ -939,6 +939,7 @@ async fn api_op_run(
                 tool_result_max_chars: cfg.0.tool_result_max_chars,
                 turn_deltas: None,
                 skill_areas: None,
+                skills_union_limit: 0,
             };
             let q = b.arg.clone().unwrap_or_default();
             let res = match svc.retrieve(&tctx.access, kind, &q, None, 10, &tctx).await {
@@ -1124,6 +1125,7 @@ async fn api_knowledge_ask(
         tool_result_max_chars: cfg.0.tool_result_max_chars,
         turn_deltas: None,
         skill_areas: None,
+        skills_union_limit: 0,
     };
     let svc = ocore::knowledge::service::service_for_config(&state.db_path, &cfg.0);
     match svc.retrieve(&tctx.access, kind, &b.arg, None, 10, &tctx).await {

@@ -106,6 +106,7 @@ async fn real_m1_milestone_two_contexts() {
         tool_result_max_chars: 8_000,
         turn_deltas: None,
         skill_areas: None,
+        skills_union_limit: 0,
     };
     let ctx_op = mk_ctx(crate::knowledge::identity::operator_access_context(
         crate::runtime::AGENT_WS,
@@ -329,6 +330,7 @@ async fn real_g5_fanout_scaling() {
         tool_result_max_chars: 8_000,
         turn_deltas: None,
         skill_areas: None,
+        skills_union_limit: 0,
     };
     async fn timed(svc: &KnowledgeService, ctx: &ToolCtx) -> (f64, crate::domain::tools::ToolOutput) {
         let t0 = Instant::now();
@@ -425,6 +427,7 @@ async fn real_retrieve_sources_diag() {
         tool_result_max_chars: cfg.tool_result_max_chars,
         turn_deltas: None,
         skill_areas: None,
+        skills_union_limit: 0,
     };
     let svc = KnowledgeService::new(&db);
     let q = std::env::var("KNOWLEDGE_DIAG_Q").unwrap_or_else(|_| "蝕刻良率降低問題的根因".into());

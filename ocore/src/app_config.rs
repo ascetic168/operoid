@@ -160,6 +160,12 @@ pub struct AppConfig {
     /// 伺服器程式碼執行。
     #[serde(default = "default_skills_personal_dir")]
     pub skills_personal_dir: String,
+    /// 技能讀取聯集總量上限 t：單一員工載入的技能數（x公用＋y個人＋z草稿）不得超過
+    /// 此值——違反時禁止任何「新增技能」動作（草稿新建／主體挑選 adopt／admin 晉升／
+    /// 提案核可）。這是提示詞面積的硬閘：技能可用性優先，但上下文預算必須有界。
+    /// `0`＝不設限（不建議；圖書館書架不計入——未挑選的技能不佔提示詞）。
+    #[serde(default = "default_skills_union_limit")]
+    pub skills_union_limit: usize,
     /// 工廠文件轉換的多工上限——同時轉換的檔案數（可設定；預設 4）。
     /// 個人版＝單一批次的並發上限；企業版＝oserver 全域執行緒預算，搭配公平
     /// 調度（飽和時每位遠端使用者至多 1 線程——見 `factory_sched`）。
@@ -279,6 +285,9 @@ fn default_skills_personal_dir() -> String {
         Some(h) => h.join(".agents").join("skills").to_string_lossy().into_owned(),
         None => String::new(),
     }
+}
+fn default_skills_union_limit() -> usize {
+    30
 }
 fn default_factory_concurrency() -> usize {
     4
@@ -459,6 +468,7 @@ impl Default for AppConfig {
             internal_mail_enabled: true,
             llm_concurrency: default_llm_concurrency(),
             skills_personal_dir: default_skills_personal_dir(),
+            skills_union_limit: default_skills_union_limit(),
             factory_concurrency: default_factory_concurrency(),
             event_review_enabled: true,
             event_ingress_port: None,

@@ -76,7 +76,14 @@
     "viewContent": "檢視內容",
     "hideContent": "收起",
     "skillCount": "{n} 個技能",
-    "contentError": "無法載入技能內容。"
+    "contentError": "無法載入技能內容。",
+    "catalog": "技能圖書館",
+    "catalogHint": "內建策展技能（唯讀掛載 catalog/…，不佔提示詞）——挑選加入個人區後，AI 員工才會載入。",
+    "adopt": "加入我的技能區",
+    "adopted": "已將「{name}」加入個人區。",
+    "remove": "移除",
+    "confirmRemove": "確認移除？",
+    "removed": "已從個人區移除「{name}」。"
   },
   "ask": {
     "title": "知識查詢",

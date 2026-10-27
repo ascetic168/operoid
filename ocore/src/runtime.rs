@@ -2108,6 +2108,16 @@ impl<'a> TurnSession<'a> {
                     &self.ctx.employee_output_root,
                     self.employee_id,
                 );
+                // 總量限制 t：新建草稿技能（skills/<name>/SKILL.md 且該技能尚不存在）
+                // 前檢查 x+y+z+1 ≤ t——違反即擋（提示詞預算的硬閘；既有技能改寫不受限）。
+                if let Some(block) = crate::skills::draft_skill_addition_blocked(
+                    &root,
+                    self.ctx.skill_areas.as_deref(),
+                    self.ctx.skills_union_limit,
+                    args.get("path").and_then(|v| v.as_str()).unwrap_or(""),
+                ) {
+                    return Some(TurnAction::Continue { note: block });
+                }
                 let note = crate::tools::fs_tools::write_file(&root, args, &mut self.file_state)
                     .unwrap_or_else(|e| format!("[write_file] 失敗：{e}"));
                 Some(TurnAction::Continue { note })
@@ -4001,6 +4011,7 @@ pub fn build_tool_ctx(
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
             skill_areas: Some(skill_areas),
+            skills_union_limit: cfg.skills_union_limit,
         },
     ))
 }
@@ -4889,6 +4900,7 @@ Caption-only figure（無原圖 → 不收）
             tool_result_max_chars: 8_000,
             turn_deltas: None,
             skill_areas: None,
+            skills_union_limit: 0,
         }
     }
 
@@ -7188,6 +7200,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             tool_result_max_chars: 8_000,
             turn_deltas: None,
             skill_areas: None,
+            skills_union_limit: 0,
         };
         let res = run_cycle(
             &emp_id,
@@ -7318,6 +7331,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             tool_result_max_chars: 8_000,
             turn_deltas: None,
             skill_areas: None,
+            skills_union_limit: 0,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -7790,6 +7804,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             tool_result_max_chars: 8_000,
             turn_deltas: None,
             skill_areas: None,
+            skills_union_limit: 0,
         };
 
         let dir = test_dir();
@@ -8142,6 +8157,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             tool_result_max_chars: 8_000,
             turn_deltas: None,
             skill_areas: None,
+            skills_union_limit: 0,
         };
 
         let dir = test_dir();
@@ -9385,6 +9401,17 @@ pub fn approve_skill_proposal_core(
         &data_dir,
         p.owner_principal.as_deref(),
     );
+    // 總量限制 t：核可＝個人區 +1（x+y+z 不得超過 t；該技能已在草稿計數，複製後聯集 +1）。
+    let areas = crate::skills::areas_for(
+        &cfg.skills_personal_dir,
+        &data_dir,
+        emp.owner_principal.as_deref(),
+    );
+    if crate::skills::union_limit_exceeded(&ws_root, Some(&areas), cfg.skills_union_limit) {
+        return Err(AppError::new("agent_os.skillLimitExceeded")
+            .p("limit", cfg.skills_union_limit)
+            .p("detail", "核可後員工載入的技能聯集將超過總量上限——請先精簡"));
+    }
     crate::skills::copy_skill_dir(
         &ws_root.join(crate::skills::DRAFT_DIR),
         &target_root,

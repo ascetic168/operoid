@@ -172,13 +172,17 @@ Optional capabilities (knowledge-graph engine, local embeddings, complex-PDF par
 - Currently a consultant helping enterprises adopt AI.
 - Operoid's governance machinery — including the Action Registry — is distilled from real manufacturing-floor cases, not from theory.
 
-## Bundled default skills
+## Bundled skill catalog
 
-The company skill library ships with a curated starter set: `ocore/default-skills/`
-is imported from [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins)
-(commit `d9d8e13`, 2026-10-27) by `scripts/import_kwp_skills.py` and seeded into
-`<data_dir>/skills/library/` on server startup (missing plugin dirs only — never
-overwrites). 111 role skills across 11 plugins (productivity, sales,
+The product ships a curated skill catalog: `ocore/default-skills/` is imported
+from [anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins)
+(commit `d9d8e13`, 2026-10-27) by `scripts/import_kwp_skills.py` and seeded on
+startup into the **skill catalog** (`<data_dir>/skills/catalog/`, read-only
+mount `catalog/…`) — a browse-and-adopt shelf that does **not** load into
+anyone's prompt. Principals adopt skills into their personal area from the UI
+(and remove them again); only adopted skills — plus the org library and
+employee drafts, bounded by `skills_union_limit` (default 30) — appear in an
+AI employee's prompt. 111 role skills across 11 plugins (productivity, sales,
 customer-support, product-management, marketing, legal, finance, data,
 enterprise-search, operations, human-resources).
 

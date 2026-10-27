@@ -79,6 +79,7 @@ pub async fn op_run<R: Runtime>(
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
             skill_areas: None,
+            skills_union_limit: 0,
         };
         let q = arg.clone().unwrap_or_default();
         let out = svc

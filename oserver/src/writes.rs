@@ -78,6 +78,8 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/skill-proposals/{id}/approve", post(api_skill_proposal_approve))
         .route("/api/skill-proposals/{id}/reject", post(api_skill_proposal_reject))
         .route("/api/skills/promote", post(api_skill_promote))
+        .route("/api/skills/adopt", post(api_skill_adopt))
+        .route("/api/skills/remove", post(api_skill_remove))
         .route("/api/registry/drill", post(api_registry_drill))
         .route("/api/tasks/{id}/cancel", post(api_cancel_task))
         .route("/api/registry", post(api_registry_save))
@@ -214,6 +216,130 @@ struct SkillPromoteBody {
     skill: String,
 }
 
+#[derive(Deserialize)]
+struct SkillAdoptBody {
+    /// 圖書館內的技能相對路徑（canonical id；來自清單面的 dir_name，如 `sales/call-prep`）。
+    name: String,
+}
+
+/// 主體個人區根（挑選／移除的目的地；principal＝呼叫者本人）。
+fn adopt_target_root(
+    cfg: &ocore::app_config::AppConfig,
+    data_dir: &std::path::Path,
+    principal: &str,
+) -> Result<std::path::PathBuf, AppError> {
+    ocore::skills::personal_area_root(&cfg.skills_personal_dir, data_dir, Some(principal))
+        .ok_or_else(|| AppError::new("agent_os.skillContentForbidden").p("detail", "無個人區可寫入"))
+}
+
+/// 圖書館 → 主體個人區（app store 挑選；人類動作，伺服器代為複製）。
+/// 名稱以圖書館掃描清單為準（防路徑操作）；同名已存在即拒絕（永不覆寫）；
+/// 受影響員工（同主體）的聯集總量 t 逐員工檢查。
+async fn api_skill_adopt(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    body: Json<SkillAdoptBody>,
+) -> Response {
+    let Some(ident) = require_identity(&state, &headers, identity) else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"code": "auth.unauthorized"}))).into_response();
+    };
+    let st = state.clone();
+    let name = body.0.name.trim().trim_matches('/').to_string();
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        let catalog_root = ocore::skills::catalog_root(&data_dir);
+        let known = ocore::skills::scan_zone(&catalog_root, ocore::skills::SkillZone::Catalog);
+        if !known.iter().any(|e| e.dir_name == name) {
+            return Err(AppError::new("agent_os.skillNotFound").p("name", name.as_str()));
+        }
+        let target_root = adopt_target_root(&st.cfg, &data_dir, &ident.name)?;
+        let target = target_root.join(&name);
+        if target.exists() {
+            return Err(AppError::new("agent_os.skillAlreadyPresent").p("name", name.as_str()));
+        }
+        // 總量限制 t：挑選＝同主體每位員工的個人區 +1——任一員工超限即擋。
+        let limit = st.cfg.skills_union_limit;
+        if limit > 0 {
+            let emp_root = std::path::PathBuf::from(&st.cfg.employee_output_path);
+            for e in store.list_all_employees()? {
+                if e.archived || e.owner_principal.as_deref() != Some(ident.name.as_str()) {
+                    continue;
+                }
+                let ws_root =
+                    ocore::tools::workspace::workspace_root(&emp_root, &e.id);
+                let areas = ocore::skills::areas_for(
+                    &st.cfg.skills_personal_dir,
+                    &data_dir,
+                    Some(ident.name.as_str()),
+                );
+                if ocore::skills::union_limit_exceeded(&ws_root, Some(&areas), limit) {
+                    return Err(AppError::new("agent_os.skillLimitExceeded")
+                        .p("limit", limit)
+                        .p("employee", e.id)
+                        .p("detail", "挑選後員工載入的技能聯集將超過總量上限"));
+                }
+            }
+        }
+        ocore::skills::copy_skill_dir(&catalog_root, &target_root, &name)
+            .map_err(|e| AppError::new("agent_os.skillPublishFailed").p("detail", e))?;
+        Ok(json!({ "ok": true, "name": name, "mount": format!("personal/{name}") }))
+    })
+    .await;
+    match res {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+/// 從主體個人區移除一個挑選來的技能（人類動作；名稱以個人區掃描清單為準）。
+async fn api_skill_remove(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    body: Json<SkillAdoptBody>,
+) -> Response {
+    let Some(ident) = require_identity(&state, &headers, identity) else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"code": "auth.unauthorized"}))).into_response();
+    };
+    let st = state.clone();
+    let name = body.0.name.trim().trim_matches('/').to_string();
+    let res = tokio::task::spawn_blocking(move || {
+        let _store = open_store(&st)?;
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        let target_root = adopt_target_root(&st.cfg, &data_dir, &ident.name)?;
+        let known = ocore::skills::scan_zone(&target_root, ocore::skills::SkillZone::Personal);
+        if !known.iter().any(|e| e.dir_name == name) {
+            return Err(AppError::new("agent_os.skillNotFound").p("name", name.as_str()));
+        }
+        std::fs::remove_dir_all(target_root.join(&name))
+            .map_err(|e| AppError::new("agent_os.skillRemoveFailed").p("detail", e.to_string()))?;
+        Ok(json!({ "ok": true, "name": name }))
+    })
+    .await;
+    match res {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 /// 組織級晉升（admin——RBAC 矩陣收口）：主體個人區 → 公司共用庫。
 async fn api_skill_promote(
     State(state): State<Arc<ServerState>>,
@@ -228,6 +354,32 @@ async fn api_skill_promote(
     let b = body.0;
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
+        // 總量限制 t：晉升＝共用庫 +1，全組織每位員工的聯集各 +1——任一員工超限即擋。
+        let limit = st.cfg.skills_union_limit;
+        if limit > 0 {
+            let data_dir = st
+                .db_path
+                .parent()
+                .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+            let emp_root = std::path::PathBuf::from(&st.cfg.employee_output_path);
+            for e in store.list_all_employees()? {
+                if e.archived {
+                    continue;
+                }
+                let ws_root = ocore::tools::workspace::workspace_root(&emp_root, &e.id);
+                let areas = ocore::skills::areas_for(
+                    &st.cfg.skills_personal_dir,
+                    &data_dir,
+                    e.owner_principal.as_deref(),
+                );
+                if ocore::skills::union_limit_exceeded(&ws_root, Some(&areas), limit) {
+                    return Err(AppError::new("agent_os.skillLimitExceeded")
+                        .p("limit", limit)
+                        .p("employee", e.id)
+                        .p("detail", "晉升後該員工載入的技能聯集將超過總量上限"));
+                }
+            }
+        }
         ocore::runtime::promote_skill_core(
             &st.cfg,
             &st.db_path,

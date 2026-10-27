@@ -61,6 +61,8 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         // 技能提案核可／退回（「限主體或管理面」由 handler 裁定——比照承諾「限自身」細化）
         ("POST", Some("/api/skill-proposals/{id}/approve"))
         | ("POST", Some("/api/skill-proposals/{id}/reject")) => Req::Authenticated,
+        // 技能挑選／移除（「限本人個人區」由 handler 裁定——identity 即寫入目標）
+        ("POST", Some("/api/skills/adopt")) | ("POST", Some("/api/skills/remove")) => Req::Authenticated,
         // 自身會話面（登出／refresh／改自身密碼——所有已認證角色）
         ("POST", Some("/api/auth/logout"))
         | ("POST", Some("/api/auth/refresh"))
