@@ -530,6 +530,7 @@ mod tests {
             name: "E".into(),
             brain: BrainRef { brain_id: "b".into() },
             role: None,
+            description: None,
             template_id: None,
             state,
             archived,

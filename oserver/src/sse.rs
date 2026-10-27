@@ -354,6 +354,7 @@ mod tests {
                     name: id.into(),
                     brain: BrainRef { brain_id: "b1".into() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,

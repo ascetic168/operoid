@@ -189,6 +189,7 @@ mod tests {
                     name: "E".into(),
                     brain: crate::domain::BrainRef { brain_id: "b1".into() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: true,

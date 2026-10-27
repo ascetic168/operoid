@@ -698,6 +698,7 @@ async fn artifact_access_control_end_to_end() {
                 name: "瀚青".into(),
                 brain: ocore::domain::BrainRef { brain_id: "__default__".into() },
                 role: None,
+                description: None,
                 template_id: None,
                 state: ocore::domain::EmployeeState::Sleeping,
                 archived: false,

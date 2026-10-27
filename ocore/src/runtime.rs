@@ -798,11 +798,22 @@ pub(crate) fn now_line() -> String {
     format!("{}（週{wd}）", now.format("%Y-%m-%d %H:%M"))
 }
 
-/// 對話系統 prompt：基礎 [`TURN_SYSTEM`] ＋ write 動作說明（allowlist 閘門）＋
+/// 職責描述的 prompt 取值：trim 後空白視為未設定（清除語意）。
+fn employee_desc(emp: &Employee) -> Option<&str> {
+    emp.description
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+}
+
+/// 對話系統 prompt：基礎 [`TURN_SYSTEM`] ＋職責描述（若有）＋ write 動作說明（allowlist 閘門）＋
 /// 已授權類別清單（Ch.20 §5——登記表有效的 Fenced/Owned 類別；員工看不到的類別
 /// 就聲稱不了，封閉白名單的廉價實現）。
-fn turn_system_prompt(ctx: &ToolCtx) -> String {
+fn turn_system_prompt(ctx: &ToolCtx, desc_line: &str) -> String {
     let mut prompt = String::from(TURN_SYSTEM);
+    if !desc_line.is_empty() {
+        prompt.push_str(desc_line);
+    }
     if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
         prompt.push_str(
             "\n  {\"action\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"} —— 把一份完整產出寫成筆記檔（落於你的專屬產出目錄，供人類審閱）。",
@@ -898,6 +909,10 @@ async fn run_conversational_turn(
     };
 
     let channel = channel_context_line(task);
+    // 職責描述行（legacy 步用；native 步由 native_turn_system_prompt 自行渲染）。
+    let desc_line = employee_desc(&emp)
+        .map(|d| format!("\n你的職責描述：{d}"))
+        .unwrap_or_default();
     // F1 串流：回合 delta 發佈端（`ctx.turn_deltas` 由 scan_inbox 注入；None＝不發佈——
     // 測試／非排程器路徑）。ephemeral：send 無訂閱者時為 no-op，不落 DB（見 TurnDelta 文檔）。
     let delta_tx = ctx.turn_deltas.clone();
@@ -1296,7 +1311,7 @@ async fn run_conversational_turn(
                 },
                 now = now_line(),
             );
-            let action = match reasoner.reason(&turn_system_prompt(ctx), &user).await {
+            let action = match reasoner.reason(&turn_system_prompt(ctx, &desc_line), &user).await {
                 Ok(v) => v,
                 Err(e) => {
                     // Reasoner 失敗（如 LLM rate limit）：不讓對話回合硬失敗（沿用 v1 退化精神）。
@@ -2246,9 +2261,14 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
         .iter()
         .map(|t| format!("- {}: {}", t.name, t.description))
         .collect();
+    // 職責描述（自由文字）——身分卡獨立區塊，強化職務意識；未設定＝整段省略。
+    let desc_section = match employee_desc(emp) {
+        Some(d) => format!("\n## 職責描述\n{d}\n"),
+        None => String::new(),
+    };
     let mut prompt = format!(
         "你是「{name}」，Operoid 工作區的成員，正在處理一則人類或外部訊息。{role_line}{owner_line}\n\
-         現在時間：{now}\n\n\
+         現在時間：{now}\n{desc_section}\n\
          ## 可用工具（以 function calling 呼叫）\n{tools}\n\n\
          ## 行為準則\n\
          - 每步可呼叫一或多個工具；結果會在下一則訊息回給你。工具回報錯誤時，換方法或換查詢，不要原樣重試。\n\
@@ -2261,6 +2281,7 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
         name = emp.name,
         now = now_line(),
         tools = tool_lines.join("\n"),
+        desc_section = desc_section,
     );
     if let Some(reg) = &ctx.registry {
         let now = now_rfc3339();
@@ -2550,7 +2571,12 @@ const PLAN_SYSTEM: &str = "你是一名自主工作者。根據你的承諾與�
 /// W3：PLAN 系統 prompt——具 write-note 權限時追加 write 選項說明。
 /// R4：`send_allowed=false`（承諾類別圍欄 no_outbound）時不提示 send 選項——
 /// 員工看不到的選項就不會選（選項抑制是第一層；執行層硬閘見 send 分支）。
-fn plan_system_prompt(ctx: &ToolCtx, send_allowed: bool) -> String {
+/// 職責描述（若有）跟進——自主循環的行動判斷同樣錨定職務意識。
+fn plan_system_prompt(ctx: &ToolCtx, send_allowed: bool, desc_line: &str) -> String {
+    let mut base = String::from(PLAN_SYSTEM);
+    if !desc_line.is_empty() {
+        base.push_str(desc_line);
+    }
     let send_note = if send_allowed {
         "可選行動除 query（檢索）與 tool=send（外發通知）外"
     } else {
@@ -2558,13 +2584,13 @@ fn plan_system_prompt(ctx: &ToolCtx, send_allowed: bool) -> String {
     };
     if ctx.allowed_tools.contains(crate::write_note::TOOL_WRITE_NOTE) {
         format!(
-            "{PLAN_SYSTEM}
+            "{base}
 {send_note}，另可 {{\"tool\": \"write\", \"filename\": \"xxx.md\", \"title\": \"標題\", \"content\": \"完整 markdown 全文\"}}——把階段性產出寫成筆記檔（專屬產出目錄，供人類審閱）。"
         )
     } else if send_allowed {
-        PLAN_SYSTEM.to_string()
+        base
     } else {
-        format!("{PLAN_SYSTEM}\n{send_note}。")
+        format!("{base}\n{send_note}。")
     }
 }
 
@@ -2740,6 +2766,13 @@ async fn run_autonomous_body(
     let mut commitment = store
         .get_commitment(commitment_id)?
         .ok_or_else(|| anyhow::anyhow!("commitment not found: {commitment_id}"))?;
+    // 職責描述行（PLAN prompt 用；body 開頭取一次——描述不隨循環變動）。
+    let desc_line = store
+        .get_employee(employee_id)?
+        .as_ref()
+        .and_then(|e| employee_desc(e))
+        .map(|d| format!("\n你的職責描述：{d}"))
+        .unwrap_or_default();
 
     let deadline = std::time::Instant::now() + budget.max_duration;
     let mut artifact_ids: Vec<String> = Vec::new();
@@ -2829,7 +2862,7 @@ async fn run_autonomous_body(
             todos = format_todo_state(&memory.todos),
             now = now_line(),
         );
-        let plan = match reasoner.reason(&plan_system_prompt(ctx, send_allowed), &plan_user).await {
+        let plan = match reasoner.reason(&plan_system_prompt(ctx, send_allowed, &desc_line), &plan_user).await {
             Ok(v) => v,
             Err(e) => {
                 outcome = AutonomousOutcome::Errored {
@@ -3650,6 +3683,7 @@ pub fn deploy_instance(
         name: instance_name.to_string(),
         brain: tmpl.brain.clone(),
         role: tmpl.role.clone(),
+        description: tmpl.description.clone(),
         template_id: Some(template_id.to_string()),
         state: EmployeeState::Sleeping,
         archived: false,
@@ -4278,6 +4312,7 @@ Caption-only figure（無原圖 → 不收）
                     brain_id: "__default__".into(),
                 },
                 role: None,
+                description: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -4311,6 +4346,173 @@ Caption-only figure（無原圖 → 不收）
         let evs = store.list_events_by_employee(&emp_id, 10).unwrap();
         let ev = evs.iter().find(|e| e.kind == "tools_changed").expect("治理事件");
         assert!(ev.detail.contains("read-file"), "{:?}", ev.detail);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 職責描述更新：設定（trim）／清除（空白＝None）／archived 拒改；description_changed 留痕。
+    #[test]
+    fn update_employee_description_set_clear_and_archived() {
+        let dir = test_dir();
+        let store = JsonStore::new(&dir);
+        let emp_id = seed(&store);
+        let emp =
+            update_employee_description_core(&store, &emp_id, Some("  負責週報彙整  ")).unwrap();
+        assert_eq!(emp.description.as_deref(), Some("負責週報彙整"));
+        // 空白字串＝清除。
+        let emp = update_employee_description_core(&store, &emp_id, Some("   ")).unwrap();
+        assert_eq!(emp.description, None);
+        let evs = store.list_events_by_employee(&emp_id, 10).unwrap();
+        assert!(
+            evs.iter().any(|e| e.kind == "description_changed"),
+            "治理事件留痕"
+        );
+        // archived 拒改。
+        store
+            .put_employee(&Employee {
+                id: "emp-arch".into(),
+                workspace_id: "ws".into(),
+                name: "A".into(),
+                brain: BrainRef {
+                    brain_id: "__default__".into(),
+                },
+                role: None,
+                description: None,
+                template_id: None,
+                state: EmployeeState::Sleeping,
+                archived: true,
+                tools: None,
+                created_at: "t".into(),
+                owner_principal: None,
+            })
+            .unwrap();
+        let err = update_employee_description_core(&store, "emp-arch", Some("x")).unwrap_err();
+        assert_eq!(err.code, "agent_os.employeeArchived");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 模板職責描述：建立時 trim／空白不落地；部署時抄襲到 Instance。
+    #[test]
+    fn template_description_inherits_on_deploy() {
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let cfg = app_config::AppConfig::default();
+        create_template_core(
+            &cfg,
+            &store,
+            "ws",
+            "writer",
+            Some("__default__"),
+            None,
+            Some("  負責資料整理與週報  "),
+            None,
+        )
+        .unwrap();
+        let emp_id = deploy_instance(&store, "writer", "W1", None).unwrap();
+        let emp = store.get_employee(&emp_id).unwrap().unwrap();
+        assert_eq!(
+            emp.description.as_deref(),
+            Some("負責資料整理與週報"),
+            "Instance 應抄襲模板職責描述"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 職責描述進 prompt：native 身分卡獨立區塊；legacy／PLAN 帶一行；
+    /// 未設定／空白＝整段省略（員工看不到的就不會自稱）。
+    #[test]
+    fn prompts_carry_employee_description() {
+        let c = ctx();
+        let emp = Employee {
+            id: "emp".into(),
+            workspace_id: "ws".into(),
+            name: "E".into(),
+            brain: BrainRef {
+                brain_id: "__default__".into(),
+            },
+            role: None,
+            description: Some("負責週報彙整".into()),
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: None,
+        };
+        let p = native_turn_system_prompt(&emp, &c);
+        assert!(p.contains("## 職責描述"));
+        assert!(p.contains("負責週報彙整"));
+        // 未設定／空白 → 區塊整段省略。
+        for mut e in [emp.clone(), emp.clone()] {
+            e.description = if e.description.is_some() {
+                None
+            } else {
+                Some("   ".into())
+            };
+            assert!(!native_turn_system_prompt(&e, &c).contains("職責描述"));
+        }
+        // legacy／PLAN：有帶才附一行。
+        assert!(turn_system_prompt(&c, "\n你的職責描述：X").contains("X"));
+        assert!(!turn_system_prompt(&c, "").contains("職責描述"));
+        assert!(plan_system_prompt(&c, true, "\n你的職責描述：X").contains("X"));
+        assert!(!plan_system_prompt(&c, true, "").contains("職責描述"));
+    }
+
+    /// watch payload 帶部署者顯示名：principals 查得到 → display_name；查無 → 原 id（可辨識性優先）。
+    #[test]
+    fn watch_payload_resolves_owner_display_name() {
+        use crate::knowledge::types::{Principal, PrincipalType};
+        let dir = test_dir();
+        let db = dir.join("t.db");
+        let store = SqliteStore::open(&db).unwrap();
+        let mk = |id: &str, owner: Option<&str>| Employee {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            name: id.into(),
+            brain: BrainRef {
+                brain_id: "__default__".into(),
+            },
+            role: None,
+            description: None,
+            template_id: None,
+            state: EmployeeState::Sleeping,
+            archived: false,
+            tools: None,
+            created_at: "t".into(),
+            owner_principal: owner.map(str::to_string),
+        };
+        store.put_employee(&mk("emp-a", Some("principal-alice"))).unwrap();
+        store.put_employee(&mk("emp-g", Some("principal-ghost"))).unwrap();
+        store.put_employee(&mk("emp-o", None)).unwrap();
+        store
+            .put_principal(&Principal {
+                id: "principal-alice".into(),
+                principal_type: PrincipalType::Human,
+                employee_id: None,
+                display_name: "Alice".into(),
+                attrs: Default::default(),
+                token_hash: None,
+                login_name: None,
+                password_hash: None,
+                disabled: false,
+                must_change_password: false,
+            })
+            .unwrap();
+        let cfg = app_config::AppConfig::default();
+        assert_eq!(
+            watch_payload(&cfg, &store, "emp-a").unwrap()["owner_display_name"],
+            "Alice"
+        );
+        assert_eq!(
+            watch_payload(&cfg, &store, "emp-g").unwrap()["owner_display_name"],
+            "principal-ghost",
+            "查無 principal → 退回原 id"
+        );
+        assert_eq!(
+            watch_payload(&cfg, &store, "emp-o").unwrap()["owner_display_name"],
+            "principal-operator",
+            "None＝operator 歸屬（bare store 無 operator row → 原 id）"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -4662,6 +4864,7 @@ Caption-only figure（無原圖 → 不收）
                 name: "E2".into(),
                 brain: BrainRef { brain_id: "__default__".into() },
                 role: None,
+                description: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -5081,7 +5284,7 @@ Caption-only figure（無原圖 → 不收）
     fn turn_system_prompt_lists_only_active_categories() {
         let mut c = ctx();
         assert!(
-            !turn_system_prompt(&c).contains("category 欄可填"),
+            !turn_system_prompt(&c, "").contains("category 欄可填"),
             "無登記表 → 不附清單（全部走人類核可）"
         );
         let reg: crate::registry::ActionRegistry = serde_json::from_value(serde_json::json!({
@@ -5100,7 +5303,7 @@ Caption-only figure（無原圖 → 不收）
         }))
         .unwrap();
         c.registry = Some(std::sync::Arc::new(reg));
-        let prompt = turn_system_prompt(&c);
+        let prompt = turn_system_prompt(&c, "");
         assert!(prompt.contains("category 欄可填"));
         assert!(prompt.contains("internal-report"));
         assert!(
@@ -6046,6 +6249,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             "writer",
             Some("__default__"),
             None,
+            None,
             Some(&[crate::write_note::TOOL_WRITE_NOTE]),
         )
         .unwrap();
@@ -6598,6 +6802,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 name: "E".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
+                description: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -6706,6 +6911,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 name: "E".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
+                description: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -6817,6 +7023,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 name: "E".into(),
                 brain: BrainRef { brain_id: active },
                 role: None,
+                description: None,
                 template_id: None,
                 state: EmployeeState::Sleeping,
                 archived: false,
@@ -6941,6 +7148,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: "E".into(),
                     brain: BrainRef { brain_id: "__default__".into() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7077,6 +7285,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: name.into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7131,6 +7340,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: name.into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7239,6 +7449,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: name.into(),
                     brain: BrainRef { brain_id: active.clone() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7312,6 +7523,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                 name: "Procurement Steve".into(),
                 brain: BrainRef { brain_id: "demo".into() },
                 role: Some("procurement".into()),
+                description: None,
                 tools: None,
                 created_at: now_rfc3339(),
             })
@@ -7402,6 +7614,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: n.into(),
                     brain: BrainRef { brain_id: brain.clone() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7461,6 +7674,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: n.into(),
                     brain: BrainRef { brain_id: "__default__".into() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7583,6 +7797,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: n.into(),
                     brain: BrainRef { brain_id: active.clone() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7649,6 +7864,7 @@ todos: Vec::new(),                updated_at: "t".into(),
                     name: n.into(),
                     brain: BrainRef { brain_id: "x".into() },
                     role: None,
+                    description: None,
                     template_id: None,
                     state: EmployeeState::Sleeping,
                     archived: false,
@@ -7794,6 +8010,16 @@ pub async fn run_commitments_for_employee(
 // 介面只收 (&SqliteStore, &AppConfig)：不含任何 Tauri。`agent_os_enabled` 把關由
 // 呼叫端（殼 command / oserver handler）負責——組裝函式本身不檢查。
 
+/// principal id → 顯示名（principals 表；查無 → None）。員工建立者（部署者）顯示用
+/// （watch_payload／oserver `GET /api/employees` 清單共用）。
+pub fn principal_display_name(store: &SqliteStore, principal_id: &str) -> Option<String> {
+    store
+        .get_principal(principal_id)
+        .ok()
+        .flatten()
+        .map(|p| p.display_name)
+}
+
 /// 監看快照（`agent_watch`／`GET /api/employees/{id}/watch`）——state、Active
 /// commitments、待辦 tasks、近期 artifacts、memory、近期 events、messages。
 pub fn watch_payload(
@@ -7804,6 +8030,14 @@ pub fn watch_payload(
     let emp = store
         .get_employee(employee_id)?
         .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    // 部署者（人類主管）顯示名：owner_principal → principals.display_name；
+    // None（既有員工）＝operator 歸屬 → operator 顯示名；查無 → 原 id（可辨識性優先）。
+    let owner_id = emp
+        .owner_principal
+        .as_deref()
+        .unwrap_or(crate::knowledge::identity::OPERATOR_PRINCIPAL_ID);
+    let owner_display_name =
+        principal_display_name(store, owner_id).unwrap_or_else(|| owner_id.to_string());
     // 解析此員工腦的 chat_model（給對話頁顯示「回覆模型」用）。
     let llm_model = app_config::brain_entry(cfg, &emp.brain.brain_id)
         .ok()
@@ -7811,6 +8045,7 @@ pub fn watch_payload(
         .and_then(|lc| lc.config.chat_model.clone());
     Ok(serde_json::json!({
         "employee": emp,
+        "owner_display_name": owner_display_name,
         "llm_model": llm_model,
         "commitments": store.list_active_commitments_by_owner(employee_id)?,
         "proposals": store
@@ -8242,6 +8477,7 @@ pub fn create_template_core(
     name: &str,
     brain_id: Option<&str>,
     role: Option<&str>,
+    description: Option<&str>,
     tools: Option<&[&str]>,
 ) -> Result<TemplateResult, AppError> {
     let brain_id = brain_id.map(str::to_string).unwrap_or_else(|| {
@@ -8261,6 +8497,7 @@ pub fn create_template_core(
         name: name.to_string(),
         brain: BrainRef { brain_id },
         role: role.map(str::to_string),
+        description: description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
         tools: tools.map(|v| v.iter().map(|s| s.to_string()).collect()),
         created_at: now_rfc3339(),
     })?;
@@ -8413,6 +8650,37 @@ pub fn update_employee_tools_core(
         employee_id,
         "tools_changed",
         serde_json::json!({ "from": from, "to": tools }).to_string(),
+    );
+    Ok(e)
+}
+
+/// 職責描述更新（實例層級——特殊任務的辨識標記；進 system prompt 職務意識）。
+/// `None`／空白＝清除。治理事件 `description_changed` 留痕（from→to 全程留痕；
+/// 「誰改的」由呼叫端 API 鑑別承擔）。即時生效——下次喚醒 `native_turn_system_prompt` 重讀。
+pub fn update_employee_description_core(
+    store: &(dyn Store + Send + Sync),
+    employee_id: &str,
+    description: Option<&str>,
+) -> Result<Employee, AppError> {
+    let mut e = store
+        .get_employee(employee_id)?
+        .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+    if e.archived {
+        return Err(AppError::new("agent_os.employeeArchived").p("id", employee_id));
+    }
+    let desc = description
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string);
+    let from = e.description.clone();
+    e.description = desc.clone();
+    store.put_employee(&e)?;
+    record_event(
+        store,
+        &e.workspace_id,
+        employee_id,
+        "description_changed",
+        serde_json::json!({ "from": from, "to": desc }).to_string(),
     );
     Ok(e)
 }
@@ -8790,6 +9058,7 @@ mod recovery_tests {
             name: "Stuck".into(),
             brain: BrainRef { brain_id: "brain".into() },
             role: None,
+            description: None,
             template_id: None,
             state: EmployeeState::Working,
             archived: false,

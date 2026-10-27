@@ -26,7 +26,7 @@ use ocore::runtime::{
     reject_commitment_core, registry_drill_core, registry_save_core, review_commitment_core,
     deploy_instance, ensure_workspace_core, rename_employee_core, rename_template_core,
     send_message_core, stop_employee_core, unarchive_employee_core,
-    update_employee_tools_core,
+    update_employee_description_core, update_employee_tools_core,
 };
 
 use crate::routes::{err_response, open_store, require_auth, require_identity, ServerState};
@@ -63,7 +63,7 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/workspace/ensure", post(api_ensure_workspace))
         .route("/api/templates", post(api_create_template))
         .route("/api/templates/{id}", delete(api_delete_template).patch(api_rename_template))
-        .route("/api/employees/{id}", delete(api_delete_employee).patch(api_rename_employee))
+        .route("/api/employees/{id}", delete(api_delete_employee).patch(api_patch_employee))
         .route("/api/employees/{id}/tools", patch(api_update_employee_tools))
         .route("/api/employees/deploy", post(api_deploy))
         .route("/api/employees/{id}/stop", post(api_stop_employee))
@@ -212,6 +212,8 @@ struct CreateTemplateBody {
     name: String,
     brain_id: Option<String>,
     role: Option<String>,
+    /// 職責描述（自由文字；部署時抄襲到 Instance，實例可個別修改）。
+    description: Option<String>,
     /// W3（D-H3）：工具 allowlist（如 ["write-note"]；None＝預設集）。
     tools: Option<Vec<String>>,
 }
@@ -238,6 +240,7 @@ async fn api_create_template(
             &b.name,
             b.brain_id.as_deref(),
             b.role.as_deref(),
+            b.description.as_deref(),
             tool_refs.as_deref(),
         )
     })
@@ -360,22 +363,38 @@ async fn api_update_employee_tools(
     finish(res)
 }
 
-async fn api_rename_employee(
+#[derive(Deserialize)]
+struct PatchEmployeeBody {
+    /// 有帶才改（改名）。
+    name: Option<String>,
+    /// 有帶才改（職責描述；空字串＝清除）。空白 trim 後不落地。
+    description: Option<String>,
+}
+
+async fn api_patch_employee(
     State(state): State<Arc<ServerState>>,
     identity: Option<axum::Extension<Identity>>,
     headers: HeaderMap,
     AxPath(id): AxPath<String>,
-    body: Json<RenameBody>,
+    body: Json<PatchEmployeeBody>,
 ) -> Response {
     let identity = require_identity(&state, &headers, identity);
-    let name = body.0.name;
+    let b = body.0;
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
         let store = open_store(&st)?;
         if let Some(ident) = &identity {
             ensure_employee_access(ident, &store, &id)?;
         }
-        rename_employee_core(&store, &id, &name)
+        if let Some(name) = b.name {
+            rename_employee_core(&store, &id, &name)?;
+        }
+        if let Some(desc) = b.description {
+            update_employee_description_core(&store, &id, Some(&desc))?;
+        }
+        store
+            .get_employee(&id)?
+            .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", id))
     })
     .await;
     finish(res)

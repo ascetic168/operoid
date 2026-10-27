@@ -49,6 +49,7 @@ pub async fn agent_seed<R: tauri::Runtime>(
             brain_id: active_brain,
         },
         role: Some("general".into()),
+        description: None,
         template_id: None,
         state: EmployeeState::Sleeping,
         archived: false,
@@ -95,6 +96,7 @@ pub async fn agent_recruit<R: tauri::Runtime>(
         name,
         brain: BrainRef { brain_id },
         role: None,
+        description: None,
         template_id: None,
         state: EmployeeState::Sleeping,
         archived: false,
@@ -105,7 +107,7 @@ pub async fn agent_recruit<R: tauri::Runtime>(
     Ok(RecruitResult { employee_id: emp_id })
 }
 
-/// 建立一個可重用的 Employee Template（一種員工的定義：name＋brain＋role）。
+/// 建立一個可重用的 Employee Template（一種員工的定義：name＋brain＋role＋description）。
 #[tauri::command]
 pub async fn agent_create_template<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -113,6 +115,7 @@ pub async fn agent_create_template<R: tauri::Runtime>(
     name: String,
     brain_id: Option<String>,
     role: Option<String>,
+    description: Option<String>,
     tools: Option<Vec<String>>,
 ) -> Result<TemplateResult, AppError> {
     let cfg = app_config::load(&app)?;
@@ -128,6 +131,7 @@ pub async fn agent_create_template<R: tauri::Runtime>(
         &name,
         brain_id.as_deref(),
         role.as_deref(),
+        description.as_deref(),
         tool_refs.as_deref(),
     )
 }

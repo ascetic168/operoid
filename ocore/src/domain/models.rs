@@ -91,6 +91,10 @@ pub struct Employee {
     /// 角色定義佔位（完整 Role：mission／authority／KPI／SOP 延後）。
     #[serde(default)]
     pub role: Option<String>,
+    /// 職責描述（自由文字；部署時抄襲 template，實例可個別修改——特殊任務的辨識標記）。
+    /// 進 system prompt（身分卡）強化職務意識。
+    #[serde(default)]
+    pub description: Option<String>,
     /// 溯源：由哪個 [`EmployeeTemplate`] 部署而來（None＝獨立建立，如 `agent_seed`／`agent_recruit`）。
     #[serde(default)]
     pub template_id: Option<String>,
@@ -139,6 +143,9 @@ pub struct EmployeeTemplate {
     pub brain: BrainRef,
     #[serde(default)]
     pub role: Option<String>,
+    /// 職責描述（部署 deploy 時抄襲到 Instance；Phase 4 不做即時傳播——語意同 `role`）。
+    #[serde(default)]
+    pub description: Option<String>,
     /// W3（D-H3）：工具 allowlist——部署（deploy）時抄襲到 Instance。
     #[serde(default)]
     pub tools: Option<Vec<String>>,
@@ -475,6 +482,7 @@ mod tests {
                 brain_id: "__default__".into(),
             },
             role: None,
+            description: None,
             template_id: None,
             state: EmployeeState::Created,
             archived: false,

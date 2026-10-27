@@ -570,6 +570,7 @@ mod tests {
             name: format!("員工{id}"),
             brain: BrainRef { brain_id: "__default__".into() },
             role: None,
+            description: None,
             template_id: None,
             state: EmployeeState::Sleeping,
             archived: false,

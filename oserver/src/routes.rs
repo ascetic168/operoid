@@ -215,7 +215,28 @@ async fn api_employees(
         check_enabled(&st)?;
         let store = open_store(&st)?;
         let employees = store.list_all_employees()?;
-        Ok(json!(employees))
+        // 部署者顯示名（owner_principal → principals.display_name；None＝operator 歸屬）。
+        // 合併進每筆 JSON——前端清單卡直接顯示「部署者」。
+        let items: Vec<serde_json::Value> = employees
+            .into_iter()
+            .map(|e| {
+                let owner_id = e
+                    .owner_principal
+                    .as_deref()
+                    .unwrap_or(ocore::knowledge::identity::OPERATOR_PRINCIPAL_ID);
+                let owner_display_name = ocore::runtime::principal_display_name(&store, owner_id)
+                    .unwrap_or_else(|| owner_id.to_string());
+                let mut v = serde_json::to_value(&e).unwrap_or_else(|_| json!({}));
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert(
+                        "owner_display_name".into(),
+                        serde_json::Value::String(owner_display_name),
+                    );
+                }
+                v
+            })
+            .collect();
+        Ok(json!(items))
     })
     .await;
     finish(res)

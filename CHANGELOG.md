@@ -13,6 +13,37 @@
 
 ---
 
+## [v0.5.8] - 2026-10-27
+
+### Employee job description + deployer display name (core & server)
+
+AI employees now carry a free-text job description (職責描述), and the
+human who deployed them (their supervisor) is resolvable to a display
+name — the backend for the enterprise "who owns this employee / what do
+they do" views (web UI lands in the following commits).
+
+- `Employee` / `EmployeeTemplate` gain `description: Option<String>`
+  (`#[serde(default)]` — JSON-blob storage, no migration). Template
+  creation accepts it (trimmed; blank → None), deploy copies it to the
+  instance, and the instance can be edited independently — the marker
+  for "this employee has a special assignment".
+- Prompt injection in all three turn paths: the native identity card
+  gets a dedicated `## 職責描述` section; the legacy JSON protocol and
+  the autonomous PLAN prompt append a one-line 你的職責描述. Unset/blank
+  omits the block entirely (employees can't claim duties they were
+  never given).
+- New `update_employee_description_core` (blank string clears; archived
+  employees refuse) recording a `description_changed` governance event,
+  mirroring `tools_changed`.
+- `watch_payload` and `GET /api/employees` include `owner_display_name`:
+  `owner_principal` resolved via the principals table (None → operator;
+  unresolved principal → raw id).
+- `PATCH /api/employees/{id}` body widened from `{name}` to
+  `{name?, description?}` — each applied only when present; RBAC
+  unchanged (deployer-owned or manager+).
+- New unit tests: set/clear/archived refusals, deploy inheritance,
+  prompt presence/omission, and owner_display_name resolution.
+
 ## [v0.5.7] - 2026-10-27
 
 ### Streaming process visibility: thinking + tool-call delta frames (backend)

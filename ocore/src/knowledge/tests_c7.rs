@@ -163,6 +163,7 @@ fn c7b_attrs_enrichment() {
         name: id.into(),
         brain: crate::domain::models::BrainRef { brain_id: "__default__".into() },
         role: None,
+        description: None,
         template_id: None,
         state: crate::domain::models::EmployeeState::Sleeping,
         archived: false,
