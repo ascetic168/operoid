@@ -60,8 +60,23 @@
     "home": "My employees",
     "ask": "Knowledge Q&A",
     "inbox": "Inbox",
+    "skills": "Skill library",
     "events": "Events",
     "factories": "Factories"
+  },
+  "skills": {
+    "library": "Company library",
+    "libraryHint": "Org-wide skills (read-only mount library/…) — AI employees pull them in automatically; click View to read the full content.",
+    "personal": "Personal area (team-level)",
+    "personalHint": "Skills approved by your appointing principal (read-only mount personal/…).",
+    "personalHintSingle": "Personal mode: one shared personal area (read-only).",
+    "drafts": "Employee drafts",
+    "draftsHint": "Skills your employees built in their workspace skills/ — visible only to that employee until approved.",
+    "empty": "(empty)",
+    "viewContent": "View",
+    "hideContent": "Collapse",
+    "skillCount": "{n} skills",
+    "contentError": "Failed to load skill content."
   },
   "ask": {
     "title": "Knowledge Q&A",

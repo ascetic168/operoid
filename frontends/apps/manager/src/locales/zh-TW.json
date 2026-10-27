@@ -40,9 +40,24 @@
   "nav": {
     "dashboard": "營運儀表板",
     "inbox": "收件匣",
+    "skills": "技能庫",
     "grants": "知識治理",
     "operations": "營運主控台",
     "events": "事件流"
+  },
+  "skills": {
+    "library": "公司共用庫",
+    "libraryHint": "組織級技能（唯讀掛載 library/…）——AI 員工依任務自動取用；點「檢視內容」看全文。",
+    "personal": "個人區（團隊級）",
+    "personalHint": "各主體核可後的技能——管理面可檢視全部主體的個人區（唯讀）。",
+    "personalHintSingle": "個人模式：單一共用個人區（唯讀）。",
+    "drafts": "員工草稿區",
+    "draftsHint": "可存取員工的工作區 skills/ 草稿技能——發佈核可前僅該員工可用。",
+    "empty": "（空）",
+    "viewContent": "檢視內容",
+    "hideContent": "收起",
+    "skillCount": "{n} 個技能",
+    "contentError": "無法載入技能內容。"
   },
   "dash": {
     "employeesByState": "員工狀態總覽",

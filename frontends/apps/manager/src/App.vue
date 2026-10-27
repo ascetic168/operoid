@@ -40,6 +40,7 @@ watch(
     <nav class="nav">
       <router-link to="/">{{ t('nav.dashboard') }}</router-link>
       <router-link to="/inbox">{{ t('nav.inbox') }}</router-link>
+      <router-link to="/skills">{{ t('nav.skills') }}</router-link>
       <router-link to="/grants">{{ t('nav.grants') }}</router-link>
       <router-link to="/operations">{{ t('nav.operations') }}</router-link>
       <router-link to="/events">{{ t('nav.events') }}</router-link>

@@ -40,9 +40,24 @@
   "nav": {
     "dashboard": "运营仪表板",
     "inbox": "收件匣",
+    "skills": "技能库",
     "grants": "知识治理",
     "operations": "运营主控台",
     "events": "事件流"
+  },
+  "skills": {
+    "library": "公司共用库",
+    "libraryHint": "组织级技能（只读挂载 library/…）——AI 员工依任务自动取用；点「检视内容」看全文。",
+    "personal": "个人区（团队级）",
+    "personalHint": "各主体核可后的技能——管理面可检视全部主体的个人区（只读）。",
+    "personalHintSingle": "个人模式：单一共用个人区（只读）。",
+    "drafts": "员工草稿区",
+    "draftsHint": "可存取员工的工作区 skills/ 草稿技能——发布核可前仅该员工可用。",
+    "empty": "（空）",
+    "viewContent": "检视内容",
+    "hideContent": "收起",
+    "skillCount": "{n} 个技能",
+    "contentError": "无法载入技能内容。"
   },
   "dash": {
     "employeesByState": "员工状态总览",

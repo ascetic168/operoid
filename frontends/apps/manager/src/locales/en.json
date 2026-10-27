@@ -40,9 +40,24 @@
   "nav": {
     "dashboard": "Dashboard",
     "inbox": "Inbox",
+    "skills": "Skill library",
     "grants": "Knowledge governance",
     "operations": "Operations console",
     "events": "Events"
+  },
+  "skills": {
+    "library": "Company library",
+    "libraryHint": "Org-wide skills (read-only mount library/…) — AI employees pull them in automatically; click View to read the full content.",
+    "personal": "Personal area (team-level)",
+    "personalHint": "Skills approved per principal — the management surface can view every principal's personal area (read-only).",
+    "personalHintSingle": "Personal mode: one shared personal area (read-only).",
+    "drafts": "Employee drafts",
+    "draftsHint": "Draft skills in accessible employees' workspace skills/ — visible only to that employee until approved.",
+    "empty": "(empty)",
+    "viewContent": "View",
+    "hideContent": "Collapse",
+    "skillCount": "{n} skills",
+    "contentError": "Failed to load skill content."
   },
   "dash": {
     "employeesByState": "Employees by state",

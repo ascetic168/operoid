@@ -56,6 +56,7 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("GET", Some("/api/employees/{id}/stream"))
         | ("GET", Some("/api/artifacts/{id}"))
         | ("GET", Some("/api/skills"))
+        | ("GET", Some("/api/skills/content"))
         | ("POST", Some("/api/commitments")) => Req::Authenticated,
         // 技能提案核可／退回（「限主體或管理面」由 handler 裁定——比照承諾「限自身」細化）
         ("POST", Some("/api/skill-proposals/{id}/approve"))

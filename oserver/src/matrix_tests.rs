@@ -111,6 +111,7 @@ const INVENTORY: &[(&str, &str)] = &[
     ("POST", "/api/commitments/{id}/archive"),
     ("POST", "/api/commitments/{id}/review"),
     ("GET", "/api/skills"),
+    ("GET", "/api/skills/content"),
     ("POST", "/api/skill-proposals/{id}/approve"),
     ("POST", "/api/skill-proposals/{id}/reject"),
     ("POST", "/api/skills/promote"),

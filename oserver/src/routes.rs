@@ -60,9 +60,12 @@ pub(crate) fn err_response(e: &AppError) -> Response {
     let status = match e.code.as_str() {
         "agent_os.employeeNotFound" | "agent_os.templateNotFound" | "agent_os.commitmentNotFound"
         | "agent_os.taskNotFound" | "agent_os.artifactNotFound"
-        | "agent_os.skillProposalNotFound" => StatusCode::NOT_FOUND,
+        | "agent_os.skillProposalNotFound" | "agent_os.skillContentNotFound" => StatusCode::NOT_FOUND,
         // 技能發佈面：來源不存在／名稱不合法屬呼叫端問題（400）；其餘檔案系統失敗走 500
         "agent_os.skillPublishFailed" => StatusCode::BAD_REQUEST,
+        // 技能瀏覽面：內容檢視的授權裁定與尺寸上限
+        "agent_os.skillContentForbidden" => StatusCode::FORBIDDEN,
+        "agent_os.skillContentTooLarge" => StatusCode::PAYLOAD_TOO_LARGE,
         "agent_os.employeeBusy" => StatusCode::CONFLICT, // busy-lock 快速回絕（API 契約）
         "agent_os.employeeNotRunning" | "agent_os.employeeArchived" => StatusCode::CONFLICT,
         "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
@@ -170,6 +173,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/inbox", get(api_inbox))
         .route("/api/events", get(api_events))
         .route("/api/skills", get(api_skills))
+        .route("/api/skills/content", get(api_skill_content))
         .route("/api/registry", get(api_registry))
         .route("/api/service/status", get(api_service_status))
         .layer(cors_layer())
@@ -388,7 +392,7 @@ async fn api_skills(
     let identity = require_identity(&state, &headers, identity);
     let st = state.clone();
     let res = tokio::task::spawn_blocking(move || {
-        let _ = open_store(&st)?; // 認證後一致性：store 開不了即 503
+        let store = open_store(&st)?; // 認證後一致性：store 開不了即 503
         let data_dir = st
             .db_path
             .parent()
@@ -440,14 +444,144 @@ async fn api_skills(
             );
             personal_areas.push(json!({ "principal": serde_json::Value::Null, "skills": skills }));
         }
+        // 員工草稿區：呼叫者可存取（RBAC 同員工存取規則）的員工，各自工作區 skills/ 掃描。
+        let emp_root = std::path::PathBuf::from(&st.cfg.employee_output_path);
+        let mut drafts: Vec<serde_json::Value> = Vec::new();
+        for e in store.list_all_employees()? {
+            if e.archived {
+                continue;
+            }
+            let accessible = identity
+                .as_ref()
+                .is_some_and(|i| crate::rbac::can_access_employee(i, e.owner_principal.as_deref()));
+            if !accessible {
+                continue;
+            }
+            let skills = ocore::skills::scan_zone(
+                &ocore::tools::workspace::workspace_root(&emp_root, &e.id)
+                    .join(ocore::skills::DRAFT_DIR),
+                ocore::skills::SkillZone::Draft,
+            );
+            if !skills.is_empty() {
+                drafts.push(json!({
+                    "employee_id": e.id,
+                    "employee_name": e.name,
+                    "skills": skills,
+                }));
+            }
+        }
         Ok(json!({
             "mode": if personal_cfg.is_empty() { "enterprise" } else { "personal" },
             "library": library,
             "personal_areas": personal_areas,
+            "drafts": drafts,
         }))
     })
     .await;
     finish(res)
+}
+
+/// 技能內容檢視的查詢參數。
+#[derive(serde::Deserialize)]
+struct SkillContentQuery {
+    /// read_file 同款掛載語意：`library/…`／`personal/…`／`skills/…`（草稿區）。
+    path: String,
+    /// `skills/…`（草稿區）時必填——員工 id。
+    employee: Option<String>,
+    /// 管理面檢視他人個人區時指定主體（僅 Manager+ 生效——與清單面同一裁定）。
+    principal: Option<String>,
+}
+
+/// 技能內容檢視（技能庫瀏覽頁用）：路徑解析、授權與 read_file 員工能力同一套真相——
+/// `library/…`／`personal/…` 走 [`ocore::skills::resolve_read_path`]（穿越防護同一套）；
+/// `skills/…`＝員工草稿區，走 `validate_relative`＋`can_access_employee`。
+async fn api_skill_content(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    Query(q): Query<SkillContentQuery>,
+) -> Response {
+    let identity = require_identity(&state, &headers, identity);
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        check_enabled(&st)?;
+        let store = open_store(&st)?;
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        let text = skill_content_text(&st.cfg, &data_dir, &store, identity.as_ref(), &q)?;
+        Ok(json!({ "path": q.path, "text": text }))
+    })
+    .await;
+    finish(res)
+}
+
+/// 技能內容檢視的單一真相：路徑解析＋授權＋讀檔（上限 1MB——檢視面不是傳輸面）。
+fn skill_content_text(
+    cfg: &AppConfig,
+    data_dir: &std::path::Path,
+    store: &SqliteStore,
+    identity: Option<&Identity>,
+    q: &SkillContentQuery,
+) -> Result<String, AppError> {
+    const MAX_CONTENT_BYTES: usize = 1024 * 1024;
+    let abs = if q.path.starts_with(ocore::skills::MOUNT_LIBRARY)
+        || q.path.starts_with(ocore::skills::MOUNT_PERSONAL)
+    {
+        // 個人區主體：呼叫者本人；Manager+ 可帶 `principal` 檢視他人（清單面同規則）。
+        let principal = if q.path.starts_with(ocore::skills::MOUNT_PERSONAL) {
+            match q.principal.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+                Some(p)
+                    if identity.is_some_and(|i| crate::rbac::satisfies(i, crate::rbac::Req::Manager)) =>
+                {
+                    Some(p.to_string())
+                }
+                Some(_) => return Err(AppError::new("agent_os.skillContentForbidden")),
+                None => identity.map(|i| i.name.clone()),
+            }
+        } else {
+            identity.map(|i| i.name.clone())
+        };
+        let areas = ocore::skills::areas_for(&cfg.skills_personal_dir, data_dir, principal.as_deref());
+        match ocore::skills::resolve_read_path(&q.path, Some(&areas)) {
+            Some(Ok(p)) => p,
+            Some(Err(msg)) => {
+                return Err(AppError::new("agent_os.skillContentNotFound").p("detail", msg))
+            }
+            None => {
+                return Err(AppError::new("agent_os.skillContentNotFound").p("detail", "未知掛載前綴"))
+            }
+        }
+    } else {
+        // 草稿區：員工工作區 skills/ 下（與 read_file 的草稿掛載同語意）。
+        let Some(employee_id) = q.employee.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        else {
+            return Err(AppError::new("agent_os.skillContentForbidden")
+                .p("detail", "草稿區需 employee 參數"));
+        };
+        let emp = store
+            .get_employee(employee_id)?
+            .ok_or_else(|| AppError::new("agent_os.employeeNotFound").p("id", employee_id))?;
+        if !identity
+            .is_some_and(|i| crate::rbac::can_access_employee(i, emp.owner_principal.as_deref()))
+        {
+            return Err(AppError::new("agent_os.skillContentForbidden"));
+        }
+        let rel = ocore::tools::workspace::validate_relative(&q.path)
+            .map_err(|m| AppError::new("agent_os.skillContentNotFound").p("detail", m))?;
+        ocore::tools::workspace::workspace_root(
+            &std::path::PathBuf::from(&cfg.employee_output_path),
+            &emp.id,
+        )
+        .join(rel)
+    };
+    let bytes = std::fs::read(&abs)
+        .map_err(|_| AppError::new("agent_os.skillContentNotFound").p("path", q.path.as_str()))?;
+    if bytes.len() > MAX_CONTENT_BYTES {
+        return Err(AppError::new("agent_os.skillContentTooLarge").p("path", q.path.as_str()));
+    }
+    Ok(ocore::proc::decode_buf(&bytes))
 }
 
 /// R2：依員工歸屬過濾 payload 內的陣列（`[(欄位名, 員工id欄)]`）；缺欄位的項目保留。
