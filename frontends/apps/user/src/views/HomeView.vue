@@ -163,11 +163,16 @@ onBeforeUnmount(() => {
 
     <h2 v-if="others.length" class="sec">{{ t('home.others') }}</h2>
     <div v-if="others.length" class="grid">
-      <div v-for="e in others" :key="e.id" class="card emp ro">
+      <div v-for="e in others" :key="e.id" class="card emp">
         <h2>{{ e.name }}</h2>
         <p class="muted">{{ t('home.emp.state') }}：<code>{{ e.state }}</code></p>
         <p v-if="e.owner_display_name" class="muted">{{ t('home.emp.owner') }}：{{ e.owner_display_name }}</p>
         <p v-if="e.description?.trim()" class="muted clamp2" :title="e.description">{{ e.description }}</p>
+        <div class="row">
+          <router-link class="btn" :to="'/chat/' + encodeURIComponent(e.id)" data-test="chat-others">
+            {{ t('home.emp.chat') }}
+          </router-link>
+        </div>
       </div>
     </div>
 

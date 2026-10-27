@@ -31,7 +31,7 @@
       "empty": "No templates yet — ask an admin to create one"
     },
     "mine": "My employees",
-    "others": "Other employees (read-only)",
+    "others": "Other employees",
     "none": "No employees yet — deploy one to get started",
     "emp": {
       "chat": "Chat",

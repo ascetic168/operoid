@@ -61,6 +61,7 @@ const logEl = ref<HTMLElement | null>(null)
 
 let timer: ReturnType<typeof setInterval> | null = null
 let closeStream: (() => void) | null = null
+let streamOpened = false
 
 const empName = computed(() => w.value?.employee.name ?? empId)
 const empState = computed(() => w.value?.employee.state ?? '')
@@ -73,16 +74,20 @@ const proposals = computed(() => w.value?.proposals ?? [])
 //    部署者本人或 manager/admin 編輯（PATCH /api/employees/{id}，空字串＝清除）。──
 const ownerName = computed(() => w.value?.owner_display_name ?? '')
 const empDesc = computed(() => w.value?.employee.description?.trim() ?? '')
-const canEditDesc = computed(() => {
-  const emp = w.value?.employee
-  if (!emp || emp.archived) return false
+// R2「聊天為主」：部署者本人或 manager/admin＝可治理面（編輯描述／提案核可／SSE 即時流）；
+// 其他同事＝對話面（可對話＋看對話串，員工級 stream 仍限治理面——thinking 屬即時推理）。
+const canManage = computed(() => {
   const s = session()
   if (!s) return false
   return (
-    emp.owner_principal === s.principal.id ||
+    w.value?.employee.owner_principal === s.principal.id ||
     s.principal.roles.includes('manager') ||
     s.principal.roles.includes('admin')
   )
+})
+const canEditDesc = computed(() => {
+  const emp = w.value?.employee
+  return !!emp && !emp.archived && canManage.value
 })
 const editingDesc = ref(false)
 const descDraft = ref('')
@@ -351,6 +356,14 @@ async function poll(): Promise<void> {
     void syncFigureUrls()
     await nextTick()
     scrollToBottom()
+    // SSE 即時流（F1）僅治理面（部署者／manager）開啟——非部署者的 thinking/tool-call
+    // delta 屬即時工作過程，退回 2 秒輪詢呈現。
+    if (canManage.value && !streamOpened) {
+      streamOpened = true
+      closeStream = openTurnStream(empId, applyTurnDelta, () => {
+        draft.value = null
+      })
+    }
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return
     if (e instanceof ApiError && e.status === 403) {
@@ -479,11 +492,9 @@ watch(
 
 onMounted(() => {
   void poll()
-  // 輪詢為主（訊息＋tool_call 過程＝事實源）；SSE delta 流為即時呈現（F1，best-effort）。
+  // 輪詢為主（訊息＋tool_call 過程＝事實源）；SSE delta 流為即時呈現（F1，best-effort，
+  // 僅治理面——見 poll 內的延遲開啟）。
   timer = setInterval(poll, 2000)
-  closeStream = openTurnStream(empId, applyTurnDelta, () => {
-    draft.value = null
-  })
 })
 
 onBeforeUnmount(() => {
@@ -658,7 +669,7 @@ onBeforeUnmount(() => {
           <h2>{{ t('chat.proposals') }}</h2>
           <div v-for="p in proposals" :key="p.id" class="prop">
             <b>{{ p.title }}</b>
-            <div class="row">
+            <div v-if="canManage" class="row">
               <button class="mini ok" @click="approve(p.id)">{{ t('inbox.approve') }}</button>
               <button class="mini bad" @click="reject(p.id)">{{ t('inbox.reject') }}</button>
             </div>

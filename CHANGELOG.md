@@ -15,6 +15,22 @@
 
 ## [v0.5.9] - 2026-10-27
 
+### User console: chat with colleagues' AI employees
+
+The user web app now supports the open chat semantics end to end.
+
+- Home: "Other employees" cards gain a Chat button (and lose the
+  read-only styling) — deployer, job description and state stay on the
+  card.
+- Chat: proposals show read-only for non-managers (approve/reject
+  buttons are manager/admin gated — they were 403-prone before); the
+  SSE turn stream opens only for deployer/manager sessions since
+  thinking deltas are live reasoning — colleague chats update via the
+  2s poll. Non-manager users receive the redacted watch payload, so
+  memory/tasks sections simply never render.
+- i18n: "Other employees (read-only)" heading simplified to
+  "Other employees" (en/zh-CN/zh-TW).
+
 ### Open cross-deployer chat + confidentiality guardrails (core & server)
 
 Chatting with a colleague's AI employee through the web console is now
