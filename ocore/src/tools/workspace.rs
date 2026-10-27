@@ -30,12 +30,9 @@ pub fn ensure_workspace(root: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(root)
 }
 
-/// 解析工作區內路徑並驗邊界（M2 的核心防護）。
-///
-/// 接受相對路徑（含子目錄）；拒絕絕對路徑與任何 `..`／根元件。存在與否不限（寫入前
-/// 呼叫端自行處理）。canonicalize 前綴檢查攔 symlink 跳出——不存在的目標以「父目錄
-/// canonical」驗（仿 write-note 的包含檢查）。
-pub fn resolve_in_workspace(root: &std::path::Path, path: &str) -> Result<PathBuf, String> {
+/// 驗證相對路徑字串（拒絕絕對路徑與任何 `..`／根元件），回傳可 join 的相對 PathBuf。
+/// 工作區解析與技能唯讀掛載（`ocore::skills::resolve_read_path`）共用此規則。
+pub fn validate_relative(path: &str) -> Result<PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("path 不可為空".into());
@@ -54,6 +51,17 @@ pub fn resolve_in_workspace(root: &std::path::Path, path: &str) -> Result<PathBu
             }
         }
     }
+    Ok(p.to_path_buf())
+}
+
+/// 解析工作區內路徑並驗邊界（M2 的核心防護）。
+///
+/// 接受相對路徑（含子目錄）；拒絕絕對路徑與任何 `..`／根元件。存在與否不限（寫入前
+/// 呼叫端自行處理）。canonicalize 前綴檢查攔 symlink 跳出——不存在的目標以「父目錄
+/// canonical」驗（仿 write-note 的包含檢查）。
+pub fn resolve_in_workspace(root: &std::path::Path, path: &str) -> Result<PathBuf, String> {
+    let p = validate_relative(path)?;
+    let trimmed = path.trim();
     let full = root.join(p);
     // 邊界驗證：目標存在 → canonical 全比對；不存在 → canonical 父目錄比對（父須存在）。
     let canonical_root = root

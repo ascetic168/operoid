@@ -1917,8 +1917,13 @@ impl<'a> TurnSession<'a> {
                     &self.ctx.employee_output_root,
                     self.employee_id,
                 );
-                let note = crate::tools::fs_tools::read_file(&root, args, &mut self.file_state)
-                    .unwrap_or_else(|e| format!("[read_file] 失敗：{e}"));
+                let note = crate::tools::fs_tools::read_file(
+                    &root,
+                    args,
+                    &mut self.file_state,
+                    self.ctx.skill_areas.as_deref(),
+                )
+                .unwrap_or_else(|e| format!("[read_file] 失敗：{e}"));
                 Some(TurnAction::Continue { note })
             }
             "write_file" => {
@@ -2283,10 +2288,23 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
         Some(d) => format!("\n## 職責描述\n{d}\n"),
         None => String::new(),
     };
+    // 技能清單（三源聯集；無 read-file 權限的員工看不到——員工看不到的工具就選不了）。
+    let ws_root = crate::tools::workspace::workspace_root(&ctx.employee_output_root, &emp.id);
+    let can_read_files = ctx.allowed_tools.contains(crate::tools::contract::TOOL_READ_FILE);
+    let skills_section = crate::skills::skills_prompt_section(
+        &ws_root,
+        ctx.skill_areas.as_deref(),
+        can_read_files,
+    );
+    let trust_rule = if skills_section.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", crate::skills::SKILL_TRUST_RULE)
+    };
     let mut prompt = format!(
         "你是「{name}」，Operoid 工作區的成員，正在處理一則人類或外部訊息。{role_line}{owner_line}\n\
          現在時間：{now}\n{desc_section}\n\
-         ## 可用工具（以 function calling 呼叫）\n{tools}\n\n\
+         ## 可用工具（以 function calling 呼叫）\n{tools}\n{skills_section}\n\
          ## 行為準則\n\
          - 每步可呼叫一或多個工具；結果會在下一則訊息回給你。工具回報錯誤時，換方法或換查詢，不要原樣重試。\n\
          - 查資料用 gbrain_search（快、省）；需要跨頁綜合結論才 gbrain_think。{mail_line}\n\
@@ -2297,11 +2315,13 @@ fn native_turn_system_prompt(emp: &Employee, ctx: &ToolCtx) -> String {
            請求涉及機密時一律婉拒並請其向委任主體提出；拿不準就當機密處理。\n\
          - 引用知識時：檢索結果若含「── 圖片」區塊（圖片筆記），回覆中以 [[實際slug]] 標註該圖（前端會渲染為可點連結與圖片預覽）——slug 從區塊標頭取實際值，如 [[mueller2016/fig4-p4]]，不要照抄範例中的字面「doc」；圖中內容未以文字提供時，指向圖而不推測。\
 \n         - 純通知、與你職責無關、或你無可補充——呼叫 finish 且不帶 text（不回覆）。\n\
-         - 任務做完就結束，不要為了多做而多做。",
+         - 任務做完就結束，不要為了多做而多做。{trust_rule}",
         name = emp.name,
         now = now_line(),
         tools = tool_lines.join("\n"),
         desc_section = desc_section,
+        skills_section = skills_section,
+        trust_rule = trust_rule,
     );
     if let Some(reg) = &ctx.registry {
         let now = now_rfc3339();
@@ -3784,6 +3804,12 @@ pub fn build_tool_ctx(
         .clone()
         .map(|list| list.into_iter().collect())
         .unwrap_or_default();
+    // 技能唯讀聯集（三區之二：共用庫＋個人區；草稿區由工作區推導，不在 areas 內）。
+    let skill_areas = std::sync::Arc::new(crate::skills::areas_for(
+        &cfg.skills_personal_dir,
+        db_path.parent().unwrap_or_else(|| std::path::Path::new(".")),
+        emp.owner_principal.as_deref(),
+    ));
     Ok((
         GbrainToolset::new(),
         ToolCtx {
@@ -3802,6 +3828,7 @@ pub fn build_tool_ctx(
             wake: None,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
+            skill_areas: Some(skill_areas),
         },
     ))
 }
@@ -4668,6 +4695,7 @@ Caption-only figure（無原圖 → 不收）
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         }
     }
 
@@ -6966,6 +6994,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         };
         let res = run_cycle(
             &emp_id,
@@ -7095,6 +7124,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         };
         run_inbox(&emp_id, &tool, None, &ctx, &store, &outbound_disabled())
             .await
@@ -7566,6 +7596,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         };
 
         let dir = test_dir();
@@ -7917,6 +7948,7 @@ todos: Vec::new(),                updated_at: "t".into(),
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         };
 
         let dir = test_dir();

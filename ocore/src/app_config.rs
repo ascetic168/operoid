@@ -153,6 +153,13 @@ pub struct AppConfig {
     /// LLM 並發上限（全域 Semaphore permit 數；節流「全部喚醒」的尖峰並發 LLM 呼叫）。
     #[serde(default = "default_llm_concurrency")]
     pub llm_concurrency: usize,
+    /// 技能「個人生態區」根目錄（三區之二，見 `ocore::skills`）。預設 `~/.agents/skills`
+    /// （個人模式——與 ZCode / Claude Code 等生態系同一目錄，主體核可的技能也發佈於此）；
+    /// 設為空字串＝企業模式：個人區改為 `<data_dir>/skills/users/<principal>/`（逐主體隔離，
+    /// 伺服器上 `~` 屬服務帳號、無生態語意）。讀取對員工唯讀；寫入一律由人類核可後的
+    /// 伺服器程式碼執行。
+    #[serde(default = "default_skills_personal_dir")]
+    pub skills_personal_dir: String,
     /// 工廠文件轉換的多工上限——同時轉換的檔案數（可設定；預設 4）。
     /// 個人版＝單一批次的並發上限；企業版＝oserver 全域執行緒預算，搭配公平
     /// 調度（飽和時每位遠端使用者至多 1 線程——見 `factory_sched`）。
@@ -266,6 +273,12 @@ fn default_temp() -> f64 {
 }
 fn default_llm_concurrency() -> usize {
     4
+}
+fn default_skills_personal_dir() -> String {
+    match dirs::home_dir() {
+        Some(h) => h.join(".agents").join("skills").to_string_lossy().into_owned(),
+        None => String::new(),
+    }
 }
 fn default_factory_concurrency() -> usize {
     4
@@ -445,6 +458,7 @@ impl Default for AppConfig {
             agent_os_enabled: false,
             internal_mail_enabled: true,
             llm_concurrency: default_llm_concurrency(),
+            skills_personal_dir: default_skills_personal_dir(),
             factory_concurrency: default_factory_concurrency(),
             event_review_enabled: true,
             event_ingress_port: None,

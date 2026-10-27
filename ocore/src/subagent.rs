@@ -274,9 +274,10 @@ async fn execute_sub_tool(
                 &ctx.employee_output_root,
                 parent_employee_id,
             );
-            // 子代理一次性：檔案狀態不跨呼叫累積意義，但仍走同一 fs 工具（沙箱語意一致）。
+            // 子代理一次性：檔案狀態不跨呼叫累積意義，但仍走同一 fs 工具（沙箱語意一致；
+            // 技能唯讀聯集隨 ctx 繼承——子代理讀得到母員工看得到的技能區）。
             let mut state = crate::tools::workspace::FileState::default();
-            match crate::tools::fs_tools::read_file(&root, args, &mut state) {
+            match crate::tools::fs_tools::read_file(&root, args, &mut state, ctx.skill_areas.as_deref()) {
                 Ok(note) => SubToolNote { text: note, failed: false },
                 Err(e) => SubToolNote {
                     text: format!("[read_file] 失敗：{e}"),
@@ -321,6 +322,7 @@ mod tests {
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         }
     }
 

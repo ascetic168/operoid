@@ -19,13 +19,26 @@ pub const READ_MAX_FILE_SIZE: u64 = 256 * 1024;
 /// 預設最大行數。
 pub const READ_DEFAULT_MAX_LINES: usize = 2_000;
 
-/// 讀取工作區檔案（行號格式；offset 1-based）。記錄 FileStamp 供 edit 驗 staleness。
-pub fn read_file(root: &std::path::Path, args: &Value, fstate: &mut FileState) -> Result<String, String> {
+/// 讀取檔案（行號格式；offset 1-based）。路徑解析＝工作區＋技能唯讀掛載的聯集：
+/// `library/…`／`personal/…` 前綴分別映射共用庫與委任主體個人區（唯讀、不入
+/// FileState——不可編輯、無 staleness 語意），其餘走工作區邊界。記錄 FileStamp 供 edit 驗 staleness。
+pub fn read_file(
+    root: &std::path::Path,
+    args: &Value,
+    fstate: &mut FileState,
+    skill_areas: Option<&crate::skills::SkillAreas>,
+) -> Result<String, String> {
     let path = args
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or("缺 path 參數")?;
-    let full = workspace::resolve_in_workspace(root, path)?;
+    // 掛載命中（含「未啟用」等語意錯誤）優先；None＝一般工作區路徑。
+    let mounted = crate::skills::resolve_read_path(path, skill_areas);
+    let is_mounted = mounted.is_some();
+    let full = match mounted {
+        Some(r) => r?,
+        None => workspace::resolve_in_workspace(root, path)?,
+    };
     let stamp = workspace::stamp_of(&full)?;
     if stamp.size > READ_MAX_FILE_SIZE {
         return Err(format!(
@@ -60,8 +73,10 @@ pub fn read_file(root: &std::path::Path, args: &Value, fstate: &mut FileState) -
         .enumerate()
         .map(|(i, l)| format!("{:>6}\t{}", offset + i + 1, l))
         .collect();
-    // 記錄讀取狀態（edit 的先讀驗證依據）。
-    fstate.insert(full, stamp);
+    // 記錄讀取狀態（edit 的先讀驗證依據）——唯讀掛載區不入（不可編輯）。
+    if !is_mounted {
+        fstate.insert(full, stamp);
+    }
     let total = all_lines.len();
     if total == 0 {
         return Ok(format!("（{path}：空檔案）"));
@@ -187,7 +202,7 @@ mod tests {
         let mut fs = FileState::new();
         let n = write_file(&root, &json!({"path": "docs/a.md", "content": "第一行\n第二行"}), &mut fs).unwrap();
         assert!(n.contains("已寫入"), "{n}");
-        let out = read_file(&root, &json!({"path": "docs/a.md"}), &mut fs).unwrap();
+        let out = read_file(&root, &json!({"path": "docs/a.md"}), &mut fs, None).unwrap();
         assert!(out.contains("     1\t第一行"), "{out}");
         assert!(out.contains("     2\t第二行"), "{out}");
         std::fs::remove_dir_all(&root).ok();
@@ -204,7 +219,7 @@ mod tests {
     }
 
     fn resolve_err(root: &std::path::Path, args: &Value, fs: &mut FileState) -> bool {
-        read_file(root, args, fs).is_err()
+        read_file(root, args, fs, None).is_err()
     }
 
     #[test]
@@ -218,7 +233,7 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("FILE_NOT_READ"), "{e}");
         // 讀後改 → 成功
-        read_file(&root, &json!({"path": "r.txt"}), &mut fs).unwrap();
+        read_file(&root, &json!({"path": "r.txt"}), &mut fs, None).unwrap();
         let n = edit_file(&root, &json!({"path": "r.txt", "old_string": "beta", "new_string": "B"}), &mut fs)
             .unwrap();
         assert!(n.contains("替換 1 處"), "{n}");
@@ -260,7 +275,7 @@ mod tests {
         let root = tmp();
         let mut fs = FileState::new();
         write_file(&root, &json!({"path": "m.txt", "content": "x\nx\ny"}), &mut fs).unwrap();
-        read_file(&root, &json!({"path": "m.txt"}), &mut fs).unwrap();
+        read_file(&root, &json!({"path": "m.txt"}), &mut fs, None).unwrap();
         let e = edit_file(&root, &json!({"path": "m.txt", "old_string": "x", "new_string": "z"}), &mut fs)
             .unwrap_err();
         assert!(e.contains("AMBIGUOUS"), "{e}");
@@ -274,6 +289,37 @@ mod tests {
         )
         .unwrap();
         assert!(n.contains("替換 2 處"), "{n}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn read_file_mount_union_is_readonly() {
+        let root = tmp();
+        let data = root.join("data");
+        std::fs::create_dir_all(data.join("skills/library/lib1")).unwrap();
+        std::fs::write(data.join("skills/library/lib1/SKILL.md"), "---\nname: lib1\n---\n步驟").unwrap();
+        std::fs::create_dir_all(data.join("skills/users/alice/p1")).unwrap();
+        std::fs::write(data.join("skills/users/alice/p1/SKILL.md"), "---\nname: p1\n---\n主體技能").unwrap();
+        let areas = crate::skills::areas_for("", &data, Some("alice"));
+        let mut fs = FileState::new();
+        // 聯集讀取：library/ 與 personal/ 掛載可讀。
+        let out = read_file(&root, &json!({"path": "library/lib1/SKILL.md"}), &mut fs, Some(&areas)).unwrap();
+        assert!(out.contains("步驟"), "{out}");
+        let out = read_file(&root, &json!({"path": "personal/p1/SKILL.md"}), &mut fs, Some(&areas)).unwrap();
+        assert!(out.contains("主體技能"), "{out}");
+        // 掛載區不入 FileState——edit 不可及（唯讀）。
+        assert!(fs.is_empty(), "掛載讀取不得播種 FileState");
+        let e = edit_file(
+            &root,
+            &json!({"path": "library/lib1/SKILL.md", "old_string": "步驟", "new_string": "x"}),
+            &mut fs,
+        )
+        .unwrap_err();
+        assert!(e.contains("FILE_NOT_READ"), "{e}");
+        // 無個人區（無主體）→ 語意錯誤文字。
+        let none = crate::skills::areas_for("", &data, None);
+        let e = read_file(&root, &json!({"path": "personal/p1/SKILL.md"}), &mut fs, Some(&none)).unwrap_err();
+        assert!(e.contains("委任主體"), "{e}");
         std::fs::remove_dir_all(&root).ok();
     }
 }

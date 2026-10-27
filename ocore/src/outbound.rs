@@ -242,6 +242,7 @@ mod tests {
             wake: None,
             tool_result_max_chars: 8_000,
             turn_deltas: None,
+            skill_areas: None,
         }
     }
 

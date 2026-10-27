@@ -90,6 +90,10 @@ pub struct ToolCtx {
     /// `AppState::turn_delta_sender` 注入；`None`＝不發佈——測試／非排程器路徑）。
     /// 發佈端 send 無訂閱者時為 no-op，零成本。
     pub turn_deltas: Option<tokio::sync::broadcast::Sender<crate::agent_state::TurnDelta>>,
+    /// 技能唯讀聯集的外部兩區（共用庫＋個人區根；`ocore::skills::areas_for` 建構）。
+    /// `None`＝未啟用（read_file 僅工作區、系統提示無技能清單）。草稿區由
+    /// `employee_output_root`＋員工 id 推導，不在此。
+    pub skill_areas: Option<std::sync::Arc<crate::skills::SkillAreas>>,
 }
 
 impl std::fmt::Debug for ToolCtx {
@@ -109,6 +113,7 @@ impl std::fmt::Debug for ToolCtx {
             .field("internal_mail_enabled", &self.internal_mail_enabled)
             .field("wake", &self.wake.is_some())
             .field("turn_deltas", &self.turn_deltas.is_some())
+            .field("skill_areas", &self.skill_areas.is_some())
             .finish()
     }
 }

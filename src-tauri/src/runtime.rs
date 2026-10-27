@@ -513,6 +513,7 @@ pub async fn agent_run_team<R: tauri::Runtime>(
             wake: None,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
+            skill_areas: None,
         });
     }
 

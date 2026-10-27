@@ -78,6 +78,7 @@ pub async fn op_run<R: Runtime>(
             wake: None,
             tool_result_max_chars: cfg.tool_result_max_chars,
             turn_deltas: None,
+            skill_areas: None,
         };
         let q = arg.clone().unwrap_or_default();
         let out = svc
