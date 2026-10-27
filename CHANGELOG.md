@@ -49,8 +49,10 @@ inside the employee's tool allowlist.
   suggest adoption when a task reveals a skill gap — shown even when the
   employee's union is empty (that is exactly who needs it).
 - **Skill browsing UI** (user & manager web apps + the desktop GUI): a
-  read-only skills page — catalog (with adopt), personal areas (with
-  remove), employee drafts, and the org library — with inline SKILL.md
+  read-only skills page — employee drafts, personal areas (with remove),
+  the org library, and the skill catalog (with adopt) listed last and
+  collapsed by default. Section and plugin-group headers fold, so the
+  111-entry shelf reads as a compact plugin inventory. Inline SKILL.md
   content viewing. Backed by `GET /api/skills` (now also returns `drafts`
   and `catalog`) and `GET /api/skills/content` (read_file-style mount
   resolution: traversal protection reused, manager may pass `principal`
