@@ -13,6 +13,41 @@
 
 ---
 
+## [v0.5.11] - 2026-10-28
+
+### Default company skill library — curated import from Anthropic knowledge-work-plugins
+
+The company library (`<data_dir>/skills/library/`) now ships with content:
+111 role skills across 11 plugins (productivity, sales, customer-support,
+product-management, marketing, legal, finance, data, enterprise-search,
+operations, human-resources), curated from
+[anthropics/knowledge-work-plugins](https://github.com/anthropics/knowledge-work-plugins)
+(Apache-2.0; MIT for partner plugins). Skills are procedural guidance, never
+authorization — everything still runs inside the employee's tool allowlist.
+
+- **Bundled defaults** (`ocore::skills_seed`): the curated set lives at
+  `ocore/default-skills/`, embedded at compile time via `include_dir` and
+  seeded by `oserver` on startup. Seeding is idempotent at plugin-dir
+  granularity: only missing plugin dirs are copied (staged + renamed, no
+  half-written dirs), existing dirs are never overwritten — admin deletions
+  persist, and deleting a plugin dir re-seeds an updated import on restart.
+- **`parse_skill_md` handles YAML folded/literal scalars** (`description: >` /
+  `|` with `+`/`-` indicators): continuation lines are folded into a single
+  whitespace-normalized value. 55 upstream skills used multiline descriptions
+  that the line-based parser previously reduced to a stray `>` / `|`.
+- **`scan_zone` walks grouped layouts**: directories without a `SKILL.md`
+  are descended (bounded depth, first hit wins) so `library/<plugin>/<skill>/`
+  works and upstream cross-file references (`../shared/…`, `../CONNECTORS.md`)
+  resolve unchanged inside the `library/` read mount. Flat layouts unchanged.
+- **Import pipeline** (`scripts/import_kwp_skills.py`): curation list,
+  `skills/<name>/` flattening, `../../` reference rewrite with resolution
+  check, `${CLAUDE_PLUGIN_ROOT}` rewrite, per-file environment note (Claude
+  Cowork surfaces → local file tools; slash commands → read the skill dir),
+  per-plugin `SOURCE.md` provenance and a deterministic `IMPORT-REPORT.md`
+  lint audit (0 high / 5 medium / 106 low).
+- **Attribution**: README (en/zh-TW/zh-CN) credits the upstream repo and
+  licenses; upstream LICENSE files are bundled with each plugin.
+
 ## [v0.5.10] - 2026-10-27
 
 ### AI employee skills — three-zone model with human-gated publication (core)
