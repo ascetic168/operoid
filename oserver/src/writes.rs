@@ -22,8 +22,8 @@ use ocore::runtime::{
     approve_commitment_core, archive_commitment_core, archive_employee_core,
     cancel_task_core, clear_messages_core,
     create_commitment_core, create_template_core, delete_template_core,
-    hard_delete_employee_core,
-    reject_commitment_core, registry_drill_core, registry_save_core, review_commitment_core,
+    hard_delete_employee_core, reject_commitment_core, registry_drill_core, registry_save_core,
+    review_commitment_core,
     deploy_instance, ensure_workspace_core, rename_employee_core, rename_template_core,
     send_message_core, stop_employee_core, unarchive_employee_core,
     update_employee_description_core, update_employee_email_core, update_employee_tools_core,
@@ -75,6 +75,9 @@ pub fn write_routes() -> Router<Arc<ServerState>> {
         .route("/api/commitments/{id}/archive", post(api_archive))
         .route("/api/commitments/{id}/review", post(api_review_commitment))
         .route("/api/commitments/{id}/satisfy", post(api_satisfy_commitment))
+        .route("/api/skill-proposals/{id}/approve", post(api_skill_proposal_approve))
+        .route("/api/skill-proposals/{id}/reject", post(api_skill_proposal_reject))
+        .route("/api/skills/promote", post(api_skill_promote))
         .route("/api/registry/drill", post(api_registry_drill))
         .route("/api/tasks/{id}/cancel", post(api_cancel_task))
         .route("/api/registry", post(api_registry_save))
@@ -111,6 +114,128 @@ async fn api_review_commitment(
             .parent()
             .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
         review_commitment_core(&data_dir, &store, &id, mis)
+    })
+    .await;
+    match res {
+        Ok(Ok(())) => Json(json!({ "ok": true })).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+// ── 技能提案（三區發佈流）：核可權限＝委任主體本人或 manager/admin（handler 細化，
+// 比照「限自身」承諾存取）；晉升（組織級）由 RBAC 矩陣收 Admin。──
+
+async fn api_skill_proposal_approve(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+) -> Response {
+    let Some(ident) = require_identity(&state, &headers, identity) else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"code": "auth.unauthorized"}))).into_response();
+    };
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        let p = store
+            .get_skill_proposal(&id)?
+            .ok_or_else(|| AppError::new("agent_os.skillProposalNotFound").p("id", &id))?;
+        if !crate::rbac::satisfies(&ident, crate::rbac::Req::Manager)
+            && p.owner_principal.as_deref() != Some(ident.name.as_str())
+        {
+            return Err(AppError::new("auth.forbidden"));
+        }
+        ocore::runtime::approve_skill_proposal_core(&st.cfg, &st.db_path, &store, &id, &ident.name)
+    })
+    .await;
+    match res {
+        Ok(Ok(p)) => Json(serde_json::to_value(&p).unwrap_or(json!({ "ok": true }))).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SkillRejectBody {
+    /// 退回理由（回饋提名員工；可省）。
+    reason: Option<String>,
+}
+
+async fn api_skill_proposal_reject(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<String>,
+    body: Json<SkillRejectBody>,
+) -> Response {
+    let Some(ident) = require_identity(&state, &headers, identity) else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"code": "auth.unauthorized"}))).into_response();
+    };
+    let st = state.clone();
+    let reason = body.0.reason.unwrap_or_else(|| "未附理由（主體退回）".into());
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        let p = store
+            .get_skill_proposal(&id)?
+            .ok_or_else(|| AppError::new("agent_os.skillProposalNotFound").p("id", &id))?;
+        if !crate::rbac::satisfies(&ident, crate::rbac::Req::Manager)
+            && p.owner_principal.as_deref() != Some(ident.name.as_str())
+        {
+            return Err(AppError::new("auth.forbidden"));
+        }
+        ocore::runtime::reject_skill_proposal_core(&store, &id, &reason, &ident.name)
+    })
+    .await;
+    match res {
+        Ok(Ok(p)) => Json(serde_json::to_value(&p).unwrap_or(json!({ "ok": true }))).into_response(),
+        Ok(Err(e)) => err_response(&e),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"code": "server.internal", "detail": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SkillPromoteBody {
+    /// 技能目前所在的主體個人區（principal id）。
+    principal: String,
+    /// 技能目錄名。
+    skill: String,
+}
+
+/// 組織級晉升（admin——RBAC 矩陣收口）：主體個人區 → 公司共用庫。
+async fn api_skill_promote(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+    body: Json<SkillPromoteBody>,
+) -> Response {
+    let Some(ident) = require_identity(&state, &headers, identity) else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"code": "auth.unauthorized"}))).into_response();
+    };
+    let st = state.clone();
+    let b = body.0;
+    let res = tokio::task::spawn_blocking(move || {
+        let store = open_store(&st)?;
+        ocore::runtime::promote_skill_core(
+            &st.cfg,
+            &st.db_path,
+            &store,
+            &b.principal,
+            &b.skill,
+            &ident.name,
+        )
     })
     .await;
     match res {

@@ -59,7 +59,10 @@ pub(crate) fn err_response(e: &AppError) -> Response {
     let body = serde_json::to_value(e).unwrap_or_else(|_| json!({"code": "server.internal"}));
     let status = match e.code.as_str() {
         "agent_os.employeeNotFound" | "agent_os.templateNotFound" | "agent_os.commitmentNotFound"
-        | "agent_os.taskNotFound" | "agent_os.artifactNotFound" => StatusCode::NOT_FOUND,
+        | "agent_os.taskNotFound" | "agent_os.artifactNotFound"
+        | "agent_os.skillProposalNotFound" => StatusCode::NOT_FOUND,
+        // 技能發佈面：來源不存在／名稱不合法屬呼叫端問題（400）；其餘檔案系統失敗走 500
+        "agent_os.skillPublishFailed" => StatusCode::BAD_REQUEST,
         "agent_os.employeeBusy" => StatusCode::CONFLICT, // busy-lock 快速回絕（API 契約）
         "agent_os.employeeNotRunning" | "agent_os.employeeArchived" => StatusCode::CONFLICT,
         "agent_os.disabled" | "server.notReady" | "server.dbOpenFail" => StatusCode::SERVICE_UNAVAILABLE,
@@ -166,6 +169,7 @@ pub fn router(state: Arc<ServerState>) -> Router {
         .route("/api/artifacts/{id}", get(api_artifact))
         .route("/api/inbox", get(api_inbox))
         .route("/api/events", get(api_events))
+        .route("/api/skills", get(api_skills))
         .route("/api/registry", get(api_registry))
         .route("/api/service/status", get(api_service_status))
         .layer(cors_layer())
@@ -326,7 +330,11 @@ async fn api_inbox(
                     .unwrap_or_else(|_| serde_json::Value::Null);
                 Ok(filter_payload_by_employees(
                     v,
-                    &[("proposals", "employee_id"), ("flagged_employees", "employee_id")],
+                    &[
+                        ("proposals", "employee_id"),
+                        ("skill_proposals", "employee_id"),
+                        ("flagged_employees", "employee_id"),
+                    ],
                     &owned,
                 ))
             }
@@ -364,6 +372,79 @@ async fn api_events(
             }
             _ => Ok(serde_json::json!(events)),
         }
+    })
+    .await;
+    finish(res)
+}
+
+/// 技能三區清單（讀取面）：共用庫全員可見；個人區——manager/admin 見全部主體、
+/// user 僅見自己的（`identity.name` 即 principal id）。個人模式（`skills_personal_dir`
+/// 非空）只有一區、principal 為 null。
+async fn api_skills(
+    State(state): State<Arc<ServerState>>,
+    identity: Option<axum::Extension<Identity>>,
+    headers: HeaderMap,
+) -> Response {
+    let identity = require_identity(&state, &headers, identity);
+    let st = state.clone();
+    let res = tokio::task::spawn_blocking(move || {
+        let _ = open_store(&st)?; // 認證後一致性：store 開不了即 503
+        let data_dir = st
+            .db_path
+            .parent()
+            .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf);
+        let is_manager = identity
+            .as_ref()
+            .map(|i| crate::rbac::satisfies(i, crate::rbac::Req::Manager))
+            .unwrap_or(false);
+        let library =
+            ocore::skills::scan_zone(&ocore::skills::library_root(&data_dir), ocore::skills::SkillZone::Library);
+        let personal_cfg = st.cfg.skills_personal_dir.trim().to_string();
+        let mut personal_areas: Vec<serde_json::Value> = Vec::new();
+        if personal_cfg.is_empty() {
+            // 企業模式：users/<principal>/
+            let users_root = data_dir.join("skills").join("users");
+            let principals: Vec<String> = if is_manager {
+                std::fs::read_dir(&users_root)
+                    .map(|rd| {
+                        rd.flatten()
+                            .filter(|e| e.path().is_dir())
+                            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else if let Some(ident) = &identity {
+                ocore::skills::sanitize_component(&ident.name).into_iter().collect()
+            } else {
+                Vec::new()
+            };
+            for p in principals {
+                let skills = ocore::skills::scan_zone(
+                    &users_root.join(&p),
+                    ocore::skills::SkillZone::Personal,
+                );
+                if !skills.is_empty() {
+                    personal_areas.push(json!({ "principal": p, "skills": skills }));
+                }
+            }
+        } else if !ocore::skills::scan_zone(
+            &ocore::skills::expand_home(&personal_cfg),
+            ocore::skills::SkillZone::Personal,
+        )
+        .is_empty()
+        {
+            // 個人模式：單一共用個人區（如 ~/.agents/skills）。
+            let skills = ocore::skills::scan_zone(
+                &ocore::skills::expand_home(&personal_cfg),
+                ocore::skills::SkillZone::Personal,
+            );
+            personal_areas.push(json!({ "principal": serde_json::Value::Null, "skills": skills }));
+        }
+        Ok(json!({
+            "mode": if personal_cfg.is_empty() { "enterprise" } else { "personal" },
+            "library": library,
+            "personal_areas": personal_areas,
+        }))
     })
     .await;
     finish(res)

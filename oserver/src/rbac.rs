@@ -55,7 +55,11 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("GET", Some("/api/employees/{id}/watch"))
         | ("GET", Some("/api/employees/{id}/stream"))
         | ("GET", Some("/api/artifacts/{id}"))
+        | ("GET", Some("/api/skills"))
         | ("POST", Some("/api/commitments")) => Req::Authenticated,
+        // 技能提案核可／退回（「限主體或管理面」由 handler 裁定——比照承諾「限自身」細化）
+        ("POST", Some("/api/skill-proposals/{id}/approve"))
+        | ("POST", Some("/api/skill-proposals/{id}/reject")) => Req::Authenticated,
         // 自身會話面（登出／refresh／改自身密碼——所有已認證角色）
         ("POST", Some("/api/auth/logout"))
         | ("POST", Some("/api/auth/refresh"))
@@ -112,6 +116,10 @@ pub fn requirement(method: &str, path: Option<&str>) -> Req {
         | ("POST", Some("/api/commitments/{id}/reject"))
         | ("POST", Some("/api/commitments/{id}/archive"))
         | ("POST", Some("/api/commitments/{id}/review")) => Req::Manager,
+
+        // 組織級技能晉升（主體個人區 → 公司共用庫）——admin 專屬：
+        // 主體核可的效力止步團隊級，組織共享資源只有 admin 能開（權限對齊組織層級）
+        ("POST", Some("/api/skills/promote")) => Req::Admin,
 
         // 其餘全部 → Admin（fail-closed：templates CRUD、employees 封存/硬刪、registry 寫、
         // tasks cancel、brains/gbrain/prereq、factories extract-companies、knowledge
