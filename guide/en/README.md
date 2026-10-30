@@ -4,7 +4,7 @@
 
 > **Applies to**: Operoid v0.5.11 (October 2026).
 
-This directory hosts the **English edition** of the Operoid user guide. Translation is in progress — until a chapter is translated, please read the corresponding chapter in the [Traditional Chinese edition](../README.md); every placeholder page links back to it.
+This directory hosts the **English edition** of the Operoid user guide, chapter-for-chapter parallel to the [Traditional Chinese](../README.md) and [Simplified Chinese](../zh-CN/README.md) editions. UI wording follows the app's built-in English interface; developer-facing prompt templates keep their original Chinese wording.
 
 ## Chapters
 
