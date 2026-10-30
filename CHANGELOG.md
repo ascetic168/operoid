@@ -18,9 +18,10 @@
 ### User guide (`guide/`) — from installation to daily operation
 
 Added a tracked, build-free user guide under `guide/` (`docs/` stays the
-git-ignored internal-notes directory). Traditional Chinese primary, with
-`guide/zh-CN/` and `guide/en/` mirror directories scaffolded for future
-translations. 18 chapters + 2 appendices:
+git-ignored internal-notes directory). Full parallel editions in
+Traditional Chinese (primary), Simplified Chinese, and English — 21 files
+each, chapter-for-chapter aligned; UI strings quoted verbatim from each
+edition's app locale. 18 chapters + 2 appendices:
 
 - Getting started: introduction, requirements, personal/enterprise
   installation (release asset names verified against v0.5.11), and a
