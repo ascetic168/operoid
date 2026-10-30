@@ -160,6 +160,7 @@ Optional capabilities (knowledge-graph engine, local embeddings, complex-PDF par
 
 ## Go deeper
 
+- **[User Guide](guide/README.md)** — from installation to daily operation: setup, a tour of every page, skills, governance, configuration reference, and troubleshooting ([简体中文](guide/zh-CN/README.md), [繁體中文](guide/README.md)).
 - **[Architecture Handbook](handbook/README.md)** — the constitution: concepts, principles, and the reasoning behind them ([Chapter 21 — Roadmap](handbook/21-Roadmap.md)).
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** — prerequisites, degradation behavior, and deploying both editions.
 - **[The Shape of the Boundary](journal/The_Shape_of_the_Boundary_Charlie_Chu.pdf)** — the essay behind the Action Registry, distilled from a real (de-identified) manufacturing case.

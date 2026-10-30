@@ -159,6 +159,7 @@ Employee 因觸發而醒來：
 
 ## 深入閱讀
 
+- **[使用指南](guide/README.md)**——從安裝到日常操作的完整說明：安裝、每一頁的操作、技能、治理、設定參考與疑難排解（繁體中文，[简体中文](guide/zh-CN/README.md)、[English](guide/en/README.md) 翻譯進行中）。
 - **[架構手冊](handbook/Chinese/README.md)**——這套系統的憲法：概念、原則與背後的推理（[第二十一章——路線圖](handbook/Chinese/21-Roadmap.md)）。
 - **[DEPLOYMENT.md](DEPLOYMENT.md)**——前置需求、降級行為，與兩種版本的部署。
 - **[界線的形狀](journal/界線的形狀_朱國棟.pdf)**——動作類別登記表背後的論文，從一個真實（已去識別化）的製造業個案蒸餾而來。

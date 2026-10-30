@@ -13,6 +13,34 @@
 
 ---
 
+## [Unreleased]
+
+### User guide (`guide/`) — from installation to daily operation
+
+Added a tracked, build-free user guide under `guide/` (`docs/` stays the
+git-ignored internal-notes directory). Traditional Chinese primary, with
+`guide/zh-CN/` and `guide/en/` mirror directories scaffolded for future
+translations. 18 chapters + 2 appendices:
+
+- Getting started: introduction, requirements, personal/enterprise
+  installation (release asset names verified against v0.5.11), and a
+  15-minute quickstart.
+- Daily use: desktop tour, brains & models, employees, document
+  factories, inbox & events, skill library, knowledge base & Claude
+  Code, governance (Action Registry & knowledge authorization), email
+  bridge, service & updates, and the three enterprise consoles.
+- Reference: configuration reference with defaults verified against
+  `ocore/src/app_config.rs`, plus troubleshooting.
+- Appendix A: GBrain architecture explained for newcomers — why a
+  knowledge brain, vs plain RAG and wiki search.
+- Appendix B: enterprise development guide — Obridge plugin vs fork,
+  an information map for coding agents, a worked corporate-IM example,
+  and copy-paste vibe-coding prompt templates.
+
+UI terminology follows `src/i18n/locales/zh-TW.json`; concepts cross-link
+to the Architecture Handbook. Root READMEs link the guide from their
+further-reading sections.
+
 ## [v0.5.11] - 2026-10-28
 
 ### Skill catalog (app-store model) + bundled curated skills from Anthropic knowledge-work-plugins

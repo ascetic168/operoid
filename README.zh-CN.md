@@ -159,6 +159,7 @@ Employee 因触发而醒来：
 
 ## 深入阅读
 
+- **[使用指南](guide/README.md)**——从安装到日常操作的完整说明：安装、每一页的操作、技能、治理、配置参考与疑难解答（简体中文版翻译进行中，暂阅[繁体中文版](guide/README.md)、[English](guide/en/README.md)）。
 - **[架构手册](handbook/Chinese/README.md)**——这套系统的宪法：概念、原则与背后的推理（[第二十一章——路线图](handbook/Chinese/21-Roadmap.md)）。
 - **[DEPLOYMENT.md](DEPLOYMENT.md)**——前置需求、降级行为，与两种版本的部署。
 - **[界线的形状](journal/界线的形状_朱国栋.pdf)**——动作类别登记表背后的论文，从一个真实（已去识别化）的制造业个案蒸馏而来。
